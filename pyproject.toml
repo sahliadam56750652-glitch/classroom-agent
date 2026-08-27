@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "classroom-agent"
+version = "0.1.0"
+description = "Personal Google Classroom sync, catch-up tracker and revision gate."
+requires-python = ">=3.13"
+dependencies = [
+    "google-api-python-client>=2.120",
+    "google-auth-oauthlib>=1.2",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "pymupdf>=1.24",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+agent = "agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+agent = ["db/schema.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

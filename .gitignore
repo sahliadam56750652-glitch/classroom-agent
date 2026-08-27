@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+config.yaml
+credentials.json
+token.json
+.env
+
+dump.json
+sample/
+data/
+
+probe-output.txt

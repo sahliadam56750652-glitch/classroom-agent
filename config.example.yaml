@@ -1,0 +1,24 @@
+# Copy this file to config.yaml and fill it in. config.yaml is gitignored.
+
+# The Google account this tool belongs to. Every run verifies the authenticated
+# account against this value and refuses to continue on a mismatch -- the wrong
+# account returns an empty Classroom rather than an error.
+account: sahliadam56750652@gmail.com
+
+# IANA name. Timestamps are stored as UTC and converted to this only for display.
+timezone: Africa/Tunis
+
+# Database, OAuth token, PDF library and logs all live under here. Relative
+# paths resolve against the directory holding this file. The DATA_DIR
+# environment variable overrides this.
+data_dir: ./data
+
+courses:
+  # Course IDs to sync. Populate with `agent courses`.
+  #
+  # courseState ACTIVE does NOT mean the course is running this term -- it means
+  # only that no teacher archived it. This list is curated by hand.
+  tracked: []
+
+  # Course IDs to never sync.
+  ignored: []
