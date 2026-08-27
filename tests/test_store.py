@@ -301,3 +301,94 @@ def test_a_mismatched_schema_version_is_refused(tmp_path, offset, expected):
 
     assert expected in str(err.value)
     assert "no migration framework" in str(err.value)
+
+
+# --------------------------------------------------------------------------
+# links and notification stamping
+# --------------------------------------------------------------------------
+
+def _link_event(conn, entity_type, entity_id, event_type="new_material"):
+    from agent.sync.differ import Event
+
+    store.insert_event(
+        conn,
+        Event(
+            type=event_type,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            course_id="c1",
+            payload={},
+            created_at="2026-08-27T12:00:00Z",
+        ),
+    )
+    conn.commit()
+
+
+def test_entity_links_finds_the_link_for_each_entity_type(tmp_path):
+    from agent.classroom.models import (
+        parse_announcement,
+        parse_course,
+        parse_coursework,
+        parse_coursework_material,
+    )
+
+    conn = store.connect(tmp_path / "academic.db")
+    store.upsert_course(conn, parse_course({"id": "c1", "name": "Databases"}))
+
+    work, _ = parse_coursework(
+        {"id": "w1", "title": "TD", "alternateLink": "https://x.test/w1"}, "c1"
+    )
+    store.upsert_coursework(conn, work)
+    material, _ = parse_coursework_material(
+        {"id": "m1", "title": "L7", "alternateLink": "https://x.test/m1"}, "c1"
+    )
+    store.upsert_coursework_material(conn, material)
+    announcement, _ = parse_announcement(
+        {"id": "a1", "text": "hi", "alternateLink": "https://x.test/a1"}, "c1"
+    )
+    store.upsert_announcement(conn, announcement)
+    conn.commit()
+
+    _link_event(conn, "coursework", "w1")
+    _link_event(conn, "coursework_material", "m1")
+    _link_event(conn, "announcement", "a1")
+
+    links = store.entity_links(conn, store.list_events(conn))
+
+    assert links[("coursework", "w1")] == "https://x.test/w1"
+    assert links[("coursework_material", "m1")] == "https://x.test/m1"
+    assert links[("announcement", "a1")] == "https://x.test/a1"
+    conn.close()
+
+
+def test_entity_links_omits_entities_it_cannot_find(tmp_path):
+    from agent.classroom.models import parse_course
+
+    conn = store.connect(tmp_path / "academic.db")
+    store.upsert_course(conn, parse_course({"id": "c1", "name": "Databases"}))
+    _link_event(conn, "coursework", "gone")
+
+    assert store.entity_links(conn, store.list_events(conn)) == {}
+    conn.close()
+
+
+def test_entity_links_of_no_events_is_empty(tmp_path):
+    conn = store.connect(tmp_path / "academic.db")
+    assert store.entity_links(conn, []) == {}
+    conn.close()
+
+
+def test_mark_notified_only_touches_the_given_events(tmp_path):
+    from agent.classroom.models import parse_course
+
+    conn = store.connect(tmp_path / "academic.db")
+    store.upsert_course(conn, parse_course({"id": "c1", "name": "Databases"}))
+    _link_event(conn, "coursework", "w1")
+    _link_event(conn, "coursework", "w2")
+
+    rows = store.list_events(conn)
+    target = rows[0]["id"]
+
+    assert store.mark_notified(conn, [target], now="2026-08-27T13:00:00Z") == 1
+    assert store.count_pending_events(conn) == 1
+    conn.close()

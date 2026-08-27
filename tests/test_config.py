@@ -231,4 +231,119 @@ def test_config_type_is_exported():
         "data_dir",
         "tracked_courses",
         "ignored_courses",
+        "telegram_chat_id",
     }
+
+
+# --------------------------------------------------------------------------
+# telegram
+# --------------------------------------------------------------------------
+
+WITH_TELEGRAM = COMPLETE + """telegram:
+  chat_id: 123456789
+"""
+
+
+def test_chat_id_is_read_from_config(tmp_path):
+    config = load_config(write_config(tmp_path, WITH_TELEGRAM))
+    assert config.telegram_chat_id == 123456789
+
+
+def test_a_quoted_chat_id_is_coerced_to_an_int(tmp_path):
+    """YAML reads a quoted id as a string; the Bot API needs a number."""
+    body = COMPLETE + 'telegram:\n  chat_id: "123456789"\n'
+    assert load_config(write_config(tmp_path, body)).telegram_chat_id == 123456789
+
+
+def test_a_negative_group_chat_id_is_accepted(tmp_path):
+    body = COMPLETE + "telegram:\n  chat_id: -1001234567890\n"
+    assert load_config(write_config(tmp_path, body)).telegram_chat_id == -1001234567890
+
+
+def test_no_telegram_section_is_not_an_error(tmp_path):
+    """`agent sync` must work on a machine with no bot configured."""
+    assert load_config(write_config(tmp_path, COMPLETE)).telegram_chat_id is None
+
+
+def test_a_non_numeric_chat_id_is_rejected(tmp_path):
+    body = COMPLETE + "telegram:\n  chat_id: not-a-number\n"
+    with pytest.raises(ConfigError) as err:
+        load_config(write_config(tmp_path, body))
+    assert "telegram.chat_id" in str(err.value)
+
+
+def test_a_telegram_section_that_is_not_a_mapping_is_rejected(tmp_path):
+    body = COMPLETE + "telegram: 12345\n"
+    with pytest.raises(ConfigError) as err:
+        load_config(write_config(tmp_path, body))
+    assert "'telegram'" in str(err.value)
+
+
+def test_missing_token_names_the_env_var(tmp_path, monkeypatch):
+    from agent.config import telegram_settings
+
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    config = load_config(write_config(tmp_path, WITH_TELEGRAM))
+
+    with pytest.raises(ConfigError) as err:
+        telegram_settings(config)
+
+    assert "TELEGRAM_BOT_TOKEN" in str(err.value)
+    assert "telegram.chat_id" not in str(err.value)
+
+
+def test_missing_chat_id_names_the_config_key(tmp_path, monkeypatch):
+    from agent.config import telegram_settings
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:ABC")
+    config = load_config(write_config(tmp_path, COMPLETE))
+
+    with pytest.raises(ConfigError) as err:
+        telegram_settings(config)
+
+    assert "telegram.chat_id" in str(err.value)
+    assert "TELEGRAM_BOT_TOKEN" not in str(err.value)
+
+
+def test_both_missing_names_both(tmp_path, monkeypatch):
+    from agent.config import telegram_settings
+
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    config = load_config(write_config(tmp_path, COMPLETE))
+
+    with pytest.raises(ConfigError) as err:
+        telegram_settings(config)
+
+    assert "TELEGRAM_BOT_TOKEN" in str(err.value)
+    assert "telegram.chat_id" in str(err.value)
+
+
+def test_both_present_returns_the_pair(tmp_path, monkeypatch):
+    from agent.config import telegram_settings
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "  123:ABC  ")
+    config = load_config(write_config(tmp_path, WITH_TELEGRAM))
+
+    assert telegram_settings(config) == ("123:ABC", 123456789)
+
+
+def test_a_blank_token_counts_as_missing(tmp_path, monkeypatch):
+    from agent.config import telegram_settings
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "   ")
+    config = load_config(write_config(tmp_path, WITH_TELEGRAM))
+
+    with pytest.raises(ConfigError, match="TELEGRAM_BOT_TOKEN"):
+        telegram_settings(config)
+
+
+def test_the_token_never_comes_from_config_yaml(tmp_path, monkeypatch):
+    """A token in config.yaml is ignored: secrets come from .env only."""
+    from agent.config import telegram_settings
+
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    body = COMPLETE + 'telegram:\n  chat_id: 1\n  bot_token: "leaked:token"\n'
+    config = load_config(write_config(tmp_path, body))
+
+    with pytest.raises(ConfigError, match="TELEGRAM_BOT_TOKEN"):
+        telegram_settings(config)

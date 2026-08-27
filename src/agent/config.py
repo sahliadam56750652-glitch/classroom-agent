@@ -21,6 +21,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config.yaml"
 DEFAULT_DATA_DIR = "./data"
 
+# The bot token is a credential and comes from .env only. A chat id is not a
+# secret -- it identifies a conversation, not an account -- so it lives in
+# config.yaml beside everything else that describes this installation.
+BOT_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
+
 
 class ConfigError(Exception):
     """config.yaml is absent, unreadable, or missing a required key."""
@@ -33,6 +38,10 @@ class Config:
     data_dir: Path
     tracked_courses: list[str]
     ignored_courses: list[str]
+    # Optional at load time and checked only when something actually wants to
+    # send: `agent sync` must keep working on a machine with no bot configured.
+    # telegram_settings() below is the single gate that demands both halves.
+    telegram_chat_id: int | None = None
 
     # Derived paths. Everything lives under data_dir so that relocating the
     # project is a directory copy.
@@ -79,6 +88,78 @@ def _course_ids(value: Any, key: str, config_path: Path) -> list[str]:
     # Classroom course IDs are strings, but YAML reads a bare 7712... as an int.
     # Coerce so comparisons against API responses never silently fail.
     return [str(item) for item in value]
+
+
+def _telegram_chat_id(raw: dict[str, Any], config_path: Path) -> int | None:
+    """The chat to send to, or None when no telegram section is configured."""
+    section = raw.get("telegram")
+    if section is None:
+        return None
+    if not isinstance(section, dict):
+        raise ConfigError(
+            f"{config_path}: 'telegram' must be a mapping with a 'chat_id', "
+            f"got {type(section).__name__}."
+        )
+
+    value = section.get("chat_id")
+    if value is None:
+        return None
+
+    # Group chat ids are negative and long, so this is parsed rather than
+    # trusted: a quoted id in YAML reads as a string and would otherwise reach
+    # the Bot API as the wrong type and come back as an opaque 400.
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ConfigError(
+            f"{config_path}: 'telegram.chat_id' must be an integer, "
+            f"got {type(value).__name__}."
+        )
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        raise ConfigError(
+            f"{config_path}: 'telegram.chat_id' must be an integer, got {value!r}."
+        ) from None
+
+
+def telegram_settings(config: Config) -> tuple[str, int]:
+    """(bot token, chat id), or a ConfigError naming exactly what is missing.
+
+    The two halves come from deliberately different places -- the token from
+    .env because it is a credential, the chat id from config.yaml because it is
+    not -- so "notifications are not set up" has two separate causes and the
+    error has to say which one applies.
+
+    Reads the environment directly. load_config() has already pulled .env into
+    it; a Config built by hand in a test has not.
+    """
+    token = (os.environ.get(BOT_TOKEN_ENV) or "").strip()
+
+    missing = []
+    if not token:
+        missing.append(
+            f"  {BOT_TOKEN_ENV} is not set. Put it in the .env file beside "
+            f"config.yaml:\n"
+            f"      {BOT_TOKEN_ENV}=123456:ABC...\n"
+            f"    Get one from @BotFather. It is a secret and never goes in "
+            f"config.yaml."
+        )
+    if config.telegram_chat_id is None:
+        missing.append(
+            "  telegram.chat_id is not set in config.yaml:\n"
+            "      telegram:\n"
+            "        chat_id: 123456789\n"
+            "    Message the bot once, then read the id from\n"
+            "    https://api.telegram.org/bot<token>/getUpdates"
+        )
+
+    if missing:
+        raise ConfigError(
+            "Telegram is not configured, so there is nowhere to send.\n"
+            + "\n".join(missing)
+        )
+
+    assert config.telegram_chat_id is not None  # narrowed by the check above
+    return token, config.telegram_chat_id
 
 
 def _resolve_data_dir(configured: Any, config_path: Path) -> Path:
@@ -143,4 +224,5 @@ def load_config(config_path: Path | None = None) -> Config:
         data_dir=data_dir,
         tracked_courses=_course_ids(courses.get("tracked"), "courses.tracked", config_path),
         ignored_courses=_course_ids(courses.get("ignored"), "courses.ignored", config_path),
+        telegram_chat_id=_telegram_chat_id(raw, config_path),
     )

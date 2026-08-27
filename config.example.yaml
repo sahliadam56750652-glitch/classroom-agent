@@ -22,3 +22,12 @@ courses:
 
   # Course IDs to never sync.
   ignored: []
+
+# Where the briefing is sent. The bot token is a credential and lives in .env
+# as TELEGRAM_BOT_TOKEN, never here. Both halves are only required when
+# something actually sends -- `agent sync` works without either.
+#
+# To find the chat id: message the bot once, then read
+# https://api.telegram.org/bot<token>/getUpdates
+telegram:
+  chat_id:

@@ -12,7 +12,10 @@ from .classroom.client import ClassroomClient
 from .classroom.models import parse_course
 from .config import Config, ConfigError, load_config
 from .db import store
-from .sync import poller
+from .digest import composer
+from .notify import dispatch
+from .notify import telegram as telegram_api
+from .sync import deadlines, poller
 
 # Archived courses are excluded unless asked for, and 7 of 25 measured courses
 # are archived -- last year's material is exactly what this tool is for.
@@ -81,6 +84,39 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="include_notified",
         help="include events that have already been notified",
+    )
+
+    deadlines_parser = sub.add_parser(
+        "deadlines",
+        parents=[shared],
+        help="scan stored coursework and record due-date alerts",
+    )
+    deadlines_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="compute the alerts but record nothing",
+    )
+
+    notify_parser = sub.add_parser(
+        "notify",
+        parents=[shared],
+        help="send the pending events as a briefing, then stamp them notified",
+    )
+    notify_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the briefing to stdout; send nothing and stamp nothing",
+    )
+
+    run_parser = sub.add_parser(
+        "run",
+        parents=[shared],
+        help="sync, then scan deadlines, then notify -- what the scheduler calls",
+    )
+    run_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="do all three stages read-only: write nothing and send nothing",
     )
     return parser
 
@@ -181,29 +217,48 @@ def cmd_courses(config: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def _no_tracked_courses() -> None:
+    print("No courses are tracked, so there is nothing to sync.")
+    print()
+    print("Run `agent courses` to see the list, then put the IDs you want")
+    print("under courses.tracked in config.yaml. Nothing is tracked for you --")
+    print("courseState ACTIVE does not mean a course is running this term.")
+
+
+def _do_sync(
+    config: Config,
+    conn,
+    *,
+    dry_run: bool = False,
+    seed: bool = False,
+    force: bool = False,
+) -> poller.SyncResult | None:
+    """Poll and diff. None means there was nothing tracked to poll."""
+    if not config.tracked_courses:
+        return None
+    client = ClassroomClient(auth.get_credentials(config))
+    return poller.sync(
+        config, conn, dry_run=dry_run, seed=seed, client=client, force=force
+    )
+
+
 def cmd_sync(config: Config, args: argparse.Namespace) -> int:
     conn = store.open_db(config)
     try:
-        if not config.tracked_courses:
-            print("No courses are tracked, so there is nothing to sync.")
-            print()
-            print("Run `agent courses` to see the list, then put the IDs you want")
-            print("under courses.tracked in config.yaml. Nothing is tracked for you --")
-            print("courseState ACTIVE does not mean a course is running this term.")
-            return 0
-
-        client = ClassroomClient(auth.get_credentials(config))
-        result = poller.sync(
-            config,
-            conn,
-            dry_run=args.dry_run,
-            seed=args.seed,
-            client=client,
-            force=args.force,
+        result = _do_sync(
+            config, conn, dry_run=args.dry_run, seed=args.seed, force=args.force
         )
     finally:
         conn.close()
 
+    if result is None:
+        _no_tracked_courses()
+        return 0
+    _print_sync(result)
+    return 0
+
+
+def _print_sync(result: poller.SyncResult) -> None:
     label = "dry run -- nothing written" if result.dry_run else "sync complete"
     if result.seeded and not result.dry_run:
         label = "seeded -- every event marked already notified"
@@ -234,7 +289,6 @@ def cmd_sync(config: Config, args: argparse.Namespace) -> int:
         elif result.seeded:
             print()
             print("  (seeded: recorded and stamped as already notified)")
-    return 0
 
 
 def cmd_events(config: Config, args: argparse.Namespace) -> int:
@@ -271,16 +325,183 @@ def cmd_events(config: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def _do_deadlines(config: Config, conn, *, dry_run: bool = False) -> deadlines.DeadlineScan:
+    """Recompute deadline alerts and record the ones not already recorded."""
+    result = deadlines.scan(conn, list(config.tracked_courses))
+    if not dry_run:
+        for event in result.events:
+            if store.insert_event(conn, event):
+                result.events_written += 1
+        # Thresholds a more urgent alert already speaks for. Written with
+        # notified_at set, so they are never sent and never fire again.
+        stamp = store._utc_now_iso()
+        for event in result.suppressed:
+            if store.insert_event(conn, event, notified_at=stamp):
+                result.suppressed_written += 1
+        conn.commit()
+    return result
+
+
+def _print_deadlines(result: deadlines.DeadlineScan, *, dry_run: bool) -> None:
+    counts = result.event_counts
+    if not counts:
+        print(f"no deadline alerts due ({result.considered} assignment(s) checked)")
+    else:
+        verb = "would record" if dry_run else "recorded"
+        print(f"{verb} {len(result.events)} deadline alert(s):")
+        for event_type in ("deadline_t3", "deadline_t24", "deadline_t72"):
+            if counts.get(event_type):
+                print(f"    {event_type:14} {counts[event_type]}")
+        if not dry_run and result.events_written != len(result.events):
+            already = len(result.events) - result.events_written
+            print(f"    ({already} already recorded by an earlier run)")
+
+    if result.suppressed:
+        verb = "would record" if dry_run else "recorded"
+        print(
+            f"  {verb} {len(result.suppressed)} less urgent threshold(s) as "
+            f"already notified -- a nearer alert covers the same assignment"
+        )
+
+    # Reported, never warned about: more than half of all coursework has no due
+    # date at all, so this is the normal shape of the data.
+    print(
+        f"  {result.without_due_date} of {result.considered} assignment(s) have "
+        f"no due date and were skipped"
+    )
+
+
+def cmd_deadlines(config: Config, args: argparse.Namespace) -> int:
+    conn = store.open_db(config)
+    try:
+        result = _do_deadlines(config, conn, dry_run=args.dry_run)
+    finally:
+        conn.close()
+    _print_deadlines(result, dry_run=args.dry_run)
+    return 0
+
+
+def _do_notify(config: Config, conn, *, dry_run: bool = False) -> int:
+    """Compose the pending events and send them. Returns a process exit code."""
+    rows = store.list_events(conn, include_notified=False)
+    links = store.entity_links(conn, rows)
+    blocks = composer.compose_blocks(
+        rows, timezone_name=config.timezone, links=links
+    )
+
+    if not blocks:
+        # Deliberately only on stdout. Nothing goes to Telegram: a bot that
+        # says "nothing new today" trains me to swipe notifications away
+        # unread, and then the one that mattered goes with them.
+        print("nothing pending -- no briefing sent")
+        return 0
+
+    pending = sum(len(block.event_ids) for block in blocks)
+
+    if dry_run:
+        # The exact text that would be sent, joined the way delivery joins it.
+        print("\n\n".join(block.html for block in blocks))
+        print()
+        print(
+            f"  dry run -- {pending} event(s) across {len(blocks)} course(s); "
+            f"nothing sent, nothing stamped"
+        )
+        return 0
+
+    # Only now is a bot token required. A dry run has to work on a machine that
+    # has never configured one.
+    telegram = telegram_api.from_config(config)
+    result = dispatch.deliver(conn, blocks, telegram)
+
+    if result.failed:
+        print(
+            f"send failed after {result.messages_sent} message(s): {result.error}",
+            file=sys.stderr,
+        )
+        print(
+            f"  {result.events_notified} event(s) stamped as notified; the rest "
+            f"stay pending and the next run will retry them",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(
+        f"sent {result.messages_sent} message(s), "
+        f"{result.events_notified} event(s) across {len(blocks)} course(s)"
+    )
+    return 0
+
+
+def cmd_notify(config: Config, args: argparse.Namespace) -> int:
+    conn = store.open_db(config)
+    try:
+        return _do_notify(config, conn, dry_run=args.dry_run)
+    finally:
+        conn.close()
+
+
+def cmd_run(config: Config, args: argparse.Namespace) -> int:
+    """sync -> deadline scan -> notify. What the Phase 3 scheduler calls.
+
+    The stages run in this order because each feeds the next: the sync stores
+    the coursework the deadline scan reads, and both write the events the
+    notify step sends. They stay separately runnable -- a stage that can only
+    be exercised as part of a pipeline cannot be debugged.
+    """
+    conn = store.open_db(config)
+    try:
+        print("== sync ==")
+        sync_result = _do_sync(config, conn, dry_run=args.dry_run)
+        if sync_result is None:
+            _no_tracked_courses()
+            return 0
+        _print_sync(sync_result)
+
+        print()
+        print("== deadlines ==")
+        _print_deadlines(
+            _do_deadlines(config, conn, dry_run=args.dry_run), dry_run=args.dry_run
+        )
+
+        print()
+        print("== notify ==")
+        return _do_notify(config, conn, dry_run=args.dry_run)
+    finally:
+        conn.close()
+
+
 COMMANDS = {
     "auth": cmd_auth,
     "whoami": cmd_whoami,
     "courses": cmd_courses,
     "sync": cmd_sync,
     "events": cmd_events,
+    "deadlines": cmd_deadlines,
+    "notify": cmd_notify,
+    "run": cmd_run,
 }
 
 
+def _use_utf8_output() -> None:
+    """Print UTF-8 regardless of the console's code page.
+
+    The Windows console defaults to cp1252, which cannot encode the emoji the
+    digest uses, so `agent notify --dry-run` died with a UnicodeEncodeError
+    before printing anything. errors="replace" is the belt-and-braces half: an
+    unprintable character must degrade to a '?' rather than take the whole run
+    down with it. This is display only -- what goes to Telegram is UTF-8 JSON
+    over HTTP and never passes through here.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            # Redirected to something that is not a reconfigurable text stream.
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _use_utf8_output()
     args = _build_parser().parse_args(argv)
     try:
         config = load_config(args.config)

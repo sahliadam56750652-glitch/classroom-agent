@@ -445,3 +445,69 @@ def list_events(
         sql += " LIMIT ?"
         params.append(limit)
     return conn.execute(sql, params).fetchall()
+
+
+# Which table holds the alternate_link for each entity_type an event can name.
+_LINK_TABLES = {
+    "coursework": "coursework",
+    "coursework_material": "coursework_materials",
+    "announcement": "announcements",
+    "submission": "submissions",
+}
+
+
+def entity_links(
+    conn: sqlite3.Connection, rows: Iterable[sqlite3.Row]
+) -> dict[tuple[str, str], str]:
+    """alternate_link per (entity_type, entity_id) for the given events.
+
+    Looked up at compose time rather than copied into the payload, so that
+    events already sitting in the database from earlier phases still get links,
+    and so a link the API later corrects is not frozen in old rows.
+    """
+    wanted: dict[str, set[str]] = {}
+    for row in rows:
+        entity_type = row["entity_type"]
+        if entity_type in _LINK_TABLES:
+            wanted.setdefault(entity_type, set()).add(row["entity_id"])
+
+    links: dict[tuple[str, str], str] = {}
+    for entity_type, ids in wanted.items():
+        table = _LINK_TABLES[entity_type]
+        id_list = list(ids)
+        # Chunked to stay clear of SQLite's variable limit on a big first run.
+        for start in range(0, len(id_list), 500):
+            chunk = id_list[start : start + 500]
+            placeholders = ", ".join("?" for _ in chunk)
+            found = conn.execute(
+                f"SELECT id, alternate_link FROM {table} WHERE id IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            for record in found:
+                if record["alternate_link"]:
+                    links[(entity_type, record["id"])] = record["alternate_link"]
+    return links
+
+
+def mark_notified(
+    conn: sqlite3.Connection, event_ids: Sequence[int], *, now: str | None = None
+) -> int:
+    """Stamp notified_at on the given events and commit. Returns rows changed.
+
+    Called only after a send has actually succeeded, and the commit is what
+    makes "notify exactly once" true: an event with a non-null notified_at is
+    never selected again. The `IS NULL` guard means re-stamping an already-sent
+    event is a no-op rather than a rewritten timestamp.
+    """
+    if not event_ids:
+        return 0
+
+    stamp = now or _utc_now_iso()
+    placeholders = ", ".join("?" for _ in event_ids)
+    cursor = conn.execute(
+        f"UPDATE events SET notified_at = ? WHERE id IN ({placeholders}) "
+        f"AND notified_at IS NULL",
+        [stamp, *event_ids],
+    )
+    conn.commit()
+    return cursor.rowcount
