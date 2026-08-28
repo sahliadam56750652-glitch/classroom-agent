@@ -68,7 +68,7 @@ def test_row_factory_gives_named_access(conn):
 @pytest.mark.parametrize(
     "table",
     ["courses", "coursework", "coursework_materials", "announcements", "submissions",
-     "materials", "study_items", "events", "timetable", "quiz_attempts", "sync_runs"],
+     "materials", "study_items", "events", "quiz_attempts", "sync_runs"],
 )
 def test_every_expected_table_exists(conn, table):
     assert store.count_rows(conn, table) == 0
@@ -281,18 +281,22 @@ def test_open_db_uses_the_configured_path(tmp_path):
     connection.close()
 
 
-@pytest.mark.parametrize("offset,expected", [(1, "newer"), (-1, "older")])
-def test_a_mismatched_schema_version_is_refused(tmp_path, offset, expected):
+# Version 2 is deliberately absent: it is the one version a step exists for,
+# and _migrate_2_to_3 carries it forward instead of refusing it. That path is
+# covered end to end in test_migration.py.
+@pytest.mark.parametrize("version,expected", [(4, "newer"), (1, "older")])
+def test_a_mismatched_schema_version_is_refused(tmp_path, version, expected):
     """CREATE TABLE IF NOT EXISTS cannot add a column to an existing table.
 
     An older file is silently missing columns the code now reads, which would
     surface much later as an opaque "no such column". Refusing at open time with
-    instructions is the only honest option without a migration framework.
+    instructions is the only honest option for a version nothing knows how to
+    carry forward -- and one hand-written step for one version is not a
+    migration framework.
     """
     path = tmp_path / "academic.db"
     connection = store.connect(path)
-    connection.execute("UPDATE schema_version SET version = ? WHERE id = 1",
-                       (store.SCHEMA_VERSION + offset,))
+    connection.execute("UPDATE schema_version SET version = ? WHERE id = 1", (version,))
     connection.commit()
     connection.close()
 
@@ -300,7 +304,7 @@ def test_a_mismatched_schema_version_is_refused(tmp_path, offset, expected):
         store.connect(path)
 
     assert expected in str(err.value)
-    assert "no migration framework" in str(err.value)
+    assert "No step exists to carry version" in str(err.value)
 
 
 # --------------------------------------------------------------------------

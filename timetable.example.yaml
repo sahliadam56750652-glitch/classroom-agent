@@ -1,0 +1,129 @@
+# Copy this file to timetable.yaml and fill it in. timetable.yaml is gitignored.
+#
+# This is my week: which subject meets when, so the gate knows what to make me
+# revise the evening before. It is a file rather than a database table on
+# purpose -- see the note where the table used to be in db/schema.sql.
+#
+# Validate it with `agent timetable --check` after every edit. Everything below
+# is checked at load time, and a file that will not load stops the gate rather
+# than being half-applied.
+
+
+# ---------------------------------------------------------------- subjects
+#
+# The bridge between what I call a subject and what Classroom calls the course.
+# My timetable says "Database"; Classroom says "Database GA 2026". Nothing here
+# is ever matched approximately: a session naming a subject that is not a key
+# below is a load error, because a wrong match gates the WRONG subject, and
+# that failure looks exactly like the gate working.
+#
+# Course ids come from `agent courses`. Quote them -- YAML reads a bare
+# 842149328479 as an integer, and every comparison downstream is against a
+# string.
+#
+# null is legal and normal. Most of my week has no Classroom presence at all,
+# and those subjects still belong here: they appear in the schedule so a day
+# reads like my actual day, and they are never gated. `agent timetable --check`
+# lists them so their absence is a stated fact rather than a silent one.
+subjects:
+  Database:                 "842149328479"   # Database GA 2026
+  DSA:                      "806468143345"   # DSA- pi1A
+  AI:                       "814337506504"   # Fundamentals of AI (2025-2026)
+  OS:                       "840878703017"   # Operating Systems
+  Probability & Statistics: "842730964192"   # Probability & Statistics 2025-26
+  Calculus II:              null             # no Classroom course
+  Linear Algebra:           null
+
+
+# -------------------------------------------------------------- exceptions
+#
+# Days with no sessions, whatever the version below says. Effective dates
+# handle "the timetable was revised mid-term"; they do not handle a public
+# holiday or a reading week, and without these the gate cheerfully prepares me
+# for a lecture that is not happening -- which is how it stops being believed.
+#
+# A bare date is one day. A mapping is an inclusive range.
+exceptions:
+  - 2026-10-15
+  - { from: 2026-12-21, to: 2027-01-03, reason: winter break }
+
+
+# ---------------------------------------------------------------- versions
+#
+# A timetable arrives marked Provisional and gets revised mid-term, so each
+# revision is its own version with the dates it applies to. `status` is carried
+# through to the gate message: acting on a draft is fine, believing it is final
+# is not.
+#
+# Windows must not overlap. Two versions covering one day is an ambiguity this
+# file does not settle, and last-one-wins would answer it silently -- so it is
+# a load error instead. Give the outgoing version an `effective_to` the day
+# before the new one starts.
+#
+# `effective_to: null` (or omitted) means open-ended. A date no version covers
+# means the gate sends nothing, which is the right answer over the summer.
+versions:
+  - label: S1 provisional v1
+    status: provisional          # provisional | confirmed
+    effective_from: 2026-09-14   # inclusive, local dates
+    effective_to: 2027-01-23     # inclusive; omit for open-ended
+
+    # One entry per session. The week runs Monday to Saturday -- `sun` is
+    # rejected by name rather than merely unrecognised.
+    #
+    #   day      mon | tue | wed | thu | fri | sat
+    #   start    "HH:MM", and it MUST be quoted. Unquoted, YAML reads 12:00 as
+    #            the number 720 -- but leaves 08:30 alone, because its pattern
+    #            will not start on a zero. Quoting the mornings and not the
+    #            afternoons therefore looks like it works. `agent timetable
+    #            --check` catches it either way.
+    #   end      "HH:MM". Nominal slots exist but real ones vary, so both ends
+    #            are written out rather than derived from a slot number.
+    #   kind     LEC | TUT | LAB | Project
+    #   subject  a key from `subjects` above
+    #   teacher  belongs to the SESSION, not the subject: Calculus II has one
+    #            lecturer and a different tutor
+    #   room     optional
+    #
+    # Times are here for me to read. The gate fires on the DATE -- the evening
+    # before -- so a session that actually ran 14:45 instead of 13:45 changes
+    # nothing about what it asks me.
+    sessions:
+      - { day: mon, start: "08:30", end: "10:00", kind: LEC,
+          subject: Calculus II, teacher: Ben Salah, room: A12 }
+      - { day: mon, start: "12:00", end: "13:30", kind: LEC,
+          subject: Database, teacher: Gharbi, room: A12 }
+
+      - { day: tue, start: "13:45", end: "15:15", kind: TUT,
+          subject: Calculus II, teacher: Trabelsi, room: B04 }
+      - { day: tue, start: "10:30", end: "12:30", kind: LAB,
+          subject: DSA, teacher: Khelifi, room: Lab1 }
+
+      # A JOINT session: one session, two subjects, two teachers, two rooms.
+      # Write the second subject under `also`. It inherits the session's room
+      # when it does not name its own -- one room said once, not twice.
+      #
+      # Parallel lists (subjects: [...] / teachers: [...]) were rejected for
+      # this: when one list is shorter than another they pair up wrongly and
+      # nothing says so, and the thing that goes wrong is which subject gets
+      # gated.
+      - day: wed
+        start: "10:30"
+        end: "12:30"
+        kind: LAB
+        subject: Database
+        teacher: Gharbi
+        room: Lab3
+        also:
+          - { subject: OS, teacher: Mansour, room: Lab4 }
+
+      - { day: thu, start: "14:45", end: "16:45", kind: Project,
+          subject: AI, teacher: Ben Amor, room: Lab2 }
+
+      - { day: fri, start: "10:30", end: "12:30", kind: LEC,
+          subject: Calculus II, teacher: Ben Salah, room: A12 }
+      - { day: fri, start: "13:45", end: "15:15", kind: LEC,
+          subject: OS, teacher: Mansour, room: C01 }
+
+      - { day: sat, start: "08:30", end: "10:00", kind: TUT,
+          subject: Probability & Statistics, teacher: Jelassi, room: B02 }

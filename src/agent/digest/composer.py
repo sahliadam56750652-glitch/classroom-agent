@@ -169,7 +169,46 @@ def _grade(value: Any) -> str:
     return str(int(number)) if number.is_integer() else f"{number:g}"
 
 
-def render_line(row: Any, *, tz: ZoneInfo | timezone, links: dict[tuple[str, str], str]) -> str:
+def _material_facts(
+    summaries: dict[tuple[str, str], dict[str, int]] | None, row: Any
+) -> str:
+    """' · 34 pages · 4 read by OCR', or '' when nothing is known yet.
+
+    Silent when the files have not been fetched: a briefing that arrives before
+    the fetch stage has run should say less, not say zero.
+    """
+    if not summaries:
+        return ""
+    key = (str(_get(row, "entity_type", "")), str(_get(row, "entity_id", "")))
+    summary = summaries.get(key)
+    if not summary:
+        return ""
+
+    parts = []
+    pages = summary.get("pages") or 0
+    if pages:
+        parts.append(f"{escape(pages)} page{'s' if pages != 1 else ''}")
+
+    # Whether a model had to read it is a fact about how much to trust it, and
+    # Phase 3 will generate questions from exactly this text.
+    transcribed = summary.get("ocr_pages") or 0
+    if transcribed:
+        parts.append(f"{escape(transcribed)} read by OCR")
+
+    unread = (summary.get("scan_pages") or 0) - transcribed
+    if unread > 0:
+        parts.append(f"{escape(unread)} not yet readable")
+
+    return f" · {' · '.join(parts)}" if parts else ""
+
+
+def render_line(
+    row: Any,
+    *,
+    tz: ZoneInfo | timezone,
+    links: dict[tuple[str, str], str],
+    summaries: dict[tuple[str, str], dict[str, int]] | None = None,
+) -> str:
     """One event as one line of HTML. Every interpolated value is escaped."""
     payload = _payload(row)
     event_type = str(_get(row, "type", ""))
@@ -209,6 +248,10 @@ def render_line(row: Any, *, tz: ZoneInfo | timezone, links: dict[tuple[str, str
         count = payload.get("attachment_count") or 0
         if count:
             line += f" · {escape(count)} file{'s' if count != 1 else ''}"
+        # What the files actually amount to. "3 files" says nothing about
+        # whether that is a page of admin or forty pages of lecture notes, and
+        # the difference decides whether it is worth opening tonight.
+        line += _material_facts(summaries, row)
         if event_type == "new_coursework" and payload.get("due_at"):
             line += f" · due {escape(_local(payload.get('due_at'), tz))}"
         return line
@@ -267,6 +310,8 @@ def compose_blocks(
     *,
     timezone_name: str = "UTC",
     links: dict[tuple[str, str], str] | None = None,
+    summaries: dict[tuple[str, str], dict[str, int]] | None = None,
+    unread_by_course: dict[str, int] | None = None,
 ) -> list[Block]:
     """Group events into one block per course, courses ordered by urgency.
 
@@ -279,6 +324,7 @@ def compose_blocks(
 
     tz = display_zone(timezone_name)
     links = links or {}
+    unread_by_course = unread_by_course or {}
 
     grouped: dict[str, list[Any]] = {}
     for row in rows:
@@ -291,7 +337,23 @@ def compose_blocks(
     for name, course_rows in grouped.items():
         course_rows.sort(key=_sort_key)
         lines = [f"<b>{escape(name)}</b>"]
-        lines.extend(render_line(row, tz=tz, links=links) for row in course_rows)
+        lines.extend(
+            render_line(row, tz=tz, links=links, summaries=summaries)
+            for row in course_rows
+        )
+
+        # Said only for a subject already in the briefing, and only when there
+        # is genuinely unread material. Phase 3 builds quizzes from this text,
+        # so a subject the agent cannot fully read is a subject it would quiz
+        # badly -- but a standing "OCR pending" footer on every digest would be
+        # noise, and noise is what gets a briefing swiped away unread.
+        unread = unread_by_course.get(str(_get(course_rows[0], "course_id", "")), 0)
+        if unread:
+            lines.append(
+                f"📖 {escape(unread)} page{'s' if unread != 1 else ''} in this subject "
+                f"{'are' if unread != 1 else 'is'} still unreadable — run <code>agent ocr</code>"
+            )
+
         blocks.append(
             Block(
                 course_name=name,
@@ -310,13 +372,21 @@ def compose(
     *,
     timezone_name: str = "UTC",
     links: dict[tuple[str, str], str] | None = None,
+    summaries: dict[tuple[str, str], dict[str, int]] | None = None,
+    unread_by_course: dict[str, int] | None = None,
 ) -> str | None:
     """The whole briefing as one HTML string, or None when there is nothing.
 
     None is the correct output for a quiet day. Callers must not turn it into
     a cheerful "nothing new" message.
     """
-    blocks = compose_blocks(events, timezone_name=timezone_name, links=links)
+    blocks = compose_blocks(
+        events,
+        timezone_name=timezone_name,
+        links=links,
+        summaries=summaries,
+        unread_by_course=unread_by_course,
+    )
     if not blocks:
         return None
     # Blank line between courses: the boundary split_message() prefers to break

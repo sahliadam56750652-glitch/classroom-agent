@@ -31,3 +31,43 @@ courses:
 # https://api.telegram.org/bot<token>/getUpdates
 telegram:
   chat_id:
+
+# Where study packs are written. Defaults to <data_dir>/library/packs.
+# This is the one path deliberately allowed outside data_dir: pointing it at a
+# Drive-synced folder is how packs reach NotebookLM without this project ever
+# uploading anything (invariant 6 -- drive.readonly cannot upload, and
+# NotebookLM has no API). Relative paths resolve against this file's directory.
+# packs_dir: ../OneDrive/Classroom packs
+
+# Where my week lives: which subject meets when, so the gate knows what to make
+# me revise the evening before. Defaults to timetable.yaml beside this file.
+# Relative paths resolve against this file's directory. Copy
+# timetable.example.yaml to start one, and check it with `agent timetable
+# --check` after every edit.
+# timetable_path: timetable.yaml
+
+ocr:
+  # How many pages one `agent run` may send for transcription.
+  #
+  # The arithmetic, because this number is shared with the quiz and the free
+  # tier is the binding constraint: Gemini allows roughly 20 requests a day,
+  # the scheduler fires `agent run` twice, so 6 x 2 = 12 and about 8 are left
+  # for the gate. A quiz costs one request per lecture and then never again --
+  # the question set is cached against the text it was generated from -- so 8
+  # covers an evening comfortably.
+  #
+  # Raise it and the quiz is what goes without; that is the trade, and it is
+  # worth making deliberately. Set to 0 to leave OCR out of the pipeline.
+  run_limit: 6
+
+# The readiness gate.
+gate:
+  # The share of a quiz's countable questions that has to be right. 0.75 is
+  # three of four. A ratio and not a count, so a lecture too thin for four
+  # questions still has a meaningful pass mark -- and so does one where a bad
+  # question was flagged out of the denominator.
+  pass_ratio: 0.75
+
+  # How many questions to ask for, 3 to 5. The model may return fewer and say
+  # why; fewer honest questions is a better outcome than four invented ones.
+  questions: 4

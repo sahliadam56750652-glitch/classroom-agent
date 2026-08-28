@@ -222,13 +222,49 @@ Check `mimeType` from `drive.files.get(fileId, fields=...)` first, then:
 Use `md5Checksum` from the file metadata to skip re-downloading unchanged
 files across syncs.
 
-**PDFs are mixed, so OCR is required.** Of 5 PDFs sampled by the Phase 0 probe,
-2 carried native text and 3 averaged under 100 extracted characters per page —
-scans. That makes an OCR path mandatory rather than a later nicety, and it has
-to be decided per file, never per course and never for the library as a whole:
-extract with PyMuPDF first, measure characters per page, and fall back to OCR
-below roughly 100. Committing to either answer up front is wrong for most of
-the library.
+**PDFs are mixed, so OCR is required — and the decision is PER PAGE.** Extract
+with PyMuPDF first, measure characters per page, and send anything under
+roughly 100 to OCR. Never decide per course, never for the library as a whole,
+and — the part that is easy to get wrong — **never per file.**
+
+Measured across the tracked library: **71 of 72 PDFs average over 100
+chars/page, while 322 of 1287 individual pages have almost no text.** A
+per-file average classifies all but one document as native and silently loses a
+quarter of the material. The Phase 0 probe's "3 of 5 files look scanned" was
+measured on a five-file sample from a course that is not even tracked, and it
+described the wrong shape entirely.
+
+The real shape is not the scanned document. It is a native slide deck with
+images embedded in the middle of it — diagrams, equations, code screenshots and
+photographed boards — where the surrounding pages are ordinary text. Averaging
+over a file hides exactly the pages that need help, because the native pages
+drown them out.
+
+Classify each page in three ways, not two:
+
+- text at or above the threshold → **native**, keep it
+- below the threshold **and the page carries an image or drawing** → **scan**,
+  send this page to OCR
+- below the threshold with nothing drawn on it → **blank**, a section divider.
+  Do not send it. This is the difference between OCR-ing 322 pages and OCR-ing
+  every sparse page in the library.
+
+Two traps in the signal itself. The PDF producer string does not discriminate:
+in the probe's five samples both the native files and the scanned ones were
+written by "Microsoft: Print To PDF". And image presence alone does not either
+— a genuinely native page measured 46 embedded images. Only chars/page
+separates them, and image presence is a tiebreaker for the low-text pages only.
+
+**A known limit of the threshold:** a page with a full slide of text *and* an
+unreadable diagram scores above 100 and is classified native, so its diagram is
+never transcribed. That is a deliberate floor on cost, not an oversight; raising
+the threshold to catch those pages would send a large part of the library to a
+paid API for very little gain.
+
+**Image attachments are 100% OCR by definition.** A `image/png` or `image/jpeg`
+posted as an attachment has no text layer to fall back on, so it is never
+"unsupported" — it is one page, entirely unread, waiting for OCR. Route it
+through the same path rather than dropping it.
 
 ## Errors
 

@@ -13,8 +13,13 @@ user tables, or role systems.
 - Python 3.13 (pyproject pins >=3.13), standard venv, `pyproject.toml`
 - SQLite (single file) — no ORM, plain `sqlite3` with a thin repository layer
 - `google-api-python-client`, `google-auth-oauthlib` for Classroom + Drive
-- `python-telegram-bot` (async) for the interface
-- PyMuPDF (`fitz`) for PDF text extraction
+- Telegram over plain `urllib` in `notify/telegram.py` for the interface.
+  `python-telegram-bot` was reconsidered at Phase 3 and rejected again: the
+  gate needs long-poll `getUpdates` and a router over five one-letter
+  callback verbs, which is ~120 sync lines against the client that already
+  exists, and an async framework around a sync `sqlite3` store would mean
+  two paradigms for one user
+- PyMuPDF (`import pymupdf`; the `fitz` alias is deprecated) for PDF text extraction
 - Google Gemini for the LLM, always behind the `llm/provider.py` interface
 
 ## Invariants
@@ -59,26 +64,86 @@ src/agent/
   classroom/   client.py  models.py
   db/          schema.sql  store.py
   sync/        poller.py  differ.py  deadlines.py
-  files/       drive.py  extract.py  packs.py
-  llm/         provider.py  gemini.py
-  notify/      telegram.py
+  files/       drive.py  extract.py  packs.py  ocr.py
+  llm/         provider.py
+  notify/      telegram.py  dispatch.py
   digest/      composer.py
-  gate/        timetable.py  scheduler.py  quiz.py
+  gate/        timetable.py  scheduler.py  messages.py  bot.py  quiz.py
 tests/
 data/          academic.db  token.json  library/  logs/
+config.yaml    timetable.yaml          (both hand-edited, both gitignored)
 ```
+
+The timetable is a file, not a table. It is versioned, semester-scoped
+configuration with joint sessions and per-session teachers, none of which the
+old `timetable` table could express, and mirroring it into SQLite would add a
+second source of truth to keep in step. See `gate/timetable.py` and the note
+where the table used to be in `db/schema.sql`.
 
 ## Conventions
 
 - All timestamps stored as UTC ISO-8601 strings. Convert to `Africa/Tunis`
   only at the moment of display.
+- There is no migration framework, and `_migrate_2_to_3` in `db/store.py` is
+  not the start of one -- it is one hand-written step for the one change that
+  had to alter an existing table. Adding a table needs nothing. Altering one
+  means bumping `schema_version`, writing the step, and taking a backup first:
+  `events.notified_at` and `study_items` are the only things in this project
+  that cannot be rebuilt from the API.
 - Every long-running command takes `--dry-run`.
+- The gate is the one part that is deliberately NOT catch-up safe. Invariant 1
+  is about the sync: a prompt for a lecture that already happened is noise, so
+  a gate that has not run for three days fires once, for tomorrow, and not
+  three times. The backlog stays catch-up safe because `study_items` never
+  expire.
+- `callback_data` is ids and one-letter verbs, never content. A subject is
+  addressed by its index in the stored plan, which is why the plan is stored;
+  a quiz option is addressed by its index for the same reason.
+  `gate/messages.py:encode` refuses anything over 64 bytes rather than
+  truncating it into a button that resolves to the wrong row.
+- **`verified` has exactly one writer.** `db/store.py:verify_study_item`, and
+  it re-reads the attempt it is handed and refuses one that did not pass.
+  `verified` is absent from every value in `_TRANSITIONS`, so
+  `advance_study_item` cannot reach it however it is called. Grading is an
+  integer compared against an integer; no model is consulted and there is no
+  code path from `quiz.settle` to a provider.
+- **A question set is cached against a hash of the text it came from**, not
+  against a timestamp -- the same rule as invariant 2. A retry, a restart or a
+  second look costs zero requests; a transcription landing changes the hash and
+  correctly earns a new set. `PROMPT_VERSION` is part of that hash, so editing
+  the prompt retires every stored set.
+- The free tier is ~20 requests a day and it binds. `ocr.run_limit` is 6 and
+  `agent run` fires twice, so OCR takes 12 and the gate has ~8. Raising the OCR
+  limit is spending the quiz's allowance; the arithmetic is written out in
+  `config.example.yaml` so that is a deliberate choice rather than a surprise.
 - Every external call has explicit retry with exponential backoff on 429 and
   5xx. Never a bare `except:`.
 - Secrets come from `.env` (via `python-dotenv`) and never from source.
   `.env`, `credentials.json`, `token.json`, `data/` are all gitignored.
 - Log structured lines to `data/logs/` and record each sync in `sync_runs`.
   A failure that produces no visible output is the worst failure mode here.
+
+## Scheduling
+
+Three separate entries, because they have three different cadences and one of
+them must not inherit another's.
+
+| when | command | why |
+|---|---|---|
+| 07:30, 19:30 | `agent run` | sync → fetch → extract → ocr → packs → deadlines → notify |
+| 20:00 | `agent gate` | tomorrow's revision prompt, after the 19:30 sync has pulled the day's material |
+| at logon | `agent bot` | the long-poll listener; restart-safe, so killing it is harmless |
+
+The quiz has no entry of its own. It is reached by tapping a button, so it
+lives inside `agent bot` -- and generation is lazy, at the moment the button is
+pressed, which is what keeps it to one or two requests an evening.
+`agent quiz --item N --dry-run` prints a set to stdout for judging by eye, and
+`agent flagged` lists everything I have marked as a bad question.
+
+`agent gate` is deliberately **not** a stage of `agent run`. `agent run` fires
+twice a day and the gate must fire once — folding it in would send the prompt
+every morning as well, and `gate_runs.for_date` would silently swallow the
+second one, which is a fix that hides the mistake rather than preventing it.
 
 ## Working style
 

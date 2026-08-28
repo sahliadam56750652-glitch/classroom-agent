@@ -424,3 +424,94 @@ def test_a_corrupt_payload_does_not_lose_the_event():
 
     assert text is not None
     assert "untitled coursework" in text
+
+
+# --------------------------------------------------------------------------
+# what Phase 2 lets the briefing say
+# --------------------------------------------------------------------------
+
+
+def test_a_new_material_line_reports_what_the_files_amount_to():
+    """"3 files" says nothing about a page of admin versus forty pages of notes."""
+    rows = [event(1, "new_material", entity_type="coursework_material",
+                  entity_id="m1", payload={"title": "Chapter 6", "attachment_count": 2})]
+    summaries = {("coursework_material", "m1"): {"files": 2, "pages": 34,
+                                                 "ocr_pages": 0, "scan_pages": 0}}
+
+    html = composer.compose(rows, summaries=summaries)
+
+    assert "2 files" in html
+    assert "34 pages" in html
+
+
+def test_a_line_says_when_a_model_had_to_read_the_pages():
+    """Phase 3 quizzes from this text, so how it was obtained is worth stating."""
+    rows = [event(1, "new_material", entity_type="coursework_material",
+                  entity_id="m1", payload={"title": "Slides"})]
+    summaries = {("coursework_material", "m1"): {"files": 1, "pages": 12,
+                                                 "ocr_pages": 4, "scan_pages": 4}}
+
+    html = composer.compose(rows, summaries=summaries)
+
+    assert "4 read by OCR" in html
+    assert "not yet readable" not in html
+
+
+def test_a_line_says_when_pages_are_still_unreadable():
+    rows = [event(1, "new_material", entity_type="coursework_material",
+                  entity_id="m1", payload={"title": "Scanned handout"})]
+    summaries = {("coursework_material", "m1"): {"files": 1, "pages": 9,
+                                                 "ocr_pages": 1, "scan_pages": 5}}
+
+    html = composer.compose(rows, summaries=summaries)
+
+    assert "4 not yet readable" in html
+
+
+def test_a_line_stays_quiet_when_nothing_has_been_fetched_yet():
+    """A briefing arriving before the fetch stage should say less, not say zero."""
+    rows = [event(1, "new_material", payload={"title": "Chapter 6"})]
+
+    html = composer.compose(rows)
+
+    assert "pages" not in html
+    assert "Chapter 6" in html
+
+
+def test_a_subject_with_unreadable_material_says_so():
+    """Phase 3 would quiz badly on a subject whose text the agent cannot read."""
+    rows = [event(1, "new_material", course_id="c1", payload={"title": "Chapter 6"})]
+
+    html = composer.compose(rows, unread_by_course={"c1": 12})
+
+    assert "12 pages in this subject" in html
+    assert "agent ocr" in html
+
+
+def test_the_unreadable_warning_is_absent_when_everything_is_readable():
+    """A standing footer on every digest is noise, and noise gets swiped away."""
+    rows = [event(1, "new_material", course_id="c1", payload={"title": "Chapter 6"})]
+
+    html = composer.compose(rows, unread_by_course={"c1": 0, "c2": 40})
+
+    assert "unreadable" not in html
+
+
+def test_the_warning_only_names_subjects_actually_in_the_briefing():
+    rows = [event(1, "new_material", course_id="c1", course_name="Databases",
+                  payload={"title": "Chapter 6"})]
+
+    html = composer.compose(rows, unread_by_course={"c2": 99})
+
+    assert "unreadable" not in html
+
+
+def test_page_counts_are_escaped_like_every_other_value():
+    rows = [event(1, "new_material", entity_type="coursework_material",
+                  entity_id="m1", payload={"title": "<b>bold</b>"})]
+    summaries = {("coursework_material", "m1"): {"files": 1, "pages": 3,
+                                                 "ocr_pages": 0, "scan_pages": 0}}
+
+    html = composer.compose(rows, summaries=summaries)
+
+    assert "&lt;b&gt;bold&lt;/b&gt;" in html
