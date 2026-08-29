@@ -20,6 +20,7 @@ from .gate import bot as gate_bot
 from .gate import messages as gate_messages
 from .gate import quiz as gate_quiz
 from .gate import scheduler as gate_scheduler
+from .gate import sections as gate_sections
 from .gate import timetable as timetable_mod
 from .llm import provider as llm_provider
 from .notify import dispatch
@@ -180,7 +181,14 @@ def _build_parser() -> argparse.ArgumentParser:
     ocr_parser.add_argument(
         "--status",
         action="store_true",
-        help="report per-subject and per-file progress; transcribe nothing",
+        help="report the queue order and per-subject progress; transcribe nothing",
+    )
+    ocr_parser.add_argument(
+        "--course",
+        action="append",
+        dest="courses",
+        metavar="ID",
+        help="restrict the queue to one course id or timetable subject; repeatable",
     )
 
     packs_parser = sub.add_parser(
@@ -307,6 +315,26 @@ def _build_parser() -> argparse.ArgumentParser:
         "flagged",
         parents=[shared],
         help="list every quiz question I marked as bad, newest first",
+    )
+
+    sections_parser = sub.add_parser(
+        "sections",
+        parents=[shared],
+        help="print how one study item would be cut into evening-sized windows",
+    )
+    sections_parser.add_argument(
+        "--item",
+        type=int,
+        required=True,
+        metavar="ID",
+        help="the study item to cut up (see `agent studyitems`)",
+    )
+    sections_parser.add_argument(
+        "--pages",
+        type=int,
+        default=gate_sections.DEFAULT_BUDGET,
+        metavar="N",
+        help=f"pages one window may hold (default {gate_sections.DEFAULT_BUDGET})",
     )
 
     bot_parser = sub.add_parser(
@@ -728,6 +756,8 @@ def _do_ocr(
     limit: int | None = None,
     force: bool = False,
     verbose: bool = False,
+    timetabled: list[str] | None = None,
+    courses: list[str] | None = None,
 ) -> ocr.OCRResult:
     """Transcribe unread pages. The only stage in this project that costs money."""
     provider = None
@@ -747,7 +777,7 @@ def _do_ocr(
     try:
         result = ocr.run(
             config, conn, provider=provider, dry_run=dry_run, limit=limit,
-            force=force, verbose=verbose,
+            force=force, verbose=verbose, timetabled=timetabled, courses=courses,
         )
     except Exception as err:
         conn.rollback()
@@ -758,6 +788,96 @@ def _do_ocr(
         conn.commit()
         store.finish_sync_run(conn, run_id, status="ok", items_seen=result.items_seen())
     return result
+
+
+def _timetabled_courses(config: Config) -> tuple[list[str], str | None]:
+    """Course ids named in timetable.yaml, and a note when there are none.
+
+    A broken or absent timetable must not stop OCR. It costs the top tier --
+    everything tracked falls back to one bucket ordered by posting date, which
+    is still the right answer, just a blunter one -- so the note is returned
+    rather than raised, and printed where the ordering is being explained.
+    """
+    try:
+        table = timetable_mod.load(config.timetable_path)
+    except timetable_mod.TimetableError as err:
+        return [], f"timetable not read, so no subject can be preferred: {err}"
+    found = sorted({course for course in table.subjects.values() if course})
+    if not found:
+        return [], "timetable names no Classroom course, so none can be preferred"
+    return found, None
+
+
+def _resolve_courses(config: Config, wanted: list[str] | None) -> list[str]:
+    """--course values as course ids. A value matching nothing is an error.
+
+    A subject NAME is accepted as well as a course id, because a course id is
+    twelve digits and the thing I actually want to force to the front is
+    "Database". The lookup is exact, through the timetable's `subjects:` map --
+    never a near-match. PLAN.md settled that for the gate and it holds here for
+    the same reason: a wrong match sends a day's quota to the wrong subject and
+    looks exactly like the feature working.
+    """
+    if not wanted:
+        return []
+    try:
+        subjects = timetable_mod.load(config.timetable_path).subjects
+    except timetable_mod.TimetableError:
+        subjects = {}
+    by_name = {name.casefold(): course for name, course in subjects.items() if course}
+
+    resolved: list[str] = []
+    for value in wanted:
+        if value in config.tracked_courses or value in subjects.values():
+            resolved.append(value)
+            continue
+        course = by_name.get(value.casefold())
+        if course is None:
+            known = ", ".join(sorted(name for name in subjects if subjects[name])) or "none"
+            raise ConfigError(
+                f"--course {value!r} is neither a tracked course id nor a subject "
+                f"in {config.timetable_path.name}. Subjects with a course: {known}"
+            )
+        resolved.append(course)
+    return list(dict.fromkeys(resolved))
+
+
+def _print_ocr_order(queue: list, would_send: list, limit: int = 8) -> None:
+    """The queue narrowed to files a real run would actually spend requests on.
+
+    `result.queue` is every candidate, finished ones included, because the run
+    still has to merge their cached text back. Leading a cost report with a file
+    that costs nothing would describe the wrong order.
+    """
+    sending = {drive_id for drive_id, _page in would_send}
+    _print_ocr_queue([item for item in queue if item.drive_id in sending], limit=limit)
+
+
+def _print_ocr_queue(items: list, limit: int = 8) -> None:
+    """The head of the queue, so the ordering can be seen rather than trusted.
+
+    The point of prioritisation is that ~12 pages a day means the order IS the
+    outcome. An order nobody can inspect is one that can quietly stop working,
+    which is the same class of defect as a summary that cannot tell two states
+    apart.
+    """
+    if not items:
+        print("  queue: empty -- nothing needs OCR.")
+        return
+
+    head = items[0]
+    print(f"  next: {head.course_name} -- {head.title}")
+    print(f"        posted {head.posted_at or 'date unknown'} ({head.why})")
+    print()
+    print(f"  queue order ({len(items)} file(s), first {min(limit, len(items))} shown):")
+    for position, item in enumerate(items[:limit], start=1):
+        posted = (item.posted_at or "")[:10] or "  unknown "
+        print(
+            f"    {position:>2}. {posted}  {item.course_name[:22]:<22} "
+            f"{item.title[:34]:<34} {item.why}"
+        )
+    if len(items) > limit:
+        print(f"    ... and {len(items) - limit} more")
 
 
 def _print_ocr_status(rows: list, dead: int) -> None:
@@ -815,13 +935,37 @@ def _print_ocr_status(rows: list, dead: int) -> None:
 
 
 def cmd_ocr(config: Config, args: argparse.Namespace) -> int:
+    timetabled, note = _timetabled_courses(config)
+    try:
+        wanted = _resolve_courses(config, getattr(args, "courses", None))
+    except ConfigError as err:
+        print(err, file=sys.stderr)
+        return 1
+
     if args.status:
         conn = store.open_db(config)
         try:
+            pending = ocr.queue(
+                ocr.pending_candidates(conn),
+                store.ocr_candidate_posts(conn),
+                tracked=config.tracked_courses,
+                timetabled=timetabled,
+                courses=wanted or None,
+            )
             rows = store.ocr_progress(conn)
+            if wanted:
+                # --course narrows the whole report, not only its first
+                # section. A queue showing one subject above a progress table
+                # showing eleven reads as the filter having failed.
+                rows = [row for row in rows if row["course_id"] in wanted]
             dead = len(store.dead_references(conn))
         finally:
             conn.close()
+        if note:
+            print(f"  ! {note}")
+            print()
+        _print_ocr_queue(pending)
+        print()
         _print_ocr_status(rows, dead)
         return 0
 
@@ -830,12 +974,15 @@ def cmd_ocr(config: Config, args: argparse.Namespace) -> int:
         result = _do_ocr(
             config, conn, dry_run=args.dry_run, limit=args.limit,
             force=args.force, verbose=args.verbose,
+            timetabled=timetabled, courses=wanted or None,
         )
         states = store.count_ocr_pages_by_status(conn)
         dead = len(store.dead_references(conn))
         reasons = store.ocr_error_counts(conn)
     finally:
         conn.close()
+    if note:
+        print(f"  ! {note}")
     _print_ocr(result, states, dead, reasons)
     return 0
 
@@ -858,6 +1005,11 @@ def _print_ocr(
             print()
             print("  Each one is a model call against the free-tier quota.")
             print("  Use --limit N to work through them over several runs.")
+            print()
+            # Which pages a --limit run spends its allowance on is decided
+            # entirely by this order, so a dry run that hid it would be
+            # reporting the cost without the choice.
+            _print_ocr_order(result.queue, result.would_send)
         return
 
     print(f"ocr complete ({result.files} file(s), {result.pages_considered} page(s) considered)")
@@ -1393,10 +1545,14 @@ def _print_questions(generated: gate_quiz.Generated, config: Config) -> None:
         print(f"  the model noted: {generated.note}")
     if generated.truncated:
         print(f"  material was trimmed at {gate_quiz.MAX_SOURCE_CHARS} characters")
-    need = max(1, round(len(generated.questions) * config.gate_pass_ratio))
-    print(f"  {len(generated.questions)} question(s); "
-          f"{need} of {len(generated.questions)} to pass "
-          f"at {round(config.gate_pass_ratio * 100)}%")
+    total = len(generated.questions)
+    # The smallest score that clears the threshold, worked out the same way
+    # Attempt.passed does it rather than by rounding -- 0.75 of six is five, not
+    # four and a half, and printing the wrong figure here would be worse than
+    # printing none.
+    need = next((k for k in range(total + 1) if k / total >= config.quiz_pass_threshold), total)
+    print(f"  {total} question(s); {need} of {total} to pass "
+          f"at {config.quiz_pass_threshold:g}")
     print()
 
     for number, question in enumerate(generated.questions, start=1):
@@ -1470,6 +1626,95 @@ def cmd_quiz(config: Config, args: argparse.Namespace) -> int:
         print(f"no quiz -- {err}", file=sys.stderr)
         return 1
     except (ConfigError, telegram_api.TelegramError) as err:
+        print(err, file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+
+
+def cmd_sections(config: Config, args: argparse.Namespace) -> int:
+    """How one item would be cut into evening-sized windows. Decides nothing.
+
+    A measurement command, the same kind as `agent extract --dry-run` printing
+    the chars-per-page profile that settled the OCR question. It answers one
+    thing that cannot be answered from a schema: do the boundaries land
+    anywhere a person would have put them? Nothing here writes a row, calls a
+    model, or touches Drive.
+    """
+    conn = store.open_db(config)
+    try:
+        item = gate_scheduler.item_by_id(conn, args.item)
+        if item is None:
+            print(f"No study item with id {args.item}.", file=sys.stderr)
+            return 1
+        if args.pages < 1:
+            print("--pages must be at least 1.", file=sys.stderr)
+            return 1
+
+        print(f"  item {args.item}: {item.label}")
+        print(f"  state: {item.state}, {item.files} file(s), {item.pages} page(s)")
+        print(f"  budget: {args.pages} page(s) per window")
+        print()
+
+        rows = store.study_item_sources(conn, item.entity_type, item.entity_id)
+        if not rows:
+            print("  no extracted text on this post -- nothing to cut up.")
+            return 1
+
+        total_windows = 0
+        unreadable = 0
+        for row in rows:
+            document = gate_sections.read_document(
+                row,
+                config.library_dir,
+                store.ocr_pages_for(conn, str(row["drive_id"])),
+                budget=args.pages,
+            )
+            if document is None:
+                unreadable += 1
+                title = row["file_title"] or row["drive_id"]
+                print(f"  {title}")
+                print(f"    text recorded in the database but not on disk: {row['text_path']}")
+                print()
+                continue
+
+            total_windows += len(document.windows)
+            source = (
+                "slide titles from the PDF bookmarks"
+                if document.titled
+                else "no bookmark table -- cuts fall on the budget alone"
+            )
+            print(f"  {document.title} -- {document.pages} page(s), {source}")
+            print(f"    {document.anchored} of {document.pages} page(s) anchorable by content")
+            if document.untracked_scans:
+                print(
+                    f"    ! OCR has never run over this file, so its "
+                    f"{document.untracked_scans} scan page(s) are unlocated -- the "
+                    f"per-window figures below are incomplete"
+                )
+            for window in document.windows:
+                marks = []
+                if window.snapped:
+                    marks.append("snapped")
+                if window.unread:
+                    marks.append(f"{window.unread} unread")
+                if window.topics > 1:
+                    marks.append(f"{window.topics} topics")
+                suffix = f"   [{', '.join(marks)}]" if marks else ""
+                name = window.title or "(untitled)"
+                if window.continues:
+                    # A topic longer than the budget spans two windows. Said, or
+                    # the same title twice in a row reads as a duplicate row.
+                    name = f"{name} (continued)"
+                head = f"    {window.index + 1:>2}. {window.label:<16} {window.pages:>3}p"
+                print(f"{head}  {name}{suffix}")
+            print()
+
+        print(f"  {total_windows} window(s) across {len(rows) - unreadable} file(s).")
+        if total_windows <= 1:
+            print("  This item is already a session's worth; windowing changes nothing.")
+        return 0
+    except ConfigError as err:
         print(err, file=sys.stderr)
         return 1
     finally:
@@ -1834,6 +2079,7 @@ COMMANDS = {
     "timetable": cmd_timetable,
     "gate": cmd_gate,
     "quiz": cmd_quiz,
+    "sections": cmd_sections,
     "flagged": cmd_flagged,
     "bot": cmd_bot,
     "events": cmd_events,

@@ -72,11 +72,20 @@ class StubUploads:
 
     def __init__(self):
         self.calls: list[str] = []
+        self.bodies: list[bytes] = []
 
     def __call__(self, url, body, content_type):
         self.calls.append(content_type)
+        self.bodies.append(body)
         return {"ok": True, "result": {"message_id": 99,
                                        "document": {"file_id": "F1", "file_size": 10}}}
+
+    def filenames(self) -> list[str]:
+        return [
+            body.split(b'filename="')[1].split(b'"')[0].decode("utf-8")
+            for body in self.bodies
+            if b'filename="' in body
+        ]
 
 
 @pytest.fixture
@@ -552,3 +561,75 @@ def test_the_loop_only_asks_for_the_updates_it_acts_on(conn, config):
     bot.poll(conn, config, client(transport), tz=TUNIS, timeout=0, once=True)
     asked = transport.named("getUpdates")[0]
     assert asked["allowed_updates"] == ["callback_query", "message"]
+
+
+# --------------------------------------------------------------- filenames
+
+def test_a_delivered_document_is_named_after_the_lecture(conn, config, table):
+    """The library is keyed by Drive id. A phone full of
+    11kqW48qFWWRMiWNUmOK69ZlkTQeKIgye.pdf is a library I cannot use."""
+    post(conn)
+    run_id, _ = make_run(conn, config, table)
+    uploads = StubUploads()
+
+    press(conn, config, client(StubTransport(), uploads),
+          messages.encode("g", run_id, "s0"))
+
+    assert uploads.filenames() == ["d1.pdf"]
+
+
+def test_the_drive_title_is_what_reaches_the_phone(conn, config, table):
+    post(conn)
+    conn.execute("UPDATE materials SET title = ? WHERE drive_id = 'd1'",
+                 ("Chapter 1 : arbres / listes.pdf",))
+    conn.commit()
+    run_id, _ = make_run(conn, config, table)
+    uploads = StubUploads()
+
+    press(conn, config, client(StubTransport(), uploads),
+          messages.encode("g", run_id, "s0"))
+
+    assert uploads.filenames() == ["Chapter 1 arbres listes.pdf"]
+
+
+def test_a_title_with_no_extension_gains_the_real_one(conn, config, table):
+    """A Google-native document has no extension in Drive and is exported to
+    PDF locally, so the phone needs telling what to open it with."""
+    post(conn)
+    conn.execute("UPDATE materials SET title = 'Chapter 1' WHERE drive_id = 'd1'")
+    conn.commit()
+    run_id, _ = make_run(conn, config, table)
+    uploads = StubUploads()
+
+    press(conn, config, client(StubTransport(), uploads),
+          messages.encode("g", run_id, "s0"))
+
+    assert uploads.filenames() == ["Chapter 1.pdf"]
+
+
+def test_a_title_whose_extension_disagrees_with_the_bytes_keeps_both(conn, config, table):
+    """Substituting would hide what it was called; appending leaves a file that
+    opens and a name that still says where it came from."""
+    post(conn)
+    conn.execute("UPDATE materials SET title = 'notes.docx' WHERE drive_id = 'd1'")
+    conn.commit()
+    run_id, _ = make_run(conn, config, table)
+    uploads = StubUploads()
+
+    press(conn, config, client(StubTransport(), uploads),
+          messages.encode("g", run_id, "s0"))
+
+    assert uploads.filenames() == ["notes.docx.pdf"]
+
+
+def test_a_missing_title_falls_back_to_the_local_name(conn, config, table):
+    post(conn)
+    conn.execute("UPDATE materials SET title = NULL WHERE drive_id = 'd1'")
+    conn.commit()
+    run_id, _ = make_run(conn, config, table)
+    uploads = StubUploads()
+
+    press(conn, config, client(StubTransport(), uploads),
+          messages.encode("g", run_id, "s0"))
+
+    assert uploads.filenames() == ["d1.pdf"]

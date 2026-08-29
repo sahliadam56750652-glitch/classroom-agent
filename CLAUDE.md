@@ -69,6 +69,7 @@ src/agent/
   notify/      telegram.py  dispatch.py
   digest/      composer.py
   gate/        timetable.py  scheduler.py  messages.py  bot.py  quiz.py
+               sections.py
 tests/
 data/          academic.db  token.json  library/  logs/
 config.yaml    timetable.yaml          (both hand-edited, both gitignored)
@@ -116,6 +117,22 @@ where the table used to be in `db/schema.sql`.
   `agent run` fires twice, so OCR takes 12 and the gate has ~8. Raising the OCR
   limit is spending the quiz's allowance; the arithmetic is written out in
   `config.example.yaml` so that is a deliberate choice rather than a surprise.
+- **At 12 pages a day the OCR ORDER is the whole feature.** The queue is sorted
+  by (tier, posting date descending, drive_id): tracked-and-timetabled first,
+  then tracked, then everything else, and newest material first within each.
+  Otherwise a backlog of archived courses starves a new term's slides for a
+  fortnight, and the gate cannot quiz on pages nothing has read. The order is a
+  function of the material only -- never of the clock or of OCR progress -- so a
+  queue drained six pages at a time resumes where it left off. `agent ocr
+  --status` prints the head of it, and `agent ocr --course <id|subject>` forces
+  one subject when the gate needs it. See `files/ocr.py:queue`.
+  Quiz LENGTH is not part of that trade: one request returns the whole set
+  whatever `quiz.question_count` says, so a longer quiz costs my time and not
+  quota. Six questions, five to pass -- `quiz.pass_threshold` is a fraction
+  because a flagged question leaves the denominator.
+- A document is delivered under its Drive title, not its Drive id
+  (`gate/messages.py:document_filename`). A `file_id` keeps the filename it was
+  uploaded with, so changing that rule means `DELETE FROM telegram_files`.
 - Every external call has explicit retry with exponential backoff on 429 and
   5xx. Never a bare `except:`.
 - Secrets come from `.env` (via `python-dotenv`) and never from source.
@@ -128,17 +145,31 @@ where the table used to be in `db/schema.sql`.
 Three separate entries, because they have three different cadences and one of
 them must not inherit another's.
 
-| when | command | why |
-|---|---|---|
-| 07:30, 19:30 | `agent run` | sync → fetch → extract → ocr → packs → deadlines → notify |
-| 20:00 | `agent gate` | tomorrow's revision prompt, after the 19:30 sync has pulled the day's material |
-| at logon | `agent bot` | the long-poll listener; restart-safe, so killing it is harmless |
+| when | how | command | why |
+|---|---|---|---|
+| 07:30, 19:30 | Task Scheduler | `agent run` | sync → fetch → extract → ocr → packs → deadlines → notify |
+| 20:00 | Task Scheduler | `agent gate` | tomorrow's revision prompt, after the 19:30 sync has pulled the day's material |
+| at logon | Startup `.vbs` → `pythonw.exe` | `agent bot` | the long-poll listener; restart-safe, so killing it is harmless |
+
+The bot is the odd one out, and deliberately. A Task Scheduler entry that runs
+without a visible console window needs the S4U logon type, which requires
+administrator rights this account does not have -- so the listener starts from a
+`.vbs` in the Startup folder calling `pythonw.exe`, which is windowless and runs
+as the ordinary user. It is a crude mechanism and it costs nothing, because
+`agent bot` holds no state a restart could lose.
 
 The quiz has no entry of its own. It is reached by tapping a button, so it
 lives inside `agent bot` -- and generation is lazy, at the moment the button is
 pressed, which is what keeps it to one or two requests an evening.
 `agent quiz --item N --dry-run` prints a set to stdout for judging by eye, and
 `agent flagged` lists everything I have marked as a bad question.
+
+`agent sections --item N [--pages N]` has no entry either, and nothing acts on
+it yet. It prints how a long post would be cut into evening-sized windows -- a
+measurement command in the family of `agent extract --dry-run` and
+`agent ocr --status`, there so the boundaries can be judged by eye before
+anything is built on them. See `gate/sections.py` and the open problem at the
+end of `PLAN.md`.
 
 `agent gate` is deliberately **not** a stage of `agent run`. `agent run` fires
 twice a day and the gate must fire once — folding it in would send the prompt

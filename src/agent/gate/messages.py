@@ -35,9 +35,10 @@ character means the whole prompt silently fails to arrive.
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 from typing import Any
 
-from ..notify.telegram import MESSAGE_LIMIT, escape, link
+from ..notify.telegram import MESSAGE_LIMIT, escape, link, safe_filename
 from .quiz import Attempt, Question, Result
 from .scheduler import MAX_SUBJECT_BUTTONS, GatePlan, Item, Subject
 
@@ -271,6 +272,23 @@ def item_keyboard(run_id: int, item: Item) -> dict[str, Any]:
         ]
     )
     return {"inline_keyboard": rows}
+
+
+def document_filename(title: str, path) -> str:
+    """What a lecture should be called once it is on my phone.
+
+    The Drive title, with the extension of the bytes actually being sent. Those
+    two can disagree: a Google-native document has no extension in Drive and is
+    exported to PDF locally, so "Chapter 1" has to become "Chapter 1.pdf" or
+    the phone will not know what to open it with. Where the title already
+    carries a different extension the real one is appended rather than
+    substituted -- the file opens, and what it was called is still visible.
+    """
+    actual = Path(path).suffix
+    name = safe_filename(title, fallback=Path(path).stem or "attachment")
+    if actual and not name.lower().endswith(actual.lower()):
+        name = f"{name}{actual}"
+    return safe_filename(name, fallback=Path(path).name)
 
 
 def document_caption(title: str, pages: int | None) -> str:

@@ -235,8 +235,8 @@ def test_config_type_is_exported():
         "packs_dir_override",
         "timetable_path_override",
         "ocr_run_limit",
-        "gate_pass_ratio",
-        "gate_questions",
+        "quiz_pass_threshold",
+        "quiz_question_count",
     }
 
 
@@ -355,51 +355,64 @@ def test_the_token_never_comes_from_config_yaml(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# the gate section
+# the quiz section
 # --------------------------------------------------------------------------
 
-def test_the_gate_defaults_need_no_config(tmp_path):
+def test_the_quiz_defaults_need_no_config(tmp_path):
     config = load_config(write_config(tmp_path, COMPLETE))
-    assert config.gate_pass_ratio == 0.75
-    assert config.gate_questions == 4
+    assert config.quiz_pass_threshold == 0.75
+    assert config.quiz_question_count == 6
 
 
-def test_the_gate_section_is_read(tmp_path):
+def test_the_quiz_section_is_read(tmp_path):
     path = write_config(tmp_path, COMPLETE + """
-gate:
-  pass_ratio: 0.5
-  questions: 3
+quiz:
+  pass_threshold: 0.5
+  question_count: 3
 """)
     config = load_config(path)
-    assert config.gate_pass_ratio == 0.5
-    assert config.gate_questions == 3
+    assert config.quiz_pass_threshold == 0.5
+    assert config.quiz_question_count == 3
 
 
-def test_a_pass_ratio_written_as_a_percentage_is_refused(tmp_path):
+def test_either_key_can_be_set_on_its_own(tmp_path):
+    path = write_config(tmp_path, COMPLETE + "\nquiz:\n  question_count: 8\n")
+    config = load_config(path)
+    assert config.quiz_question_count == 8
+    assert config.quiz_pass_threshold == 0.75
+
+
+def test_a_threshold_written_as_a_percentage_is_refused(tmp_path):
     """75 instead of 0.75 makes every quiz unpassable and looks like bad luck."""
-    path = write_config(tmp_path, COMPLETE + "\ngate:\n  pass_ratio: 75\n")
+    path = write_config(tmp_path, COMPLETE + "\nquiz:\n  pass_threshold: 75\n")
     with pytest.raises(ConfigError) as err:
         load_config(path)
-    assert "between 0 and 1" in str(err.value)
+    assert "fraction, not a percentage" in str(err.value)
 
 
-def test_a_pass_ratio_of_zero_is_refused(tmp_path):
+def test_a_threshold_of_zero_is_refused(tmp_path):
     """It would pass a quiz with every answer wrong."""
-    path = write_config(tmp_path, COMPLETE + "\ngate:\n  pass_ratio: 0\n")
+    path = write_config(tmp_path, COMPLETE + "\nquiz:\n  pass_threshold: 0\n")
     with pytest.raises(ConfigError):
         load_config(path)
 
 
-@pytest.mark.parametrize("count", [0, 1, 2, 6, 40])
+@pytest.mark.parametrize("count", [0, 1, 2, 11, 40])
 def test_an_out_of_range_question_count_is_refused(tmp_path, count):
-    path = write_config(tmp_path, COMPLETE + f"\ngate:\n  questions: {count}\n")
+    path = write_config(tmp_path, COMPLETE + f"\nquiz:\n  question_count: {count}\n")
     with pytest.raises(ConfigError) as err:
         load_config(path)
-    assert "gate.questions" in str(err.value)
+    assert "quiz.question_count" in str(err.value)
 
 
-def test_a_non_mapping_gate_section_is_refused(tmp_path):
-    path = write_config(tmp_path, COMPLETE + "\ngate: 0.75\n")
+@pytest.mark.parametrize("count", [3, 6, 10])
+def test_the_ends_of_the_range_are_accepted(tmp_path, count):
+    path = write_config(tmp_path, COMPLETE + f"\nquiz:\n  question_count: {count}\n")
+    assert load_config(path).quiz_question_count == count
+
+
+def test_a_non_mapping_quiz_section_is_refused(tmp_path):
+    path = write_config(tmp_path, COMPLETE + "\nquiz: 0.75\n")
     with pytest.raises(ConfigError) as err:
         load_config(path)
     assert "must be a mapping" in str(err.value)
@@ -411,8 +424,19 @@ def test_the_question_bounds_match_the_quiz_module():
     from agent.gate import quiz
 
     assert (MIN_QUESTIONS, MAX_QUESTIONS) == (quiz.MIN_QUESTIONS, quiz.MAX_QUESTIONS)
-    assert Config.gate_questions == quiz.DEFAULT_QUESTIONS
-    assert Config.gate_pass_ratio == quiz.DEFAULT_PASS_RATIO
+    assert Config.quiz_question_count == quiz.DEFAULT_QUESTIONS
+    assert Config.quiz_pass_threshold == quiz.DEFAULT_PASS_RATIO
+
+
+def test_the_example_config_is_what_the_defaults_say(tmp_path):
+    """config.example.yaml documents six and 0.75; a drift between the file and
+    the code would be a comment that lies."""
+    import yaml
+
+    raw = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
+    assert raw["quiz"]["question_count"] == Config.quiz_question_count
+    assert raw["quiz"]["pass_threshold"] == Config.quiz_pass_threshold
+    assert raw["ocr"]["run_limit"] == Config.ocr_run_limit
 
 
 def test_the_ocr_run_limit_leaves_room_for_the_quiz():

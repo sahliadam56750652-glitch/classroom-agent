@@ -36,8 +36,15 @@ before notify isolated so no failure can suppress the briefing. `agent fetch`,
 `agent missing` all exist alongside the Phase 1 commands.
 
 **Phase 3 — complete, in three commits.** The LLM layer and the readiness
-gate. `llm/provider.py` already existed and was in production use for OCR, so
-Phase 3 inherited a working, tested provider rather than starting one.
+gate: timetable configuration with versions, exceptions and joint sessions; the
+evening gate batching by subject with Telegram buttons; and quiz generation,
+caching, grading and flagging. `llm/provider.py` already existed and was in
+production use for OCR, so Phase 3 inherited a working, tested provider rather
+than starting one.
+
+The feature the project exists for now runs end to end: the prompt arrives the
+evening before, the material is delivered on a tap, and the only way to
+`verified` is a quiz passed against the lecture's own text.
 
 - **3a — complete.** Schema v3, the timetable, and the course mapping. No LLM,
   no bot, nothing sends.
@@ -46,6 +53,11 @@ Phase 3 inherited a working, tested provider rather than starting one.
   `verified`.
 - **3c — complete.** Quiz generation, question caching, grading, and the 🚩
   flag button. The LLM enters here and nowhere else.
+- **3d — approach settled, stage 1 built.** How a gate is scoped to a session's
+  worth when a post is a 92-page chapter. `gate/sections.py` and
+  `agent sections` compute and print the windows; nothing yet acts on them. See
+  the open problem at the end of this file for what was measured, what was
+  chosen, and what is deliberately waiting for September.
 
 **`study_items` is seeded: 67 rows, every one `skipped` with
 `skip_source = 'seed'`.** (An earlier version of this file said the table held
@@ -172,10 +184,9 @@ What 3b settled:
 `LLMProvider` gained `generate_json`, and the quiz reaches `verified` from a
 button. `quiz_questions` and `quiz_flags` were added as new tables, so again no
 version bump. Verified against the real account and real lecture text: study
-item 8 (Chapter 1, 92 pages, 14 of 14 transcribed) generated four grounded
-questions citing pages 14, 26, 55 and 90, the second run of the same command
-cost zero requests, and the quiz arrived on the phone as one message that edits
-in place.
+item 8 (Chapter 1, 92 pages, 14 of 14 transcribed) generated grounded questions
+citing pages 14, 26, 55 and 90, the second run of the same command cost zero
+requests, and the quiz arrived on the phone as one message that edits in place.
 
 What 3c settled:
 
@@ -203,6 +214,21 @@ What 3c settled:
   refusal, retirement, a bad key, and nothing readable are seven distinct
   outcomes, and in every one of them the item stays `reviewed`. The recurring
   lesson below, applied before it could be relearned.
+- **A quiz is six questions and a pass is five of them.** Settled after the
+  first real one: four questions is not much evidence about a 92-page lecture,
+  and the length is free — one request returns the whole set whatever its size,
+  so the cost is my time and not the day's quota. Five of six rather than four
+  is the arithmetic of guessing: through four options, four of six comes up
+  3.8% of the time at random and 10% for someone who can eliminate one
+  distractor, which is exactly the half-remembering state the gate exists to
+  catch. Five of six is 1.8%. The threshold stays a fraction (0.75) because the
+  denominator moves — a short set, or a question flagged out of the count.
+- **Documents are delivered under their real title.** The library is keyed by
+  Drive id, so lectures arrived as `11kqW48qFWWRMiWNUmOK69ZlkTQeKIgye.pdf`
+  until `messages.document_filename` composed the Drive title with the
+  extension of the bytes actually being sent. A `file_id` carries the name it
+  was first uploaded under, so the fix also meant clearing `telegram_files` —
+  which is free, and is why the schema note there says so.
 
 Three things 3a settled that the plan did not anticipate:
 
@@ -328,6 +354,95 @@ deadline alerts still arrive by Telegram independently of the web client.
   an archived academic year, so nothing in it is urgent, and the per-page cache
   means the cost is paid once and never again.
 
+- **Because the allowance is ~12 pages a day, the OCR QUEUE ORDER decides what
+  gets read at all.** Sorted by (tier, posting date descending, drive_id), where
+  the tiers are tracked-and-in-timetable, tracked, then everything else. The
+  reason is arithmetic rather than taste: 279 pages of archived material ahead
+  of a new term's slides is a fortnight in which the gate cannot quiz on
+  anything I am actually being taught, and an item it cannot read is an item it
+  can only deliver.
+
+  Two things the order deliberately does NOT depend on. Not the clock -- the
+  timetable contributes the courses it NAMES, not the ones meeting this week,
+  because a queue that reshuffles every Monday is invariant 1's mistake wearing
+  a different hat. And not OCR progress -- nothing in the sort key changes as
+  pages are transcribed, which is what lets `--limit 6` twice a day walk the
+  whole queue instead of re-picking its head. Both are pinned by tests.
+
+  `agent ocr --status` prints the head of the queue with the reason for each
+  position, because an ordering nobody can inspect is one that can quietly stop
+  working. `agent ocr --course <id|subject>` is the manual override; it resolves
+  a subject name through `timetable.yaml` exactly and refuses anything it cannot
+  match, for the same reason the gate's subject mapping is never fuzzy.
+
+- **The gate fires ONCE per day, the evening before, covering tomorrow's
+  subjects.** Not once per session. The real week is ~20 sessions across ~11
+  subjects, so a per-session prompt would arrive three times a day and be muted
+  inside a fortnight. A subject meeting twice tomorrow is one entry showing both
+  times; a joint session expands to both of its subjects. This is also why the
+  gate is deliberately not catch-up safe: a gate that has not run for three days
+  fires once, for tomorrow, and not three times.
+
+- **A quiz is six questions and a pass is 0.75 — five of six.** Four questions
+  is not much evidence about a 92-page chapter, and the length is free: one
+  request returns the whole set whatever its size, so the cost is my time and
+  not the day's quota. Five rather than four is the arithmetic of guessing.
+  Through four options, six questions:
+
+  | | pure guess | one distractor eliminated |
+  |---|---|---|
+  | 3 of 6 | 16.9% | 32.0% |
+  | 4 of 6 | 3.8% | 10.0% |
+  | 5 of 6 | 0.5% | 1.8% |
+
+  Four of six is a one-in-ten walk-through for someone who half-remembers the
+  lecture well enough to discard one distractor — precisely the state this gate
+  exists to catch. `0.75` expresses it without a special case, because 4/6 is
+  0.667 and does not clear the bar.
+
+- **`quiz.pass_threshold` is a fraction, not a count, because flagging shrinks
+  the denominator.** A count would have to be re-derived every time the set is
+  short or a question is flagged out of it, and the same 0.75 reads correctly at
+  every length: 3 of 4, 4 of 5, 5 of 6, 6 of 7, 6 of 8.
+
+- **A flagged question leaves the denominator rather than counting as wrong.**
+  Flagging must never cost me the pass. If it did, every 🚩 would be a choice
+  between being honest about a bad question and protecting my own coverage
+  figure, and I would stop pressing it — which would lose the only signal there
+  is about generation quality. Flagging *every* question cannot pass: that is a
+  statement that the set was bad, not a way through, and it retires the set.
+
+- **`verified` has exactly one writer: `store.verify_study_item`.** It re-reads
+  the attempt it is handed and refuses one that did not pass, so the guarantee
+  is a query rather than a convention. `verified` is absent from every value in
+  `_TRANSITIONS`, so `advance_study_item` cannot reach it however it is called,
+  and no button anywhere can — pinned by a test that presses all of them and
+  asserts the count stays zero. Everything Phase 4's coverage figure claims
+  rests on this one function.
+
+- **A Telegram `file_id` caches the filename it was first uploaded under, and
+  cannot be renamed.** Sending by id costs no upload and sidesteps the 50 MB
+  ceiling, which is why it is always preferred — but the name travels with it.
+  Changing the naming rule therefore means `DELETE FROM telegram_files`; each
+  row then costs one re-upload and nothing else. That is exactly what was needed
+  when delivery stopped naming lectures after their Drive id.
+
+- **Timetable times MUST be quoted in `timetable.yaml`.** YAML 1.1 reads an
+  unquoted `12:00` as the sexagesimal integer 720, and `13:45` as 825 — but
+  `08:30` survives as a string, because the pattern will not start on a zero.
+  So quoting only the mornings *looks* like it works and then fails every
+  afternoon session. `gate/timetable.py` rejects an integer where a time was
+  expected and names the quoted form it wanted, and there is a test pinning the
+  asymmetry so nobody "simplifies" the quotes away.
+
+- **The bot autostarts from a Startup `.vbs` calling `pythonw.exe`, not from a
+  scheduled task.** A Task Scheduler entry that survives without a visible
+  console needs the S4U logon type, which requires administrator rights this
+  account does not have. The `.vbs` runs at logon under the normal user, and
+  `pythonw.exe` keeps it windowless. `agent bot` is restart-safe by design, so
+  killing it is harmless and the crude mechanism costs nothing. `agent run` and
+  `agent gate` remain ordinary Task Scheduler entries.
+
 - **Network errors must be caught as `OSError` AND
   `http.client.HTTPException`, never as `URLError`.** `TimeoutError`,
   `ConnectionResetError`, `socket.gaierror` and `ssl.SSLError` are *not*
@@ -427,3 +542,104 @@ is running — the tracked list is curated by hand and always will be.
   has no study items at all**, because all 20 of its attachments are 404. An
   empty subject must render as "no readable material" and never as "up to
   date".
+
+---
+
+## Open problem — a study item is the wrong unit (approach settled in 3d)
+
+**Approach settled in Phase 3d; the mechanism is deliberately not built yet.**
+
+One study item is one Classroom post. That was settled in the schema for good
+reasons -- a per-attachment key would have meant rebuilding the database and
+losing `notified_at` on 113 events -- and for most posts it is the right unit.
+
+It is the wrong unit for the posts that matter most. A post can be a 92-page
+chapter that a professor teaches over a month. The gate treats it as a single
+thing to be reviewed before a single session, so the prompt effectively asks for
+the whole chapter in one evening. That is more than an evening allows, and a
+gate that asks for something impossible is a gate that gets skipped -- which
+converts an honest `skipped` into the normal case and makes the coverage figure
+meaningless in the direction that flatters me.
+
+What is NOT the answer: making readiness proportional, or lowering the pass
+mark. Both would make the gate easier to satisfy without making it more
+truthful, and the whole value of `verified` is that it is hard to reach
+dishonestly.
+
+### What 3d measured
+
+Against the real library rather than by estimate:
+
+- **The distribution is bimodal.** The median study item is **3 pages**. But 14
+  items (22%) are over 30 pages and they hold **999 of 1290 pages (77%)**. So a
+  mechanism that is a no-op below a threshold leaves seven items in ten exactly
+  as they are, which is what makes one safe to add at all.
+- **Most long documents have no structure to split on.** Five of the sixteen
+  largest PDFs carry a bookmark table; eleven carry none. Where one exists it is
+  PowerPoint's per-slide export, so a *run of identical titles is a topic*.
+- **The obvious fallback does not work, and this was tested rather than
+  assumed.** Taking the first non-empty line of each page as its title
+  reproduces the bookmark table where one already exists (155 pages gave 22 runs
+  either way) and collapses everywhere else: 126 runs from 129 pages, 57 from
+  57, 27 from 29. It is the same signal, not a second one.
+- **A page can be identified by its content.** A sha256 of a page's normalised
+  text, falling back to its transcription where the page is a scan, is unique
+  across **1093 of 1094 pages** in those documents -- zero collisions, one
+  genuinely blank page.
+
+### The approach
+
+A **page-budget window snapped to a title run where one is in reach**, with the
+cursor anchored by content hash. Rejected alternatives and why:
+
+- **Elapsed time since posting** is rejected outright, not merely not chosen. It
+  computes what to do from a wall-clock window, which is the shape invariant 1
+  exists to forbid, and it produces a confident number unrelated to what I have
+  actually read -- the failure the recurring lesson above is about.
+- **Stored sections** are rejected because the boundary problem is unsolvable
+  for eleven of sixteen real documents, so any design that *depends* on good
+  boundaries bets on data that is not there; and stored sections would need
+  reconciling against new pages after every re-fetch, which is a second source
+  of truth about which pages belong together.
+- **Doing nothing** loses the 22% of items holding 77% of the pages to Skip, and
+  leaves the current strict readiness rule blocking the biggest documents
+  permanently -- CHAPTER 2 is 155 pages with 26 scans and none transcribed.
+
+Two constraints the mechanism must meet, both already designed for:
+
+- **Questions stay grounded in what was presented.** `render_pages` gains an
+  optional page range and stays the only splicer; `Sources.fingerprint` gains
+  the window so each caches its own set; and since `_question_from` already
+  parses `source_page`, a question citing a page outside the window is
+  *detectable* and dropped. The guarantee is a comparison, not an instruction to
+  the model.
+- **The cursor survives a changed checksum**, because it stores the content hash
+  of the last page covered rather than its index. Absent on a re-fetch means the
+  slide was edited or deleted, and that is said out loud rather than silently
+  falling back.
+
+### What is built, and what is not
+
+**Built (3d stage 1): `gate/sections.py` and `agent sections --item N
+[--pages N]`.** Pure computation over the text and PDFs already on disk -- no
+schema change, no gate change, no quiz change, no model call, no row written.
+This is a measurement command in the same family as `agent extract --dry-run`
+and `agent ocr --status`: it answers the one question a schema cannot, which is
+whether the boundaries land where a person would have put them. On study item 8
+they do -- 92 pages become six windows opening on "Introduction to C++",
+"Basic instructions", "Iteration Statements", "Subprograms" and
+"Time complexity".
+
+**Not built, deliberately: everything that changes behaviour.** The cursor
+table, the gate message, window-scoped `collect`, per-window readiness, and the
+per-window `verified` rule all wait for September. The reason is that waiting
+costs nothing structurally -- a cursor table is a *new* table, and this project
+has no migration cost for those -- while the one number the design turns on, how
+many pages a session actually covers, is a guess until a real session happens.
+`gate.window_pages` is therefore an argument everywhere and a constant nowhere,
+and 20 is a starting value rather than a measured one.
+
+There are also no `pending` study items to exercise a gate against: all 67 are
+`skipped` with `skip_source = 'seed'`. Nothing here should touch `study_items`,
+`quiz.settle` or `verify_study_item` -- those are the honesty guarantees, and
+they must not move for a problem whose parameters are still guessed.

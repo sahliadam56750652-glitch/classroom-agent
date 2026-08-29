@@ -140,6 +140,11 @@ class OCRResult:
     attempted: int = 0
     never_attempted: int = 0
 
+    # The order this run actually worked in, head first. Carried so a dry run
+    # and the run summary can SHOW the prioritisation rather than assert it:
+    # an ordering nobody can see is one nobody can tell has stopped working.
+    queue: list["Ranked"] = field(default_factory=list)
+
     @property
     def call_failures(self) -> int:
         """Calls issued that produced no text. attempted - transcribed."""
@@ -244,6 +249,9 @@ def _candidates(db: sqlite3.Connection) -> list[sqlite3.Row]:
 
     Image attachments qualify unconditionally; PDFs qualify on the scan_pages
     the extract stage counted.
+
+    Ordered by drive_id, which is the tiebreaker `queue` sorts on top of rather
+    than the order anything is actually transcribed in.
     """
     placeholders = ", ".join("?" for _ in IMAGE_MIMES)
     return db.execute(
@@ -253,6 +261,176 @@ def _candidates(db: sqlite3.Connection) -> list[sqlite3.Row]:
         f" ORDER BY drive_id",
         tuple(sorted(IMAGE_MIMES)),
     ).fetchall()
+
+
+def pending_candidates(db: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Candidate files that still have a page nothing has successfully read.
+
+    `_candidates` narrowed to what is left to do. The run itself wants the wide
+    list -- a finished file still has to be merged back into its text -- but a
+    report about what happens NEXT must not lead with a file that is already
+    done, or the queue it shows is not the queue it will work.
+    """
+    placeholders = ", ".join("?" for _ in IMAGE_MIMES)
+    return db.execute(
+        f"SELECT * FROM extractions e "
+        f" WHERE e.status = 'ok' AND e.local_path IS NOT NULL "
+        f"   AND (e.scan_pages > 0 OR e.mime_type IN ({placeholders})) "
+        f"   AND MAX(e.scan_pages, 1) > ("
+        f"       SELECT COUNT(*) FROM ocr_pages o "
+        f"        WHERE o.drive_id = e.drive_id AND o.status = 'ok') "
+        f" ORDER BY e.drive_id",
+        tuple(sorted(IMAGE_MIMES)),
+    ).fetchall()
+
+
+# --------------------------------------------------------------------------
+# what gets transcribed first
+# --------------------------------------------------------------------------
+
+# Three tiers, best first. The free tier is ~20 requests a day and `agent run`
+# fires twice at ocr.run_limit = 6, so the queue drains at roughly 12 pages a
+# day. At that rate the ORDER is the whole feature: 279 pages of archived
+# material ahead of a new term's slides is a fortnight during which the gate
+# cannot quiz on anything I am actually being taught.
+#
+#   0  tracked AND named in timetable.yaml -- a subject that actually meets
+#   1  tracked -- synced, gateable, but nothing in the week points at it
+#   2  everything else -- last year's archive, and material for courses I
+#      chose not to track. Still transcribed, but only once the rest is done.
+TIER_TIMETABLED = 0
+TIER_TRACKED = 1
+TIER_OTHER = 2
+
+TIER_NAMES = {
+    TIER_TIMETABLED: "tracked, in timetable",
+    TIER_TRACKED: "tracked",
+    TIER_OTHER: "not tracked",
+}
+
+
+@dataclass(frozen=True)
+class Post:
+    """One course's claim on a file: when it was posted there, and under what name."""
+
+    course_id: str
+    posted_at: str
+    title: str = ""
+    course_name: str = ""
+
+
+@dataclass(frozen=True)
+class Ranked:
+    """One candidate file and why it sits where it does in the queue."""
+
+    row: sqlite3.Row
+    tier: int
+    posted_at: str
+    course_id: str
+    title: str = ""
+    course_name: str = ""
+
+    @property
+    def drive_id(self) -> str:
+        return str(self.row["drive_id"])
+
+    @property
+    def why(self) -> str:
+        return TIER_NAMES.get(self.tier, "not tracked")
+
+
+def _facts_by_file(posts: list[sqlite3.Row]) -> dict[str, list[Post]]:
+    """{drive_id: [Post]} from store.ocr_candidate_posts."""
+    facts: dict[str, list[Post]] = {}
+    for row in posts:
+        facts.setdefault(str(row["drive_id"]), []).append(
+            Post(
+                course_id=str(row["course_id"] or ""),
+                posted_at=str(row["posted_at"] or ""),
+                title=str(row["title"] or ""),
+                course_name=str(row["course_name"] or ""),
+            )
+        )
+    return facts
+
+
+def _tier(course_id: str, tracked: frozenset[str], timetabled: frozenset[str]) -> int:
+    if course_id in tracked:
+        return TIER_TIMETABLED if course_id in timetabled else TIER_TRACKED
+    return TIER_OTHER
+
+
+def queue(
+    rows: list[sqlite3.Row],
+    posts: list[sqlite3.Row],
+    *,
+    tracked: list[str] | None = None,
+    timetabled: list[str] | None = None,
+    courses: list[str] | None = None,
+) -> list[Ranked]:
+    """The candidate files in the order they should be transcribed.
+
+    Pure: a list in, a list out, no database and no clock. Ordering is
+    (tier, posted_at descending, drive_id) and every one of those three is a
+    fact about the material rather than about this run, which is what makes the
+    queue STABLE. A partially drained queue has to resume where it left off --
+    if the order moved as pages were transcribed, `--limit 6` twice a day would
+    keep re-picking the same head and never reach the tail.
+
+    That is also why the timetable contributes the courses it NAMES rather than
+    the ones meeting this week. "This week" is a wall-clock window, and a queue
+    that reshuffles every Monday is the same defect wearing a different hat --
+    see invariant 1.
+
+    A file attached in two courses takes the best tier and the newest posting:
+    a deck shared by a tracked course and an archived one is tracked material.
+    """
+    known = _facts_by_file(posts)
+    wanted = frozenset(courses) if courses else None
+    tracked_set = frozenset(tracked or ())
+    timetabled_set = frozenset(timetabled or ())
+
+    ranked: list[Ranked] = []
+    for row in rows:
+        found = known.get(str(row["drive_id"]), [])
+        if wanted is not None:
+            found = [post for post in found if post.course_id in wanted]
+            if not found:
+                continue
+        if found:
+            # Best tier, then the newest posting seen in a course of that tier,
+            # so a file's rank never rests on its least relevant attachment.
+            tier = min(_tier(post.course_id, tracked_set, timetabled_set) for post in found)
+            best = max(
+                (post for post in found
+                 if _tier(post.course_id, tracked_set, timetabled_set) == tier),
+                key=lambda post: (post.posted_at, post.course_id),
+            )
+        else:
+            # No parent post on file. Real: a material row whose parent has been
+            # soft-deleted, and every fixture that never made one. Undated and
+            # untracked, so it sorts to the very back -- never dropped, because
+            # the bytes are on disk and nothing else will ever look at them.
+            tier, best = TIER_OTHER, Post(course_id="", posted_at="")
+        ranked.append(
+            Ranked(
+                row=row,
+                tier=tier,
+                posted_at=best.posted_at,
+                course_id=best.course_id,
+                title=best.title or str(row["drive_id"]),
+                course_name=best.course_name or "(no course)",
+            )
+        )
+
+    # Three stable passes, least significant first, rather than one key with an
+    # inverted date. Python's sort keeps the relative order of equal elements in
+    # both directions, so this composes to (tier, posted_at desc, drive_id) and
+    # reads as the three rules it is.
+    ranked.sort(key=lambda item: item.drive_id)
+    ranked.sort(key=lambda item: item.posted_at, reverse=True)
+    ranked.sort(key=lambda item: item.tier)
+    return ranked
 
 
 def _merge(native: list[str], texts: dict[int, str], pending: set[int]) -> str:
@@ -287,6 +465,8 @@ def run(
     limit: int | None = None,
     force: bool = False,
     verbose: bool = False,
+    timetabled: list[str] | None = None,
+    courses: list[str] | None = None,
     sleep=time.sleep,
     now: str | None = None,
 ) -> OCRResult:
@@ -296,10 +476,23 @@ def run(
     real run would spend -- cache hits included, which is usually most of it.
 
     limit bounds the number of pages actually sent, so a free-tier quota can be
-    worked through over several runs without any of them failing.
+    worked through over several runs without any of them failing. Which pages
+    those are is `queue`'s decision: with the allowance this small, what gets
+    transcribed first is the whole of what gets transcribed.
+
+    courses restricts the queue to those course ids -- the manual override for
+    an evening when the gate needs one subject and will not wait for the order.
     """
     result = OCRResult(dry_run=dry_run)
-    rows = _candidates(db)
+    ordered = queue(
+        _candidates(db),
+        store.ocr_candidate_posts(db),
+        tracked=config.tracked_courses,
+        timetabled=timetabled,
+        courses=courses,
+    )
+    result.queue = ordered
+    rows = [item.row for item in ordered]
     stamp = now or store._utc_now_iso()
     sent = 0
     consecutive_rate_limits = 0

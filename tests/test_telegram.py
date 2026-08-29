@@ -7,15 +7,20 @@ transport is never used by accident.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from agent.notify.telegram import (
+    MAX_FILENAME,
     MESSAGE_LIMIT,
     Telegram,
     TelegramError,
     _ApiError,
+    _multipart,
     escape,
     link,
+    safe_filename,
     split_message,
 )
 
@@ -299,3 +304,120 @@ def test_no_test_can_reach_the_network():
 
     client = make()
     assert client._transport is not module._http_post
+
+
+# --------------------------------------------------------------------------
+# filenames
+# --------------------------------------------------------------------------
+
+def uploader(sent):
+    def upload(url, body, content_type):
+        sent.append(body)
+        return {"ok": True, "result": {"message_id": 1, "document": {"file_id": "F1"}}}
+    return upload
+
+
+def test_a_title_that_is_already_a_filename_survives_intact():
+    assert safe_filename("Chapter 1.pdf") == "Chapter 1.pdf"
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("TD n3 : arbres / listes.pdf", "TD n3 arbres listes.pdf"),
+        ("a<b>c|d?e*f.pdf", "a b c d e f.pdf"),
+        ("  spaced   out  .pdf", "spaced out.pdf"),
+        ("..hidden.pdf", "hidden.pdf"),
+        ("trailing dots...", "trailing dots"),
+    ],
+)
+def test_illegal_characters_are_removed(raw, expected):
+    assert safe_filename(raw) == expected
+
+
+def test_a_newline_in_a_title_cannot_smuggle_a_header(tmp_path):
+    """The name goes straight into Content-Disposition. A CR or LF would end
+    that line early and let whatever follows be read as another header."""
+    source = tmp_path / "d1.pdf"
+    source.write_bytes(b"%PDF-1.4")
+
+    body, _ = _multipart({}, source, 'x"\r\nX-Evil: 1.pdf')
+
+    # The value between the quotes is the whole test: no quote to close the
+    # attribute early, and no line break to start a header of its own.
+    quoted = body.split(b'filename="')[1].split(b'"')[0]
+    assert b"\r" not in quoted and b"\n" not in quoted
+    assert quoted == b"x X-Evil 1.pdf"
+    assert body.count(b"Content-Disposition") == 1
+
+
+def test_a_windows_device_name_is_not_produced():
+    assert safe_filename("CON.pdf") == "_CON.pdf"
+    assert safe_filename("lpt3.txt") == "_lpt3.txt"
+
+
+def test_an_empty_or_unusable_title_falls_back():
+    assert safe_filename("") == "attachment"
+    assert safe_filename("///") == "attachment"
+    assert safe_filename("  ", fallback="d1.pdf") == "d1.pdf"
+
+
+def test_a_very_long_title_is_capped_but_keeps_its_extension():
+    name = safe_filename("x" * 400 + ".pdf")
+    assert len(name) <= MAX_FILENAME
+    assert name.endswith(".pdf")
+
+
+def test_sanitising_twice_changes_nothing():
+    once = safe_filename('a<b>"c.pdf')
+    assert safe_filename(once) == once
+
+
+def test_the_upload_is_named_by_the_caller_not_by_the_local_path(tmp_path):
+    """The library is keyed by Drive id, so without this every lecture arrives
+    as 11kqW48qFWWRMiWNUmOK69ZlkTQeKIgye.pdf and the phone becomes unusable."""
+    source = tmp_path / "11kqW48qFWWRMiWNUmOK69ZlkTQeKIgye.pdf"
+    source.write_bytes(b"%PDF-1.4")
+    sent = []
+
+    client = Telegram("123:ABC", 4242, transport=StubTransport(),
+                      multipart_transport=uploader(sent), sleep=lambda _: None)
+    client.send_document(source, caption="x", filename="Chapter 1.pdf")
+
+    assert b'filename="Chapter 1.pdf"' in sent[0]
+    assert b"11kqW48" not in sent[0]
+
+
+def test_without_a_filename_the_local_name_is_still_used(tmp_path):
+    source = tmp_path / "d1.pdf"
+    source.write_bytes(b"%PDF-1.4")
+    sent = []
+
+    client = Telegram("123:ABC", 4242, transport=StubTransport(),
+                      multipart_transport=uploader(sent), sleep=lambda _: None)
+    client.send_document(source)
+
+    assert b'filename="d1.pdf"' in sent[0]
+
+
+def test_the_mime_type_comes_from_the_bytes_not_from_the_sent_name(tmp_path):
+    """A Google Doc exported to PDF is sent as a PDF whatever it was called."""
+    source = tmp_path / "d1.pdf"
+    source.write_bytes(b"%PDF-1.4")
+    sent = []
+
+    client = Telegram("123:ABC", 4242, transport=StubTransport(),
+                      multipart_transport=uploader(sent), sleep=lambda _: None)
+    client.send_document(source, filename="Chapter 1.docx.pdf")
+
+    assert b"Content-Type: application/pdf" in sent[0]
+
+
+def test_an_oversized_file_names_the_title_in_its_error(tmp_path):
+    source = tmp_path / "d1.pdf"
+    source.write_bytes(b"x" * (51 * 1024 * 1024))
+    client = Telegram("123:ABC", 4242, transport=StubTransport(), sleep=lambda _: None)
+
+    with pytest.raises(TelegramError) as err:
+        client.send_document(source, filename="Chapter 1.pdf")
+    assert "Chapter 1.pdf" in str(err.value)

@@ -12,13 +12,15 @@ leaves the page recoverable rather than lost.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
+import sqlite3
 
 import pymupdf
 import pytest
 
 from agent import cli
-from agent.classroom.models import Course, Material
+from agent.classroom.models import Course, CourseWorkMaterial, Material
 from agent.config import Config
 from agent.db import store
 from agent.files import extract, ocr
@@ -116,8 +118,27 @@ def deck(path, layout, *, captions=None):
     return path
 
 
+def a_post(conn, parent_id, course_id="c1", creation_time="2026-01-01T10:00:00Z"):
+    """The coursework_material a file hangs off, with a posting date.
+
+    The queue orders on this date, so a test about ordering needs the parent to
+    exist -- most tests here do not, and a file whose parent was never created
+    is a real state too (a soft-deleted post), so it stays optional.
+    """
+    store.upsert_coursework_material(
+        conn,
+        CourseWorkMaterial(
+            id=parent_id, course_id=course_id, title=f"post {parent_id}",
+            description=None, state="PUBLISHED", topic_id=None,
+            alternate_link=None, creation_time=creation_time,
+            update_time=creation_time, content_hash="h",
+        ),
+    )
+
+
 def a_file(config, conn, drive_id, filename, mime_type, *, builder=None, payload=None,
-           scan_pages=0, pages=None, method="pymupdf", text=""):
+           scan_pages=0, pages=None, method="pymupdf", text="",
+           parent_id="p1", course_id="c1"):
     """A fetched-and-extracted file, as fetch + extract would have left it."""
     destination = config.library_dir / "files" / filename
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -133,8 +154,8 @@ def a_file(config, conn, drive_id, filename, mime_type, *, builder=None, payload
     store.upsert_material(
         conn,
         Material(
-            id=f"coursework_material:p1:driveFile:{drive_id}",
-            parent_type="coursework_material", parent_id="p1", course_id="c1",
+            id=f"coursework_material:{parent_id}:driveFile:{drive_id}",
+            parent_type="coursework_material", parent_id=parent_id, course_id=course_id,
             kind="driveFile", ref=drive_id, drive_id=drive_id, title=filename,
             url=None, content_hash="h",
         ),
@@ -1041,3 +1062,411 @@ def test_dead_references_are_listable(config, conn):
     assert len(rows) == 2
     assert {row["status"] for row in rows} == {"trashed", "missing"}
     assert rows[0]["course_name"] == "Operating Systems"
+
+
+# --------------------------------------------------------------------------
+# queue order -- which pages the day's ~12 requests are spent on
+# --------------------------------------------------------------------------
+
+def _posts(*rows):
+    """store.ocr_candidate_posts output, without needing a database.
+
+    Each row is (drive_id, course_id, posted_at), which is the whole of what
+    the ordering rests on.
+    """
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    built = []
+    for drive_id, course_id, posted_at in rows:
+        built.append(
+            connection.execute(
+                "SELECT ? AS drive_id, ? AS course_id, ? AS posted_at, "
+                "       ? AS title, ? AS course_name",
+                (drive_id, course_id, posted_at, f"{drive_id}.pdf", course_id),
+            ).fetchone()
+        )
+    connection.close()
+    return built
+
+
+def _files(*drive_ids):
+    """Candidate extraction rows, in the drive_id order _candidates returns."""
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    built = [
+        connection.execute("SELECT ? AS drive_id, 1 AS scan_pages", (drive_id,)).fetchone()
+        for drive_id in sorted(drive_ids)
+    ]
+    connection.close()
+    return built
+
+
+def _order(ranked):
+    return [item.drive_id for item in ranked]
+
+
+def test_newer_material_precedes_older():
+    """The gate asks about what was posted recently, so that is what gets read."""
+    ranked = ocr.queue(
+        _files("old", "new", "middle"),
+        _posts(
+            ("old", "c1", "2025-09-01T10:00:00Z"),
+            ("new", "c1", "2026-09-14T10:00:00Z"),
+            ("middle", "c1", "2026-01-20T10:00:00Z"),
+        ),
+        tracked=["c1"],
+    )
+    assert _order(ranked) == ["new", "middle", "old"]
+
+
+def test_a_tracked_course_precedes_an_untracked_one():
+    """Even when the untracked material is newer. An untracked course is not
+    synced and never gated, so a request spent on it buys nothing."""
+    ranked = ocr.queue(
+        _files("tracked", "untracked"),
+        _posts(
+            ("tracked", "c1", "2025-01-01T10:00:00Z"),
+            ("untracked", "cX", "2026-09-14T10:00:00Z"),
+        ),
+        tracked=["c1"],
+    )
+    assert _order(ranked) == ["tracked", "untracked"]
+    assert ranked[0].why == "tracked"
+    assert ranked[1].why == "not tracked"
+
+
+def test_a_timetabled_course_precedes_a_merely_tracked_one():
+    """A subject that meets is worth more than one that is only synced."""
+    ranked = ocr.queue(
+        _files("meets", "synced"),
+        _posts(
+            ("meets", "c1", "2025-01-01T10:00:00Z"),
+            ("synced", "c2", "2026-09-14T10:00:00Z"),
+        ),
+        tracked=["c1", "c2"],
+        timetabled=["c1"],
+    )
+    assert _order(ranked) == ["meets", "synced"]
+    assert ranked[0].why == "tracked, in timetable"
+
+
+def test_the_new_semester_beats_the_archive_wholesale():
+    """The case this exists for: 279 archived pages must not starve two weeks
+    of new material at ~12 requests a day."""
+    ranked = ocr.queue(
+        _files("arch1", "arch2", "arch3", "term1", "term2"),
+        _posts(
+            ("arch1", "old", "2025-10-01T10:00:00Z"),
+            ("arch2", "old", "2025-11-01T10:00:00Z"),
+            ("arch3", "old", "2025-12-01T10:00:00Z"),
+            ("term1", "new", "2026-09-15T10:00:00Z"),
+            ("term2", "new", "2026-09-16T10:00:00Z"),
+        ),
+        tracked=["new"],
+        timetabled=["new"],
+    )
+    assert _order(ranked)[:2] == ["term2", "term1"]
+    assert set(_order(ranked)[2:]) == {"arch1", "arch2", "arch3"}
+
+
+def test_course_restricts_the_queue():
+    ranked = ocr.queue(
+        _files("a", "b", "c"),
+        _posts(
+            ("a", "c1", "2026-09-01T10:00:00Z"),
+            ("b", "c2", "2026-09-02T10:00:00Z"),
+            ("c", "c1", "2026-09-03T10:00:00Z"),
+        ),
+        tracked=["c1", "c2"],
+        courses=["c1"],
+    )
+    assert _order(ranked) == ["c", "a"]
+
+
+def test_course_filtering_drops_a_file_with_no_post_at_all():
+    """It cannot be shown to belong to the wanted course, so it is not in it."""
+    ranked = ocr.queue(_files("orphan"), _posts(), tracked=["c1"], courses=["c1"])
+    assert ranked == []
+
+
+def test_the_order_is_stable_across_runs():
+    """A queue drained six pages at a time has to resume where it left off.
+    Nothing in the sort key changes as pages are transcribed."""
+    files = _files("a", "b", "c", "d")
+    posts = _posts(
+        ("a", "c1", "2026-09-01T10:00:00Z"),
+        ("b", "c1", "2026-09-01T10:00:00Z"),   # a deliberate tie
+        ("c", "c2", "2026-09-05T10:00:00Z"),
+        ("d", "cX", "2026-09-09T10:00:00Z"),
+    )
+    first = _order(ocr.queue(files, posts, tracked=["c1", "c2"], timetabled=["c1"]))
+    for _ in range(5):
+        assert _order(ocr.queue(files, posts, tracked=["c1", "c2"], timetabled=["c1"])) == first
+    # And the tie between a and b is broken by drive_id, not by luck.
+    assert first == ["a", "b", "c", "d"]
+
+
+def test_a_tie_on_date_falls_back_to_drive_id():
+    ranked = ocr.queue(
+        _files("zz", "aa"),
+        _posts(("zz", "c1", "2026-09-01T10:00:00Z"), ("aa", "c1", "2026-09-01T10:00:00Z")),
+        tracked=["c1"],
+    )
+    assert _order(ranked) == ["aa", "zz"]
+
+
+def test_a_file_with_no_post_sorts_last_but_is_never_dropped():
+    ranked = ocr.queue(
+        _files("orphan", "posted"),
+        _posts(("posted", "cX", "2020-01-01T10:00:00Z")),
+        tracked=[],
+    )
+    assert _order(ranked) == ["posted", "orphan"]
+    assert ranked[1].posted_at == ""
+
+
+def test_a_file_in_two_courses_takes_the_better_one():
+    """A deck shared between a tracked course and an archived one is tracked
+    material. Ranking it on its least relevant attachment would bury it."""
+    ranked = ocr.queue(
+        _files("shared", "plain"),
+        _posts(
+            ("shared", "cX", "2020-01-01T10:00:00Z"),
+            ("shared", "c1", "2026-09-01T10:00:00Z"),
+            ("plain", "c1", "2026-08-01T10:00:00Z"),
+        ),
+        tracked=["c1"],
+    )
+    assert _order(ranked) == ["shared", "plain"]
+    assert ranked[0].course_id == "c1"
+
+
+def test_an_undated_post_does_not_outrank_a_dated_one_in_the_same_tier():
+    ranked = ocr.queue(
+        _files("dated", "undated"),
+        _posts(("dated", "c1", "2020-01-01T10:00:00Z"), ("undated", "c1", "")),
+        tracked=["c1"],
+    )
+    assert _order(ranked) == ["dated", "undated"]
+
+
+def test_an_empty_queue_is_not_an_error():
+    assert ocr.queue([], []) == []
+
+
+# --------------------------------------------------------------------------
+# the order, end to end through a real run
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def two_courses(config, conn):
+    """An archived course and a new-term one, each with a scan page.
+
+    The shape the prioritisation exists for: last year's backlog sitting in
+    front of material the gate is about to be asked about.
+    """
+    store.upsert_course(
+        conn,
+        Course(
+            id="c2", name="Archived Networks", section=None, room=None, owner_id=None,
+            course_state="ARCHIVED", enrollment_code=None, alternate_link=None,
+            creation_time=None, update_time=None, content_hash="h",
+        ),
+    )
+    a_post(conn, "old", course_id="c2", creation_time="2025-03-01T10:00:00Z")
+    a_post(conn, "new", course_id="c1", creation_time="2026-09-15T10:00:00Z")
+    a_file(config, conn, "aaa_old", "old.pdf", "application/pdf",
+           builder=lambda p: deck(p, "s"), scan_pages=1, pages=1,
+           parent_id="old", course_id="c2")
+    a_file(config, conn, "zzz_new", "new.pdf", "application/pdf",
+           builder=lambda p: deck(p, "s"), scan_pages=1, pages=1,
+           parent_id="new", course_id="c1")
+    return conn
+
+
+def test_run_transcribes_the_new_term_first(config, conn, two_courses):
+    """--limit 1 must spend its one request on this term, even though the
+    archived file sorts first by drive_id and would have won before."""
+    provider = FakeProvider()
+    result = ocr.run(config, conn, provider=provider, limit=1)
+
+    assert [item.drive_id for item in result.queue][0] == "zzz_new"
+    assert "TRANSCRIBED" in text_of(config, "zzz_new")
+    assert "not transcribed yet" in text_of(config, "aaa_old")
+    assert provider.calls and len(provider.calls) == 1
+
+
+def test_run_respects_the_course_filter(config, conn, two_courses):
+    provider = FakeProvider()
+    result = ocr.run(config, conn, provider=provider, courses=["c2"])
+
+    assert [item.drive_id for item in result.queue] == ["aaa_old"]
+    assert "TRANSCRIBED" in text_of(config, "aaa_old")
+    # The unfiltered file is untouched -- not merged, not marked pending.
+    assert "TRANSCRIBED" not in text_of(config, "zzz_new")
+
+
+def test_the_timetable_lifts_a_tracked_course_above_another(config, conn, two_courses):
+    """Both tracked; only one meets. The one that meets goes first, whatever
+    the posting dates say."""
+    config.tracked_courses.append("c2")
+    ordered = ocr.queue(
+        ocr._candidates(conn), store.ocr_candidate_posts(conn),
+        tracked=config.tracked_courses, timetabled=["c2"],
+    )
+    assert [item.drive_id for item in ordered] == ["aaa_old", "zzz_new"]
+    assert ordered[0].why == "tracked, in timetable"
+
+
+def test_a_partly_drained_queue_resumes_where_it_left_off(config, conn, two_courses):
+    """Two --limit 1 runs must cover both files, not the same one twice."""
+    first = ocr.run(config, conn, provider=FakeProvider(), limit=1)
+    order_before = [item.drive_id for item in first.queue]
+    second = ocr.run(config, conn, provider=FakeProvider(), limit=1)
+
+    assert [item.drive_id for item in second.queue] == order_before
+    assert "TRANSCRIBED" in text_of(config, "zzz_new")
+    assert "TRANSCRIBED" in text_of(config, "aaa_old")
+
+
+def test_pending_candidates_drops_a_finished_file(config, conn, two_courses):
+    """What `--status` leads with must be what a run would work on next."""
+    assert len(ocr.pending_candidates(conn)) == 2
+    ocr.run(config, conn, provider=FakeProvider(), limit=1)
+    left = [row["drive_id"] for row in ocr.pending_candidates(conn)]
+    assert left == ["aaa_old"]
+
+
+def test_the_queue_carries_the_course_name_for_reporting(config, conn, two_courses):
+    ordered = ocr.queue(
+        ocr.pending_candidates(conn), store.ocr_candidate_posts(conn),
+        tracked=config.tracked_courses,
+    )
+    assert ordered[0].course_name == "Operating Systems"
+    assert ordered[0].posted_at == "2026-09-15T10:00:00Z"
+
+
+def test_a_soft_deleted_post_stops_dating_its_file(config, conn, two_courses):
+    """The post is gone, so its date is not evidence about anything. The file
+    still gets transcribed -- it just stops claiming to be this term's."""
+    conn.execute(
+        "UPDATE coursework_materials SET deleted_at = ? WHERE id = 'new'",
+        ("2026-09-20T10:00:00Z",),
+    )
+    conn.commit()
+    ordered = ocr.queue(
+        ocr._candidates(conn), store.ocr_candidate_posts(conn),
+        tracked=config.tracked_courses,
+    )
+    assert [item.drive_id for item in ordered] == ["aaa_old", "zzz_new"]
+    assert ordered[1].posted_at == ""
+
+
+# --------------------------------------------------------------------------
+# the command surface: seeing the order, and forcing it
+# --------------------------------------------------------------------------
+
+TIMETABLE = """
+subjects:
+  Operating Systems: "c1"
+  Networks: null
+versions:
+  - label: S1
+    status: confirmed
+    effective_from: 2026-09-01
+    sessions:
+      - { day: mon, start: "08:30", end: "10:00", kind: LEC,
+          subject: Operating Systems }
+"""
+
+
+class KeepOpen:
+    """A connection the command may 'close' without ending the test."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def close(self):
+        pass
+
+
+def _with_timetable(config, text=None):
+    """`config` pointed at a real timetable file. Config is frozen, so this
+    replaces it rather than mutating it."""
+    path = config.data_dir / "timetable.yaml"
+    path.write_text(text if text is not None else TIMETABLE, encoding="utf-8")
+    return dataclasses.replace(config, timetable_path_override=path)
+
+
+def _ocr_args(**overrides):
+    values = dict(status=False, dry_run=False, limit=None, force=False,
+                  verbose=False, courses=None)
+    values.update(overrides)
+    return argparse.Namespace(**values)
+
+
+def test_status_shows_which_course_is_next(config, conn, two_courses, monkeypatch, capsys):
+    config = _with_timetable(config)
+    monkeypatch.setattr(store, "open_db", lambda _config: KeepOpen(conn))
+
+    assert cli.cmd_ocr(config, _ocr_args(status=True)) == 0
+
+    out = capsys.readouterr().out
+    assert "next: Operating Systems" in out
+    assert "queue order" in out
+    # The prioritisation stated, not merely applied.
+    assert "tracked, in timetable" in out
+    assert out.index("new.pdf") < out.index("old.pdf")
+
+
+def test_status_says_so_when_the_timetable_cannot_be_read(
+    config, conn, two_courses, monkeypatch, capsys
+):
+    """A missing timetable costs the top tier and must not be silent -- the
+    ordering would still work and would quietly be the blunter one."""
+    monkeypatch.setattr(store, "open_db", lambda _config: KeepOpen(conn))
+    assert cli.cmd_ocr(config, _ocr_args(status=True)) == 0
+    assert "timetable not read" in capsys.readouterr().out
+
+
+def test_course_accepts_a_subject_name(config, conn, two_courses, monkeypatch, capsys):
+    """A course id is twelve digits; the thing I want to force is a subject."""
+    config = _with_timetable(config)
+    monkeypatch.setattr(store, "open_db", lambda _config: KeepOpen(conn))
+
+    assert cli.cmd_ocr(config, _ocr_args(status=True, courses=["Operating Systems"])) == 0
+    out = capsys.readouterr().out
+    assert "new.pdf" in out
+    assert "old.pdf" not in out
+
+
+def test_course_refuses_a_name_it_cannot_resolve(config, conn, two_courses, capsys):
+    """Never a near-match. A wrong match spends the day's quota on the wrong
+    subject and looks exactly like the feature working."""
+    config = _with_timetable(config)
+
+    assert cli.cmd_ocr(config, _ocr_args(status=True, courses=["Operatng Systems"])) == 1
+    assert "neither a tracked course id nor a subject" in capsys.readouterr().err
+
+
+def test_a_subject_with_no_course_cannot_be_forced(config, conn, two_courses, capsys):
+    """Six of eleven subjects map to null. Naming one is a mistake, not a
+    request to transcribe nothing."""
+    config = _with_timetable(config)
+
+    assert cli.cmd_ocr(config, _ocr_args(status=True, courses=["Networks"])) == 1
+    assert "neither a tracked course id nor a subject" in capsys.readouterr().err
+
+
+def test_a_dry_run_shows_the_order_it_would_spend_in(
+    config, conn, two_courses, monkeypatch, capsys
+):
+    monkeypatch.setattr(store, "open_db", lambda _config: KeepOpen(conn))
+    assert cli.cmd_ocr(config, _ocr_args(dry_run=True)) == 0
+
+    out = capsys.readouterr().out
+    assert "queue order" in out
+    assert out.index("new.pdf") < out.index("old.pdf")

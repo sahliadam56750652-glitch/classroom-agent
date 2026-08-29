@@ -102,8 +102,9 @@ def deliver_item(
         title = str(row["title"] or drive_id)
         path = Path(config.library_dir) / str(row["local_path"])
         caption = messages.document_caption(title, row["pages"])
+        filename = messages.document_filename(title, path)
         try:
-            response = _send_one(conn, telegram, row, path, caption)
+            response = _send_one(conn, telegram, row, path, caption, filename)
         except DocumentTooLarge:
             notes.append(messages.too_large_line(title, row["url"], int(row["size_bytes"] or 0)))
             continue
@@ -137,11 +138,18 @@ def deliver_item(
     return Handled("delivered", f"{subject.name}: {item.label}")
 
 
-def _send_one(conn, telegram, row, path: Path, caption: str) -> dict[str, Any]:
+def _send_one(
+    conn, telegram, row, path: Path, caption: str, filename: str
+) -> dict[str, Any]:
     """Send by cached file id, falling back to the bytes if Telegram refuses it.
 
     A stored id can go stale. When it does the answer is to forget it and
     upload again, not to report that the lecture could not be delivered.
+
+    The filename only applies to the upload. A file_id keeps the name it was
+    first sent under, which is the price of the cache -- and the reason the
+    schema note on telegram_files says to clear the table if the naming rule
+    ever changes.
     """
     file_id = row["file_id"]
     if file_id:
@@ -149,7 +157,7 @@ def _send_one(conn, telegram, row, path: Path, caption: str) -> dict[str, Any]:
             return telegram.send_document(path, caption=caption, file_id=str(file_id))
         except TelegramError:
             store.forget_telegram_file(conn, str(row["drive_id"]))
-    return telegram.send_document(path, caption=caption)
+    return telegram.send_document(path, caption=caption, filename=filename)
 
 
 def _remember(conn, drive_id: str, response: dict[str, Any]) -> None:

@@ -26,12 +26,12 @@ DEFAULT_DATA_DIR = "./data"
 # config.yaml beside everything else that describes this installation.
 BOT_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
 
-# Bounds on gate.questions. Repeated here rather than imported from gate/quiz.py
-# because that module imports this one, and a personal tool does not need an
-# import cycle to keep two integers in step. The test below them asserts they
+# Bounds on quiz.question_count. Repeated here rather than imported from
+# gate/quiz.py because that module imports this one, and a personal tool does
+# not need an import cycle to keep two integers in step. A test asserts they
 # match.
 MIN_QUESTIONS = 3
-MAX_QUESTIONS = 5
+MAX_QUESTIONS = 10
 
 
 class ConfigError(Exception):
@@ -77,15 +77,19 @@ class Config:
     # text it came from), so ~8 covers an evening comfortably.
     ocr_run_limit: int = 6
 
-    # The share of a quiz's countable questions that has to be right. 3 of 4 at
-    # the default. A ratio rather than a count, so a lecture too thin for four
-    # questions still has a meaningful pass mark, and so does one where I
-    # flagged a bad question out of the denominator.
-    gate_pass_ratio: float = 0.75
+    # config.yaml's quiz.pass_threshold: the share of a quiz's countable
+    # questions that has to be right. At the default six questions this is FIVE
+    # of six, because 4/6 is 0.667 and does not clear 0.75. A ratio rather than
+    # a count, because the denominator moves -- the model may return fewer than
+    # asked for, and a flagged question leaves the count entirely.
+    # gate/quiz.py:DEFAULT_PASS_RATIO carries the arithmetic behind the number.
+    quiz_pass_threshold: float = 0.75
 
-    # How many questions to ask for. The model may return fewer and say why --
-    # fewer honest questions is a better answer than four invented ones.
-    gate_questions: int = 4
+    # config.yaml's quiz.question_count. Six: four is not enough evidence when
+    # each question is worth 0.25 to a guesser. The model may return fewer and
+    # say why -- fewer honest questions is a better answer than six invented
+    # ones -- and the whole set costs one request whatever its length.
+    quiz_question_count: int = 6
 
     # Derived paths. Everything lives under data_dir so that relocating the
     # project is a directory copy.
@@ -281,52 +285,54 @@ def _ocr_run_limit(raw: dict[str, Any], config_path: Path) -> int:
     return value
 
 
-def _gate_settings(raw: dict[str, Any], config_path: Path) -> tuple[float, int]:
-    """(pass ratio, questions per quiz), validated rather than trusted.
+def _quiz_settings(raw: dict[str, Any], config_path: Path) -> tuple[float, int]:
+    """(pass threshold, questions per quiz), validated rather than trusted.
 
     Both are checked here because both fail quietly if they are wrong. A
-    pass_ratio of 75 instead of 0.75 makes every quiz unpassable and looks
-    exactly like a run of bad luck; a questions count of 0 produces a quiz that
-    passes with nothing answered, which is the worst possible failure in this
-    particular file.
+    pass_threshold of 75 instead of 0.75 makes every quiz unpassable and looks
+    exactly like a run of bad luck; a question_count of 0 would produce a quiz
+    that passes with nothing answered, which is the worst failure this file
+    could have.
     """
-    section = raw.get("gate")
+    section = raw.get("quiz")
     if section is None:
-        return Config.gate_pass_ratio, Config.gate_questions
+        return Config.quiz_pass_threshold, Config.quiz_question_count
     if not isinstance(section, dict):
         raise ConfigError(
-            f"{config_path}: 'gate' must be a mapping, got {type(section).__name__}."
+            f"{config_path}: 'quiz' must be a mapping, got {type(section).__name__}."
         )
 
-    ratio = section.get("pass_ratio")
-    if ratio is None:
-        ratio = Config.gate_pass_ratio
-    elif isinstance(ratio, bool) or not isinstance(ratio, (int, float)):
+    threshold = section.get("pass_threshold")
+    if threshold is None:
+        threshold = Config.quiz_pass_threshold
+    elif isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
         raise ConfigError(
-            f"{config_path}: 'gate.pass_ratio' must be a number between 0 and 1, "
-            f"got {ratio!r}."
+            f"{config_path}: 'quiz.pass_threshold' must be a number between 0 "
+            f"and 1, got {threshold!r}."
         )
-    elif not 0 < float(ratio) <= 1:
+    elif not 0 < float(threshold) <= 1:
         raise ConfigError(
-            f"{config_path}: 'gate.pass_ratio' must be between 0 and 1 -- "
-            f"0.75 means three of four. Got {ratio!r}."
+            f"{config_path}: 'quiz.pass_threshold' is a fraction, not a "
+            f"percentage: 0.75 of six questions is five of six. Got {threshold!r}."
         )
 
-    count = section.get("questions")
+    count = section.get("question_count")
     if count is None:
-        count = Config.gate_questions
+        count = Config.quiz_question_count
     elif isinstance(count, bool) or not isinstance(count, int):
         raise ConfigError(
-            f"{config_path}: 'gate.questions' must be a whole number, got {count!r}."
+            f"{config_path}: 'quiz.question_count' must be a whole number, "
+            f"got {count!r}."
         )
     elif not MIN_QUESTIONS <= count <= MAX_QUESTIONS:
         raise ConfigError(
-            f"{config_path}: 'gate.questions' must be between {MIN_QUESTIONS} and "
-            f"{MAX_QUESTIONS}, got {count}. Fewer is not worth the request; more "
-            f"does not fit a phone screen one question at a time."
+            f"{config_path}: 'quiz.question_count' must be between "
+            f"{MIN_QUESTIONS} and {MAX_QUESTIONS}, got {count}. Below three the "
+            f"threshold is too coarse to mean anything; above ten a quiz taken "
+            f"one question at a time on a phone stops getting finished."
         )
 
-    return float(ratio), int(count)
+    return float(threshold), int(count)
 
 
 def _resolve_data_dir(configured: Any, config_path: Path) -> Path:
@@ -381,7 +387,7 @@ def load_config(config_path: Path | None = None) -> Config:
             f"'ignored' lists, got {type(courses).__name__}."
         )
 
-    pass_ratio, questions = _gate_settings(raw, config_path)
+    pass_threshold, question_count = _quiz_settings(raw, config_path)
 
     data_dir = _resolve_data_dir(raw.get("data_dir"), config_path)
     for directory in (data_dir, data_dir / "library", data_dir / "logs"):
@@ -397,6 +403,6 @@ def load_config(config_path: Path | None = None) -> Config:
         packs_dir_override=_packs_dir(raw, config_path),
         timetable_path_override=_timetable_path(raw, config_path),
         ocr_run_limit=_ocr_run_limit(raw, config_path),
-        gate_pass_ratio=pass_ratio,
-        gate_questions=questions,
+        quiz_pass_threshold=pass_threshold,
+        quiz_question_count=question_count,
     )

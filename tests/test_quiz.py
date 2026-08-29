@@ -54,8 +54,12 @@ LECTURE = (
 ) * 12
 
 
-def four_questions(prefix="Q"):
-    """A well-formed answer from the model. Correct index differs per question."""
+def four_questions(prefix="Q", count=6):
+    """A well-formed answer from the model. Correct index differs per question.
+
+    Six by default, matching quiz.DEFAULT_QUESTIONS -- the name is historical
+    and the count is not, so the tests that care pass one explicitly.
+    """
     return {
         "questions": [
             {
@@ -66,7 +70,7 @@ def four_questions(prefix="Q"):
                 "source_file": "Chapter 1.pdf",
                 "source_page": n + 1,
             }
-            for n in range(4)
+            for n in range(count)
         ],
         "note": "",
     }
@@ -385,10 +389,11 @@ def test_the_prompt_version_is_part_of_the_cache_key(conn, config, monkeypatch):
 
 
 def test_a_different_question_count_is_a_different_cache_entry(conn, config):
+    """Changing quiz.question_count must not serve back a set of the old length."""
     item_id = post(conn)
     model = StubModel(four_questions("A"), four_questions("B"))
+    quiz.generate(conn, config, item_of(conn, item_id), provider=model, count=6)
     quiz.generate(conn, config, item_of(conn, item_id), provider=model, count=4)
-    quiz.generate(conn, config, item_of(conn, item_id), provider=model, count=3)
     assert len(model.calls) == 2
 
 
@@ -434,6 +439,36 @@ def test_a_transcribed_page_is_offered_as_fair_material(conn, config):
 
     assert "transcribed from an image" in model.calls[0]
     assert "fair to ask about" in model.calls[0]
+
+
+def test_the_prompt_says_not_to_build_on_a_bad_transcription(conn, config):
+    """The first real quiz offered "O(N logConst(N))" as an option -- a vision
+    model's reading of a complexity expression, not something the lecture says.
+    Nothing in code can detect that: a garbled reading is still text. So the
+    instruction is to skip such a passage, and never to guess at what it meant."""
+    item_id = post(conn)
+    model = StubModel()
+    quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    prompt = model.calls[0]
+
+    assert "transcription error" in prompt
+    assert "never quote it as an option" in prompt
+    assert "Do not try to guess what the broken text was meant to say" in prompt
+
+
+def test_changing_the_prompt_retires_every_cached_set(conn, config):
+    """PROMPT_VERSION is in the cache key precisely so that this fix reaches the
+    questions that were already generated under the old instructions."""
+    item_id = post(conn)
+    model = StubModel(four_questions("A"), four_questions("B"))
+    quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(quiz, "PROMPT_VERSION", quiz.PROMPT_VERSION + 1)
+        after = quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+
+    assert after.cached is False
+    assert len(model.calls) == 2
 
 
 def test_study_item_sources_excludes_a_deleted_attachment(conn, config):
@@ -512,11 +547,13 @@ def test_fewer_honest_questions_are_accepted(conn, config):
     assert "reading list" in generated.note
 
 
-def test_more_questions_than_asked_for_are_trimmed(conn, config):
+def test_more_questions_than_asked_for_are_trimmed_to_what_was_asked(conn, config):
+    """Keeping the extras would move the denominator the pass mark is measured
+    against, which is the one number here that has to mean what config says."""
     many = {"questions": four_questions()["questions"] * 3}
     item_id = post(conn)
     generated = quiz.generate(conn, config, item_of(conn, item_id), provider=StubModel(many))
-    assert len(generated.questions) == quiz.MAX_QUESTIONS
+    assert len(generated.questions) == config.quiz_question_count == 6
 
 
 # --------------------------------------------------------------- provider errors
@@ -842,7 +879,7 @@ def test_the_whole_set_can_be_flagged_from_the_result_screen(conn, config):
                    messages.encode("q", attempt_id, "b"), provider=model)
 
     assert result.kind == "flagged-set"
-    assert len(store.list_flags(conn)) == 4
+    assert len(store.list_flags(conn)) == config.quiz_question_count
     assert conn.execute("SELECT flagged FROM quiz_questions").fetchone()["flagged"] == 1
 
 
@@ -872,7 +909,7 @@ def test_a_restart_mid_quiz_resumes_at_the_right_question(conn, config, tmp_path
         assert resumed.answers[:2] == answers[:2]
 
         result = None
-        for index in (2, 3):
+        for index in range(2, len(answers)):
             result = bot.handle_callback(
                 fresh, config, telegram,
                 {"id": "cb", "data": messages.encode("q", attempt_id, index, answers[index])},
@@ -1264,3 +1301,144 @@ def test_the_gate_prompt_costs_no_model_call(conn, config, table):
     messages.compose(plan)
     messages.keyboard(plan, 1)
     assert model.calls == []
+
+
+# --------------------------------------------------------------------------
+# six questions, and what a pass is
+# --------------------------------------------------------------------------
+
+def test_the_default_quiz_is_six_questions(conn, config):
+    item_id = post(conn)
+    model = StubModel()
+    generated = quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+
+    assert len(generated.questions) == 6
+    assert "Write 6 multiple-choice questions" in model.calls[0]
+
+
+def test_six_questions_still_cost_one_request(conn, config):
+    """The point of the change: the length is paid for in my time, not quota."""
+    item_id = post(conn)
+    model = StubModel()
+    quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    assert len(model.calls) == 1
+
+
+def test_the_configured_count_reaches_the_prompt(conn, config):
+    item_id = post(conn)
+    model = StubModel(four_questions(count=3))
+    generated = quiz.generate(
+        conn, config, item_of(conn, item_id), provider=model, count=3
+    )
+
+    assert "Write 3 multiple-choice questions" in model.calls[0]
+    assert len(generated.questions) == 3
+
+
+@pytest.mark.parametrize(
+    "correct, passes",
+    [(6, True), (5, True), (4, False), (3, False), (0, False)],
+)
+def test_five_of_six_passes_and_four_does_not(correct, passes):
+    """The decision, pinned. Four of six is a one-in-ten walk-through for
+    someone who can eliminate one distractor; five of six is under two."""
+    questions = [q(n % 4) for n in range(6)]
+    answers = [
+        question.correct if index < correct else (question.correct + 1) % 4
+        for index, question in enumerate(questions)
+    ]
+    assert graded(questions, answers).passed is passes
+
+
+@pytest.mark.parametrize(
+    "total, need",
+    [(3, 3), (4, 3), (5, 4), (6, 5), (7, 6), (8, 6), (10, 8)],
+)
+def test_what_the_default_threshold_demands_at_each_length(total, need):
+    """The denominator moves when the model returns short or when I flag a
+    question, so the table is worth pinning rather than rederiving."""
+    questions = [q(0) for _ in range(total)]
+
+    just_under = [0] * (need - 1) + [1] * (total - need + 1)
+    exactly = [0] * need + [1] * (total - need)
+
+    assert graded(questions, just_under).passed is False
+    assert graded(questions, exactly).passed is True
+
+
+def test_flagging_one_of_six_leaves_five_and_four_of_five_passes():
+    """A flagged question leaves the denominator, so the bar moves with it."""
+    questions = [q(0) for _ in range(6)]
+    answers = [0, 0, 0, 0, 1, None]
+    attempt = graded(questions, answers, flags=[0, 0, 0, 0, 0, 1])
+
+    assert (attempt.correct, attempt.counted) == (4, 5)
+    assert attempt.passed is True
+
+
+def test_the_threshold_is_read_from_config_when_a_quiz_starts(conn, config):
+    from dataclasses import replace
+
+    strict = replace(config, quiz_pass_threshold=1.0)
+    item_id = post(conn)
+    attempt, _ = quiz.begin(
+        conn, strict, item_of(conn, item_id), provider=StubModel(), now=EVENING
+    )
+    assert attempt.pass_ratio == 1.0
+
+
+def test_a_quiz_keeps_the_threshold_it_started_under(conn, config):
+    """Changing config mid-quiz must not move the bar under a half-answered one."""
+    item_id = post(conn)
+    attempt, _ = quiz.begin(
+        conn, config, item_of(conn, item_id), provider=StubModel(), now=EVENING
+    )
+    reloaded = quiz.attempt_from_row(store.get_quiz_attempt(conn, attempt.attempt_id))
+    assert reloaded.pass_ratio == config.quiz_pass_threshold
+
+
+def test_the_prompt_version_bump_retires_the_four_question_sets(conn, config):
+    """A stored 4-question set must not be served against a 6-question config."""
+    assert quiz.PROMPT_VERSION >= 3
+
+    item_id = post(conn)
+    model = StubModel(four_questions("A", count=4), four_questions("B"))
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(quiz, "PROMPT_VERSION", 2)
+        old = quiz.generate(conn, config, item_of(conn, item_id), provider=model, count=4)
+    assert len(old.questions) == 4
+
+    fresh = quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+
+    assert fresh.cached is False
+    assert len(fresh.questions) == 6
+    assert fresh.source_hash != old.source_hash
+
+
+def test_six_questions_fit_one_message_each(conn, config):
+    item_id = post(conn)
+    attempt, _ = quiz.begin(
+        conn, config, item_of(conn, item_id), provider=StubModel(), now=EVENING
+    )
+    for index in range(attempt.total):
+        attempt.index = index
+        text = messages.question_message(attempt, attempt.questions[index])
+        assert len(text) <= messages.MESSAGE_LIMIT
+        assert f"question {index + 1} of 6" in text
+
+
+def test_a_failure_on_six_lists_every_miss(conn, config):
+    questions = [
+        quiz.Question(question=f"Question {n}", options=("a", "b", "c", "d"),
+                      correct=0, explanation=f"reason {n}")
+        for n in range(6)
+    ]
+    attempt = graded(questions, [0, 1, 1, 1, 1, 1])
+    result = quiz.Result(attempt=attempt, passed=False, verified=False,
+                         correct=1, counted=6)
+    text = messages.result_message(result)
+
+    assert "1 of 6" in text
+    assert len(text) <= messages.MESSAGE_LIMIT
+    for n in range(1, 6):
+        assert f"reason {n}" in text

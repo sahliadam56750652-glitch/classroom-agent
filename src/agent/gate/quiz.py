@@ -16,6 +16,13 @@ real content is diagrams -- but a passage nothing has read is not, which is why
 generation refuses outright on an item with untranscribed pages. A quiz on
 holes is worse than no quiz: it would produce a `verified` that means nothing.
 
+A transcription that landed but landed badly is the third case, and the prompt
+handles it rather than the code: a garbled reading of a complexity expression
+is still text, so nothing here can detect it, but a question built on one is
+unanswerable and teaches me the wrong thing. The instruction is to skip such a
+passage and use another, never to guess at what it was meant to say -- 92 pages
+is enough material that moving on costs nothing.
+
 **Caching.** The free tier is roughly 20 requests a day and OCR already claims
 most of it. A question set is generated once per *version of the text* and then
 reused for every retry, every restart, and every second look. The cache key is
@@ -48,19 +55,56 @@ from .scheduler import Item
 # cache key, so raising it retires every stored set -- which is the point: a
 # question generated under different instructions is not the question this
 # version of the code would ask, and serving it would make the prompt untestable.
-PROMPT_VERSION = 1
+#
+# 2: rule 4 gained the instruction to avoid passages that look like transcription
+#    errors. The first real quiz offered "O(N logConst(N))" as an option, which
+#    is a vision model's reading of a complexity expression and not something
+#    the lecture says.
+# 3: the default question count went from 4 to 6. Without this bump a stored
+#    4-question set would keep being served against a 6-question config, and a
+#    quiz that quietly ignores its own configuration is worse than one that
+#    costs a request.
+PROMPT_VERSION = 3
 
 # Exactly four, always. The pass threshold is a ratio, so the count can vary
 # without breaking anything, but the OPTIONS count is load-bearing: the answer
 # buttons are built from it and a five-option question would silently lose one.
 OPTIONS = 4
 
-DEFAULT_QUESTIONS = 4
-MIN_QUESTIONS = 3
-MAX_QUESTIONS = 5
+# Six, because four is not enough evidence. With four options a question is
+# worth 0.25 to a guesser, and the pass mark is a ratio -- see DEFAULT_PASS_RATIO
+# below for the arithmetic that makes six the length where the threshold starts
+# meaning something. One request buys the whole set whatever its length, so the
+# cost of the extra two is my time, not quota.
+DEFAULT_QUESTIONS = 6
 
-# Fewer honest questions beats more invented ones, so the model is allowed to
-# return short. Zero is not "short", it is a refusal.
+# Below three the ratio is too coarse to express a useful threshold. Above ten a
+# quiz taken one question at a time on a phone stops being something I finish
+# walking to a lecture, which is the only test that matters for whether I keep
+# using it.
+MIN_QUESTIONS = 3
+MAX_QUESTIONS = 10
+
+# What fraction of the countable questions has to be right. A ratio rather than
+# a count, because the denominator moves: the model may return fewer than asked
+# for, and a flagged question leaves the count entirely.
+#
+# 0.75 against six questions is FIVE of six, because 4/6 is 0.667 and does not
+# clear the bar. That is the intended reading and it is worth the arithmetic:
+# guessing at random through four options, six questions gives
+#
+#     3 of 6   16.9%       (and 32.0% if one option can be eliminated)
+#     4 of 6    3.8%       (10.0%)
+#     5 of 6    0.5%       ( 1.8%)
+#
+# Four of six is a one-in-ten walk-through for someone who half-remembers the
+# lecture well enough to discard one distractor, which is exactly the state this
+# gate exists to catch. Five of six is not.
+#
+# What the same ratio demands at other lengths, since a flagged question or a
+# short set changes the denominator: 3 of 4, 4 of 5, 5 of 6, 6 of 7, 6 of 8. The
+# harsh end is a three-question set, which needs 3 of 3 -- rare, and the honest
+# answer there is that three questions is not much evidence either.
 DEFAULT_PASS_RATIO = 0.75
 
 # One post can carry a whole term of handouts. Past this the prompt is trimmed
@@ -127,13 +171,21 @@ photographed board or a code screenshot by a vision model. They are part of the 
 lecture and are fair to ask about.
 4. Passages marked as not yet transcribed are holes in what has been read. Never \
 write a question that depends on one.
-5. Name the file and the page each question came from, so a wrong answer can be \
+5. Some of the material was read out of images and the reading is not always \
+right. Where a passage looks like a transcription error -- malformed notation, \
+garbled symbols, mangled mathematics, nonsense tokens, an identifier that is not \
+quite a word -- do not build a question on it, and never quote it as an option. \
+Prefer passages that read cleanly. Do not try to guess what the broken text was \
+meant to say: there is plenty of material here, so move to a passage you can \
+trust instead.
+6. Name the file and the page each question came from, so a wrong answer can be \
 looked up.
-6. Give a one-line explanation of the correct answer, in the material's own \
+7. Give a one-line explanation of the correct answer, in the material's own \
 terms.
-7. If the material is too thin to write {count} grounded questions, write fewer \
-and say why in `note`. Fewer honest questions is a better answer than inventing \
-one, and the pass mark is a ratio.
+8. If the material is too thin to write {count} grounded questions -- including \
+when too much of it is unreliably transcribed -- write fewer and say why in \
+`note`. Fewer honest questions is a better answer than inventing one, and the \
+pass mark is a ratio.
 
 Lecture: {title}
 Course: {course}
@@ -250,8 +302,14 @@ def _question_from(raw: Any, index: int) -> Question:
     )
 
 
-def parse_questions(payload: Any) -> tuple[list[Question], str]:
-    """(questions, the model's note). Raises QuizUnavailable on anything unusable."""
+def parse_questions(payload: Any, wanted: int = MAX_QUESTIONS) -> tuple[list[Question], str]:
+    """(questions, the model's note). Raises QuizUnavailable on anything unusable.
+
+    A model that returns more than it was asked for is trimmed to the number
+    asked for. Keeping the extras would quietly change the denominator the pass
+    mark is computed against, which is the one number in this file that has to
+    mean what the configuration says it means.
+    """
     if not isinstance(payload, dict):
         raise QuizUnavailable(
             f"the model returned {type(payload).__name__}, not an object", kind="refused"
@@ -261,7 +319,7 @@ def parse_questions(payload: Any) -> tuple[list[Question], str]:
         raise QuizUnavailable("the model returned no questions", kind="refused")
 
     questions = [_question_from(item, index) for index, item in enumerate(raw)]
-    return questions[:MAX_QUESTIONS], str(payload.get("note") or "").strip()
+    return questions[:wanted], str(payload.get("note") or "").strip()
 
 
 def _load_questions(stored: str) -> list[Question]:
@@ -398,7 +456,7 @@ def generate(
     if not item.ready:
         raise QuizUnavailable(item.blocked_reason or "nothing readable here", kind="not-readable")
 
-    wanted = count or config.gate_questions
+    wanted = count or config.quiz_question_count
     sources = collect(conn, config, item, questions=wanted)
     if not sources.text.strip():
         raise QuizUnavailable(
@@ -436,7 +494,7 @@ def generate(
     except llm.LLMError as err:
         raise _translate(err) from err
 
-    questions, note = parse_questions(payload)
+    questions, note = parse_questions(payload, wanted)
     # Cached even from `agent quiz --dry-run`. The expensive, irreversible thing
     # is the request, not the row: a dry run that threw its answer away and let
     # the real quiz ask again would spend 10% of the day's allowance on looking
@@ -518,6 +576,10 @@ class Attempt:
     run_id: int = 0
     model: str = ""
     source_hash: str = ""
+    # config.yaml's quiz.pass_threshold, copied onto the attempt when it starts.
+    # Stored rather than read live so that a quiz keeps the rules it began
+    # under: changing the threshold mid-quiz would move the bar under a quiz
+    # already half answered.
     pass_ratio: float = DEFAULT_PASS_RATIO
     label: str = ""
 
@@ -647,7 +709,7 @@ def begin(
         run_id=run_id,
         model=generated.model,
         source_hash=generated.source_hash,
-        pass_ratio=config.gate_pass_ratio,
+        pass_ratio=config.quiz_pass_threshold,
         label=item.label,
     )
     attempt.attempt_id = store.start_quiz_attempt(

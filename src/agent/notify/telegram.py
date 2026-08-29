@@ -216,8 +216,55 @@ def _http_post(
 
 MultipartTransport = Callable[[str, bytes, str], dict[str, Any]]
 
+# Illegal on Windows, and `/` would make the receiving end read a path where a
+# name was meant. Control characters are here for a second reason: a CR or LF
+# in a filename would end the Content-Disposition line early and let the rest
+# of the name be read as another header.
+_ILLEGAL_IN_FILENAMES = set('<>:"/\\|?*') | {chr(code) for code in range(32)}
 
-def _multipart(fields: dict[str, Any], path: Path) -> tuple[bytes, str]:
+# CON.pdf is not a file you can save on Windows. Vanishingly unlikely from a
+# Drive title, and three lines to be sure of.
+_RESERVED_STEMS = {"con", "prn", "aux", "nul"} | {
+    f"{prefix}{digit}" for prefix in ("com", "lpt") for digit in range(1, 10)
+}
+
+# Well inside every filesystem's limit, and short enough to read on a phone.
+MAX_FILENAME = 120
+
+
+def safe_filename(name: str, *, fallback: str = "attachment") -> str:
+    """A Drive title turned into something a phone can actually save.
+
+    Applied by _multipart to whatever it is handed, so a caller cannot break
+    the multipart headers with a quote or a newline however careless it is.
+    Idempotent, so composing a name and then sanitising it again is free.
+    """
+    cleaned = "".join(
+        " " if char in _ILLEGAL_IN_FILENAMES else char for char in str(name or "")
+    )
+    # Leading dots hide the file; trailing dots and spaces are silently dropped
+    # by Windows, which turns "Chapter 1." into a name that does not round-trip.
+    cleaned = " ".join(cleaned.split()).strip(". ")
+    if not cleaned:
+        return fallback
+
+    stem, dot, suffix = cleaned.rpartition(".")
+    if not dot:
+        stem, suffix = cleaned, ""
+    if stem.lower() in _RESERVED_STEMS:
+        stem = f"_{stem}"
+
+    room = MAX_FILENAME - len(suffix) - (1 if suffix else 0)
+    if room < 1:
+        # A pathological "name" that is all extension. Keep the front of it.
+        return cleaned[:MAX_FILENAME]
+    stem = stem[:room].rstrip(". ") or fallback
+    return f"{stem}.{suffix}" if suffix else stem
+
+
+def _multipart(
+    fields: dict[str, Any], path: Path, filename: str | None = None
+) -> tuple[bytes, str]:
     """Build one multipart/form-data body carrying a file and some fields.
 
     Written out rather than pulled from a library because it is the only
@@ -240,12 +287,16 @@ def _multipart(fields: dict[str, Any], path: Path) -> tuple[bytes, str]:
             + b"\r\n"
         )
 
+    # The mime type comes from the bytes on disk, the name from the caller: the
+    # local file is `files/<drive id>.pdf` and the name I want to see on the
+    # phone is "Chapter 1.pdf".
     mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    sent_as = safe_filename(filename or os.path.basename(path.name))
     parts.append(
         marker
         + b"\r\n"
         + f'Content-Disposition: form-data; name="document"; '
-          f'filename="{os.path.basename(path.name)}"\r\n'.encode()
+          f'filename="{sent_as}"\r\n'.encode()
         + f"Content-Type: {mime}\r\n\r\n".encode()
         + path.read_bytes()
         + b"\r\n"
@@ -472,12 +523,20 @@ class Telegram:
         caption: str = "",
         file_id: str | None = None,
         reply_markup: dict[str, Any] | None = None,
+        filename: str | None = None,
     ) -> dict[str, Any]:
         """Send a file, by cached id when we have one and by bytes otherwise.
 
         A file_id costs no upload and sidesteps the size ceiling entirely on
         every send after the first, so it is always preferred. The caller
         stores what comes back.
+
+        `filename` is what the file is called on the phone. It matters more
+        than it looks: the local library is keyed by Drive id, so without it
+        every lecture arrives as 11kqW48qFWWRMiWNUmOK69ZlkTQeKIgye.pdf and the
+        phone becomes a folder of files that cannot be told apart. Note that a
+        file_id carries the name it was uploaded with, so renaming means
+        forgetting the id and sending the bytes again.
         """
         payload: dict[str, Any] = {"chat_id": self.chat_id}
         if caption:
@@ -493,18 +552,20 @@ class Telegram:
         size = path.stat().st_size
         if size > UPLOAD_LIMIT:
             raise DocumentTooLarge(
-                f"{path.name} is {size / (1024 * 1024):.0f} MB, over Telegram's "
-                f"{UPLOAD_LIMIT // (1024 * 1024)} MB upload limit"
+                f"{filename or path.name} is {size / (1024 * 1024):.0f} MB, over "
+                f"Telegram's {UPLOAD_LIMIT // (1024 * 1024)} MB upload limit"
             )
-        return self._upload(path, payload)
+        return self._upload(path, payload, filename)
 
-    def _upload(self, path: Path, fields: dict[str, Any]) -> dict[str, Any]:
+    def _upload(
+        self, path: Path, fields: dict[str, Any], filename: str | None = None
+    ) -> dict[str, Any]:
         """One multipart POST. Retried on the same statuses as everything else."""
         url = self._url("sendDocument")
         last: TelegramError | None = None
 
         for attempt in range(MAX_ATTEMPTS):
-            body, content_type = _multipart(fields, path)
+            body, content_type = _multipart(fields, path, filename)
             try:
                 response = self._multipart_transport(url, body, content_type)
             except _ApiError as err:

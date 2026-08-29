@@ -60,14 +60,56 @@ ocr:
   # worth making deliberately. Set to 0 to leave OCR out of the pipeline.
   run_limit: 6
 
-# The readiness gate.
-gate:
-  # The share of a quiz's countable questions that has to be right. 0.75 is
-  # three of four. A ratio and not a count, so a lecture too thin for four
-  # questions still has a meaningful pass mark -- and so does one where a bad
-  # question was flagged out of the denominator.
-  pass_ratio: 0.75
+  # Because this number is small, WHICH pages it spends itself on matters more
+  # than the number does. The queue is ordered by the posting date of the
+  # material's parent, newest first, and courses in `courses.tracked` come
+  # before anything else -- with the ones named in timetable.yaml ahead of the
+  # rest, because a subject that meets is a subject the gate will ask about.
+  #
+  # There is nothing to configure here, deliberately: the ordering is derived
+  # from the tracked list and the timetable, which are already the two places
+  # that say what this term is. `agent ocr --status` prints the queue so it can
+  # be checked rather than trusted, and `agent ocr --course OS` forces one
+  # subject to the front for an evening when the gate needs it.
 
-  # How many questions to ask for, 3 to 5. The model may return fewer and say
-  # why; fewer honest questions is a better outcome than four invented ones.
-  questions: 4
+# The revision quiz -- the only thing standing between `reviewed` and
+# `verified`.
+quiz:
+  # How many questions to ask for, 3 to 10.
+  #
+  # A LONGER QUIZ COSTS THE SAME SINGLE MODEL CALL. The whole set comes back
+  # from one request and is then cached against the text it was generated from,
+  # so going from four questions to six spends none of the day's ~20 requests.
+  # What it spends is my own time, one question at a time on a phone. That is
+  # the only trade being made here, and it is worth making: four questions is
+  # not much evidence that I read a 92-page lecture.
+  #
+  # The model may return fewer than asked for and say why -- a lecture too thin
+  # to carry six grounded questions, or one where too much of the text is badly
+  # transcribed. Fewer honest questions is a better outcome than six invented
+  # ones, which is why the pass mark below is a fraction and not a count.
+  question_count: 6
+
+  # What fraction of the countable questions has to be right.
+  #
+  # 0.75 of six questions is FIVE of six, because 4/6 is 0.667 and does not
+  # clear the bar. That is deliberate. Guessing at random through four options,
+  # six questions gives:
+  #
+  #     3 of 6   16.9%      (32.0% if one option can be eliminated)
+  #     4 of 6    3.8%      (10.0%)
+  #     5 of 6    0.5%      ( 1.8%)
+  #
+  # Four of six is a one-in-ten walk-through for someone who half-remembers the
+  # lecture well enough to discard one distractor -- which is precisely the
+  # state this gate exists to catch. Five of six is not.
+  #
+  # It is a fraction rather than a count because the denominator moves: the
+  # model may return fewer questions, and a question I flag as bad leaves the
+  # count entirely rather than being marked wrong. The same 0.75 means 3 of 4,
+  # 4 of 5, 5 of 6, 6 of 7, 6 of 8. The harsh end is a three-question set, which
+  # needs 3 of 3 -- rare, and three questions is not much evidence either.
+  #
+  # A percentage here (75 instead of 0.75) is refused at load rather than
+  # making every quiz silently unpassable.
+  pass_threshold: 0.75

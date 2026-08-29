@@ -659,6 +659,13 @@ CREATE TABLE IF NOT EXISTS bot_state (
 -- Nothing here is precious. If Telegram ever rejects a stale id the row is
 -- deleted and the bytes are sent again, which is why there is no foreign key
 -- and no attempt to keep it in step with anything.
+--
+-- One consequence worth writing down: a file_id also carries the FILENAME the
+-- document was first uploaded under, and there is no way to rename it without
+-- re-uploading. So if the rule in gate/messages.py:document_filename ever
+-- changes, the fix is `DELETE FROM telegram_files` -- every row then costs one
+-- re-upload and nothing else. That is exactly what happened when delivery
+-- stopped sending lectures named after their Drive id.
 CREATE TABLE IF NOT EXISTS telegram_files (
     drive_id    TEXT PRIMARY KEY,
     file_id     TEXT NOT NULL,

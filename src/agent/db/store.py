@@ -637,6 +637,40 @@ def ocr_progress(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def ocr_candidate_posts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """(drive_id, course_id, posted_at) for every post an attachment hangs off.
+
+    The two facts the OCR queue is ordered by, and nothing else. `posted_at` is
+    the parent post's creation_time -- when the material was PUT IN FRONT OF ME,
+    which is what makes it likely to be asked about -- and never the extraction
+    or fetch time, which say only when this project happened to get to it.
+
+    One row per (file, course), because a file can be attached in two courses
+    and one of them may be tracked while the other is not. The caller takes the
+    best course and the newest post; deciding here would mean this query knowing
+    about config.
+
+    MAX(creation_time) because a file can also be attached to two posts in the
+    same course. The newest wins: material re-posted for this week's lecture is
+    this week's material, whatever the first posting said.
+    """
+    return conn.execute(
+        f"""
+        WITH parents AS ({_PARENTS_SQL})
+        SELECT m.drive_id, m.course_id, MAX(p.creation_time) AS posted_at,
+               MIN(m.title) AS title,
+               COALESCE(MIN(c.name), m.course_id) AS course_name
+          FROM materials m
+          JOIN parents p
+            ON p.entity_type = m.parent_type AND p.id = m.parent_id
+          LEFT JOIN courses c ON c.id = m.course_id
+         WHERE m.drive_id IS NOT NULL
+           AND m.deleted_at IS NULL AND p.deleted_at IS NULL
+         GROUP BY m.drive_id, m.course_id
+        """
+    ).fetchall()
+
+
 def ocr_error_counts(conn: sqlite3.Connection, limit: int = 8) -> list[tuple[str, int]]:
     """[(reason, pages)] for every page that is not transcribed, commonest first.
 
@@ -711,6 +745,11 @@ def study_item_sources(
 
     Same exclusions as pack_sources -- a soft-deleted post or attachment does
     not come back as a question, and only `ok` extractions have text to read.
+
+    `local_path` is the one column pack_sources does not select. gate/sections.py
+    needs the original PDF, not only its text: the bookmark table is where a
+    slide deck says which pages belong to one topic, and it exists nowhere in
+    the extracted .txt.
     """
     return conn.execute(
         f"""
@@ -719,7 +758,7 @@ def study_item_sources(
                p.body AS parent_body, p.alternate_link, p.creation_time,
                m.id AS material_id, m.drive_id, m.title AS file_title, m.url AS file_url,
                e.text_path, e.method, e.pages, e.scan_pages, e.ocr_pages,
-               e.chars, e.extracted_at, e.mime_type
+               e.chars, e.extracted_at, e.mime_type, e.local_path
           FROM parents p
           JOIN materials m
             ON m.parent_type = p.entity_type AND m.parent_id = p.id
