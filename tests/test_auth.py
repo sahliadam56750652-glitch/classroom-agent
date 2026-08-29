@@ -8,13 +8,16 @@ import pytest
 from google.oauth2.credentials import Credentials
 
 from agent.auth import (
+    OAUTH_PORT_ENV,
     SCOPES,
+    AuthError,
     ScopeMismatch,
     WrongAccount,
     _load_token,
     _save_token,
     check_account,
     check_scopes,
+    oauth_port,
 )
 
 ACCOUNT = "sahliadam56750652@gmail.com"
@@ -210,3 +213,54 @@ def test_token_without_granted_scopes_reports_none(tmp_path):
     assert granted == []
     with pytest.raises(ScopeMismatch):
         check_scopes(granted)
+
+
+# --------------------------------------------------------------------------
+# the loopback port for the consent flow
+# --------------------------------------------------------------------------
+
+def test_oauth_port_defaults_to_any_free_port(monkeypatch):
+    """Unset must keep the laptop's behaviour exactly: 0, pick anything."""
+    monkeypatch.delenv(OAUTH_PORT_ENV, raising=False)
+    assert oauth_port() == 0
+
+
+@pytest.mark.parametrize("raw", ["", "   "])
+def test_blank_is_the_same_as_unset(monkeypatch, raw):
+    """An empty line in .env must not read as port 0-is-invalid or as a crash."""
+    monkeypatch.setenv(OAUTH_PORT_ENV, raw)
+    assert oauth_port() == 0
+
+
+def test_a_set_port_is_used(monkeypatch):
+    """The point of the variable: the tunnel is opened before the flow runs."""
+    monkeypatch.setenv(OAUTH_PORT_ENV, "8765")
+    assert oauth_port() == 8765
+
+
+def test_surrounding_whitespace_is_stripped(monkeypatch):
+    monkeypatch.setenv(OAUTH_PORT_ENV, " 8765 ")
+    assert oauth_port() == 8765
+
+
+@pytest.mark.parametrize("raw", ["eight-thousand", "8765.0", "0x22", "80 80"])
+def test_a_port_that_is_not_a_number_is_refused_by_name(monkeypatch, raw):
+    """Named, not passed through.
+
+    run_local_server would do something unhelpful with it, and diagnosing a
+    silent OAuth failure on a box with no browser is the whole thing this
+    variable exists to avoid.
+    """
+    monkeypatch.setenv(OAUTH_PORT_ENV, raw)
+    with pytest.raises(AuthError) as err:
+        oauth_port()
+    assert OAUTH_PORT_ENV in str(err.value)
+    assert repr(raw) in str(err.value)
+
+
+@pytest.mark.parametrize("raw", ["-1", "65536", "99999"])
+def test_a_port_outside_the_range_is_refused(monkeypatch, raw):
+    monkeypatch.setenv(OAUTH_PORT_ENV, raw)
+    with pytest.raises(AuthError) as err:
+        oauth_port()
+    assert OAUTH_PORT_ENV in str(err.value)

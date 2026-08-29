@@ -1,0 +1,17 @@
+[Unit]
+Description=classroom-agent: twice-daily pipeline
+
+[Timer]
+OnCalendar=*-*-* 07:30
+OnCalendar=*-*-* 19:30
+# The sync IS catch-up safe (invariant 1): it compares stored state against
+# live state and never assumes it ran yesterday, so one run after a week of
+# downtime reports the whole week with no gaps and no duplicates. A missed run
+# should therefore fire on boot.
+Persistent=true
+# Deliberately NO RandomizedDelaySec. CLAUDE.md's schedule table requires the
+# 20:00 gate to run after the 19:30 sync, "after the 19:30 sync has pulled the
+# day's material". A random delay can reorder them.
+
+[Install]
+WantedBy=timers.target

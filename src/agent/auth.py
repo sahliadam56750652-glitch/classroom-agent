@@ -10,6 +10,7 @@ in this codebase may call a Classroom write method.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -20,6 +21,13 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 from .config import Config
+
+# The loopback port the consent flow listens on. Zero means "pick a free
+# one", which is right on a laptop and useless on a headless box: the
+# browser that completes the flow is on the OTHER machine, reached through
+# `ssh -L <port>:localhost:<port>`, and a tunnel has to be opened before the
+# port is known. Setting this pins the port so the tunnel can exist first.
+OAUTH_PORT_ENV = "OAUTH_PORT"
 
 SCOPES = [
     "https://www.googleapis.com/auth/classroom.courses.readonly",
@@ -157,6 +165,30 @@ def account_email(creds: Credentials) -> str | None:
 # the flow
 # --------------------------------------------------------------------------
 
+def oauth_port() -> int:
+    """The loopback port for the consent flow. 0 -- any free port -- by default.
+
+    Validated rather than passed through: a typo would otherwise surface as
+    whatever run_local_server makes of it, and an OAuth flow that fails for a
+    reason it will not name is the worst thing to be sitting in front of on a
+    box with no browser.
+    """
+    raw = (os.environ.get(OAUTH_PORT_ENV) or "").strip()
+    if not raw:
+        return 0
+    try:
+        port = int(raw)
+    except ValueError:
+        raise AuthError(
+            f"{OAUTH_PORT_ENV} must be a port number, got {raw!r}."
+        ) from None
+    if not 0 <= port <= 65535:
+        raise AuthError(
+            f"{OAUTH_PORT_ENV} must be between 0 and 65535, got {port}."
+        )
+    return port
+
+
 def _run_flow(config: Config) -> Credentials:
     if not config.credentials_path.is_file():
         raise AuthError(
@@ -167,7 +199,7 @@ def _run_flow(config: Config) -> Credentials:
     flow = InstalledAppFlow.from_client_secrets_file(str(config.credentials_path), SCOPES)
     # select_account so a browser already signed in elsewhere cannot silently
     # pick the other account; consent so a refresh token always comes back.
-    return flow.run_local_server(port=0, prompt="consent select_account")
+    return flow.run_local_server(port=oauth_port(), prompt="consent select_account")
 
 
 def get_credentials(config: Config) -> Credentials:

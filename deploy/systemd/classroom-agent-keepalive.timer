@@ -1,0 +1,16 @@
+[Unit]
+Description=classroom-agent: idle-reclamation keepalive
+
+[Timer]
+# Four slices, deliberately offset from 07:30, 19:30 and 20:00 so the keepalive
+# never competes with a sync, a gate, or an OCR batch.
+OnCalendar=*-*-* 02:00
+OnCalendar=*-*-* 10:00
+OnCalendar=*-*-* 14:00
+OnCalendar=*-*-* 22:30
+# A missed slice is not worth catching up: the measurement is a 7-day
+# percentile, so one skipped half-hour changes nothing.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

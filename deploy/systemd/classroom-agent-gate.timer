@@ -1,0 +1,16 @@
+[Unit]
+Description=classroom-agent: the evening revision gate
+
+[Timer]
+OnCalendar=*-*-* 20:00
+# Persistent=false, and this is the one setting here that is NOT the obvious
+# default. The gate is deliberately not catch-up safe: CLAUDE.md says a gate
+# that has not run for three days fires once, for tomorrow, not three times,
+# because "a prompt for a lecture that already happened is noise". A persistent
+# timer on a box that boots at 06:00 sends exactly that prompt. A missed
+# evening is a missed evening; the backlog is unharmed because study_items
+# never expire.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,16 @@
+# Tomorrow's revision prompt. One message, once, for tomorrow's subjects.
+
+[Unit]
+Description=classroom-agent: the evening revision gate
+After=network-online.target
+Wants=network-online.target
+# Ordering only -- it does not pull the run in. If the 19:30 sync failed, the
+# gate should still fire on yesterday's material rather than not fire at all.
+After=classroom-agent-run.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/classroom-agent
+ExecStart=/home/ubuntu/classroom-agent/.venv/bin/agent gate
+TimeoutStartSec=600

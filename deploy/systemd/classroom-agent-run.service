@@ -1,0 +1,23 @@
+# sync -> fetch -> extract -> ocr -> packs -> deadlines -> notify.
+#
+# Replaces the Windows Task Scheduler entry of the same cadence. Every stage
+# before notify is best-effort inside the command itself, so a failed fetch
+# cannot suppress the briefing -- that isolation lives in cli.cmd_run, not here.
+
+[Unit]
+Description=classroom-agent: sync, fetch, extract, OCR, packs, deadlines, notify
+# The whole pipeline talks to Google and Telegram. network-online, not network,
+# because the latter is satisfied before there is a usable route.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/classroom-agent
+# No EnvironmentFile: config.load_config() reads .env from beside config.yaml
+# itself, so the secrets arrive the same way here as they do on the laptop.
+ExecStart=/home/ubuntu/classroom-agent/.venv/bin/agent run
+# A run that hangs on a socket must not still be holding the database when the
+# next one starts. 20 minutes is well past the worst observed run.
+TimeoutStartSec=1200

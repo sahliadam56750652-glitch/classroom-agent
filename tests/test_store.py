@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+import time
 
 import pytest
 
@@ -17,6 +19,13 @@ from agent.classroom.models import (
 from agent.db import store
 
 DRIVE = {"driveFile": {"driveFile": {"id": "d1", "title": "lecture.pdf"}}}
+
+# Raw SQL rather than upsert_course, because the concurrency tests below need
+# to write from a plain sqlite3 connection that knows nothing about the store.
+INSERT_COURSE = (
+    "INSERT INTO courses (id, name, course_state, content_hash, first_seen_at) "
+    "VALUES (?, ?, 'ACTIVE', 'h', 't')"
+)
 
 
 @pytest.fixture
@@ -79,6 +88,74 @@ def test_foreign_keys_are_enforced(conn):
     work, _ = parse_coursework({"id": "w1", "title": "TD"}, "no-such-course")
     with pytest.raises(sqlite3.IntegrityError):
         store.upsert_coursework(conn, work)
+
+
+def test_busy_timeout_is_set(conn):
+    """Connection-scoped like foreign_keys, and just as easy to lose."""
+    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == store.BUSY_TIMEOUT_MS
+
+
+def test_a_second_writer_waits_for_the_first(tmp_path):
+    """Two writers serialise, and the loser must wait rather than fail.
+
+    This is what the server makes routine: the 19:30 `agent run` writes in
+    bursts while the always-on `agent bot` is trying to commit a button press.
+    Without the timeout the bot raises "database is locked" and the tap does
+    nothing, which is the silent failure this project likes least.
+    """
+    path = tmp_path / "academic.db"
+    store.connect(path).close()
+
+    holder = sqlite3.connect(path)
+    holder.execute("BEGIN IMMEDIATE")
+    holder.execute(INSERT_COURSE, ("c1", "held"))
+
+    failure: list[BaseException] = []
+
+    def write() -> None:
+        try:
+            other = store.connect(path)
+            other.execute(INSERT_COURSE, ("c2", "waited"))
+            other.commit()
+            other.close()
+        except BaseException as err:  # noqa: BLE001 -- reported, not swallowed
+            failure.append(err)
+
+    writer = threading.Thread(target=write)
+    writer.start()
+    time.sleep(0.2)
+    holder.commit()
+    holder.close()
+    writer.join(timeout=10)
+
+    assert not writer.is_alive(), "the second writer never finished"
+    assert not failure, f"the second writer raised {failure[0]!r}"
+
+    check = store.connect(path)
+    assert store.count_rows(check, "courses") == 2
+    check.close()
+
+
+def test_the_contention_is_real(tmp_path):
+    """The control for the test above.
+
+    Without it, a second writer that never actually contended would pass and
+    the timeout could be deleted with the suite still green.
+    """
+    path = tmp_path / "academic.db"
+    store.connect(path).close()
+
+    holder = sqlite3.connect(path)
+    holder.execute("BEGIN IMMEDIATE")
+    holder.execute(INSERT_COURSE, ("c1", "held"))
+
+    impatient = sqlite3.connect(path, timeout=0)
+    with pytest.raises(sqlite3.OperationalError):
+        impatient.execute(INSERT_COURSE, ("c2", "nope"))
+    impatient.close()
+
+    holder.rollback()
+    holder.close()
 
 
 def test_events_dedupe_index_rejects_a_repeat(conn):

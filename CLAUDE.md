@@ -71,9 +71,17 @@ src/agent/
   gate/        timetable.py  scheduler.py  messages.py  bot.py  quiz.py
                sections.py
 tests/
+deploy/        README.md  fingerprint.py  systemd/
 data/          academic.db  token.json  library/  logs/
 config.yaml    timetable.yaml          (both hand-edited, both gitignored)
 ```
+
+`deploy/` is Phase 5a: the runbook for the move to the Oracle box, the four
+systemd units, and `fingerprint.py`, which prints a comparable summary of a
+`DATA_DIR` -- row counts, the four figures that cannot be rebuilt from the API,
+and one hash over the whole library -- so that "the data arrived whole" is a
+`diff` rather than a belief. It imports nothing from `agent` on purpose: a
+broken install and a truncated copy must not look alike.
 
 The timetable is a file, not a table. It is versioned, semester-scoped
 configuration with joint sessions and per-session teachers, none of which the
@@ -135,6 +143,13 @@ where the table used to be in `db/schema.sql`.
   uploaded with, so changing that rule means `DELETE FROM telegram_files`.
 - Every external call has explicit retry with exponential backoff on 429 and
   5xx. Never a bare `except:`.
+- Both SQLite pragmas that matter are connection-scoped, so both are set in
+  `db/store.py:connect` and neither can live in `schema.sql`: `foreign_keys`,
+  and `busy_timeout` at `BUSY_TIMEOUT_MS`. Two writers still serialise under
+  WAL, and on the server `agent run` and `agent bot` genuinely overlap -- the
+  default 5 seconds is short enough for a sync burst to exceed, and the loser
+  gets `database is locked`, which for the bot is a tapped button that does
+  nothing.
 - Secrets come from `.env` (via `python-dotenv`) and never from source.
   `.env`, `credentials.json`, `token.json`, `data/` are all gitignored.
 - Log structured lines to `data/logs/` and record each sync in `sync_runs`.
@@ -157,6 +172,13 @@ administrator rights this account does not have -- so the listener starts from a
 `.vbs` in the Startup folder calling `pythonw.exe`, which is windowless and runs
 as the ordinary user. It is a crude mechanism and it costs nothing, because
 `agent bot` holds no state a restart could lose.
+
+**That table describes the laptop, and stays true until the Phase 5a cutover.**
+The systemd equivalents are written and sit in `deploy/systemd/`; nothing has
+moved yet. Two settings there are not defaults and both encode a rule from this
+file: `Persistent=true` on the run timer because the sync is catch-up safe, and
+`Persistent=false` on the gate timer because it deliberately is not -- a box
+that boots at 06:00 must not send last night's prompt. See `deploy/README.md`.
 
 The quiz has no entry of its own. It is reached by tapping a button, so it
 lives inside `agent bot` -- and generation is lazy, at the moment the button is

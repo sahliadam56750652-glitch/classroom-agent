@@ -27,6 +27,16 @@ from ..config import Config
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 SCHEMA_VERSION = 3
 
+# How long a writer waits for another writer before giving up. WAL lets readers
+# and one writer coexist, but two writers still serialise, and on the server
+# `agent run` and the always-on `agent bot` genuinely overlap -- the 19:30 sync
+# writes in bursts while a button press is trying to commit. Python's default is
+# 5 seconds, which a sync burst can exceed; the failure is an
+# `sqlite3.OperationalError: database is locked` on whichever side loses, which
+# for the bot means a tapped button that does nothing. Waiting is free and only
+# happens under contention.
+BUSY_TIMEOUT_MS = 30_000
+
 # Tables the differ reconciles against live state, and the only ones
 # soft_delete_missing and load_rows will touch.
 RESOURCE_TABLES = frozenset(
@@ -58,9 +68,10 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
-    # Connection-scoped and a no-op inside a transaction, so it has to be set
-    # here rather than in schema.sql, and before the script runs.
+    # Both are connection-scoped and a no-op inside a transaction, so they have
+    # to be set here rather than in schema.sql, and before the script runs.
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
 
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     conn.commit()

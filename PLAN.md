@@ -59,6 +59,23 @@ evening before, the material is delivered on a tap, and the only way to
   the open problem at the end of this file for what was measured, what was
   chosen, and what is deliberately waiting for September.
 
+**Phase 5a — planned, code and units built, not yet cut over.** The move to an
+Oracle Always Free ARM instance, so that the backend is up when the laptop is
+not. `deploy/` holds the runbook, the four systemd units and
+`deploy/fingerprint.py`, which prints a comparable summary of a `DATA_DIR` so
+that "the data arrived whole" can be checked by `diff` rather than believed. Two
+small code changes went with it -- `store.BUSY_TIMEOUT_MS` and `auth.OAUTH_PORT`
+-- both described under **Settled decisions**. Nothing has moved yet; the
+instance does not exist.
+
+A survey of `src/agent/` for platform assumptions found **none**: no
+`sys.platform`, `os.name`, `platform.system()`, `os.startfile`, `winreg`,
+`subprocess`, no absolute path in any module, no `date.today()` and no naive
+`datetime.now()`. Stored library paths are relative and forward-slashed --
+measured, 0 of 118 `extractions` rows carry a backslash. Invariant 5 turned out
+to be enforced rather than aspirational, which is the whole reason 5a is a
+directory copy.
+
 **`study_items` is seeded: 67 rows, every one `skipped` with
 `skip_source = 'seed'`.** (An earlier version of this file said the table held
 zero rows. It was stale.) All five tracked courses are a finished academic
@@ -292,12 +309,54 @@ deadline alerts still arrive by Telegram independently of the web client.
   softer nudges. A missed deadline alert is the one failure this project cannot
   afford, so it stays on the channel that has already proven it delivers.
 
-- **Hosting: this laptop through Phase 2, then an Oracle Cloud Always Free ARM
-  instance from Phase 3.** The free tier was cut to 2 OCPU / 12 GB in 2026,
-  still far more than this needs. Two known hazards: "Out of host capacity" on
-  instance creation, and idle reclamation below roughly 10% CPU and low network
-  over 7 days — a twice-daily sync is close to idle, so it needs a keepalive
-  cron or a Pay-As-You-Go upgrade.
+- **Hosting: this laptop through Phase 3, then an Oracle Cloud Always Free ARM
+  instance in Phase 5a.** Deferred past Phase 3 because nothing in the code
+  depended on it (invariant 5) and there was no forcing function; 5a is the
+  phase because a web dashboard and an Android app are clients, and a client is
+  useless against a backend that is only up when the laptop is.
+
+  `VM.Standard.A1.Flex`, 2 OCPU / 12 GB — half the 4 OCPU / 24 GB Always Free
+  allowance, deliberately, so a second free instance stays possible — on a
+  **50 GB** boot volume rather than 200, because the 200 GB block allowance is a
+  total across at most two volumes and the boot volume counts against it. The
+  library is 116 MB.
+
+  Two known hazards. **"Out of host capacity"** on A1 creation is real, has no
+  workaround beyond scripted retries across every availability domain, and can
+  take days — which is why this is scheduled before mid-September rather than
+  after. **Idle reclamation** is live because the account stays Always Free: the
+  documented criteria are ANDed over 7 days, 95th-percentile CPU below 20% and
+  network below 20%, and a twice-daily sync plus an idle long-poll sits far under
+  both. Hence `classroom-agent-keepalive.timer`, with the arithmetic written into
+  the unit: on 2 OCPU one core at 100% reads as 50%, so clearing a 95th
+  percentile of 20% needs more than 5% of samples above it — four 30-minute
+  slices a day is 8.3% and clears it, one hour a day is 4.2% and does not.
+  A Pay-As-You-Go upgrade would make the keepalive unnecessary and was
+  considered and declined.
+
+- **The 5a cutover order is fixed by one invisible failure.** Telegram hands
+  each update to exactly ONE `getUpdates` caller, so two `agent bot` processes
+  on one token split the button presses between them at random and the loser
+  does nothing, silently. The Windows Startup `.vbs` is therefore disabled
+  BEFORE the systemd service starts, never alongside it. Everything else in the
+  migration fails loudly; this one does not.
+
+- **`Persistent=true` on the run timer, `Persistent=false` on the gate.** The
+  same asymmetry as invariant 1 versus the gate's deliberate exemption from it,
+  expressed in systemd. The sync is catch-up safe, so a missed run should fire
+  on boot and report the whole gap. The gate is not, on purpose — a prompt for a
+  lecture that already happened is noise — so a box that boots at 06:00 must not
+  send last night's gate. Also no `RandomizedDelaySec` on the run timer, because
+  the schedule table requires 20:00 to follow the 19:30 sync and a random delay
+  can reorder them.
+
+- **The recovery artifact is `data/` plus the three root config files, not the
+  VM.** `config.yaml`, `.env` and `timetable.yaml` live at the repo root, not
+  under `DATA_DIR`, and all three are gitignored — so they arrive via neither
+  `git clone` nor a `data/` copy, and a migration that copies only `DATA_DIR`
+  produces a box that cannot start. This is the one place invariant 5's phrase
+  "config" is not literally true, and it is worth knowing before a restore
+  rather than during one.
 
 - **No custom domain.** A free `*.vercel.app` or `*.pages.dev` subdomain serves
   the PWA and the `assetlinks.json` the APK needs. The likely final shape is
@@ -443,6 +502,12 @@ deadline alerts still arrive by Telegram independently of the web client.
   killing it is harmless and the crude mechanism costs nothing. `agent run` and
   `agent gate` remain ordinary Task Scheduler entries.
 
+  **Retired by Phase 5a.** systemd has no S4U problem, so the `.vbs` becomes
+  `classroom-agent-bot.service` with `Restart=always`. The one setting there
+  that is not a default is `StartLimitIntervalSec=0`: systemd would otherwise
+  give up after five restarts in ten seconds and leave the unit dead, and a dead
+  bot is a gate that silently stops answering taps.
+
 - **Network errors must be caught as `OSError` AND
   `http.client.HTTPException`, never as `URLError`.** `TimeoutError`,
   `ConnectionResetError`, `socket.gaierror` and `ssl.SSLError` are *not*
@@ -450,6 +515,38 @@ deadline alerts still arrive by Telegram independently of the web client.
   during read. `IncompleteRead` and `BadStatusLine` are not even `OSError`,
   which is why both trees have to be caught. A read timeout escaping an
   `except URLError` is what killed a twenty-page run with a traceback.
+
+- **`store.connect` sets `busy_timeout`, not just `foreign_keys`.** Both pragmas
+  are connection-scoped, so both have to be set in `connect()` rather than in
+  `schema.sql`. WAL lets readers and one writer coexist, but two writers still
+  serialise, and the server makes that routine in a way the laptop never did:
+  the 19:30 `agent run` writes in bursts while the always-on `agent bot` is
+  trying to commit a button press. Python's default is 5 seconds, which a sync
+  burst can exceed, and the loser gets `database is locked` — which for the bot
+  means a tap that does nothing. 30 seconds, and the wait only happens under
+  contention. Pinned by a test that holds a write lock from one connection while
+  another writes, plus a control proving the contention is real, so the pragma
+  cannot be deleted with the suite still green.
+
+- **`OAUTH_PORT` exists so the consent flow can be tunnelled.**
+  `run_local_server(port=0)` picks a free port, which is right on a laptop and
+  useless on a headless box: the browser that completes the flow is on the other
+  machine, reached through `ssh -L <port>:localhost:<port>`, and a tunnel has to
+  be opened before the port is known. Unset, it stays 0 and nothing changes. A
+  value that is not a port is refused by name rather than passed through, because
+  an OAuth flow that fails for a reason it will not state is the worst thing to
+  be sitting in front of on a box with no browser.
+
+- **The token moves; it is not re-consented.** Nothing in `token.json` is bound
+  to a machine — it is a refresh token, a client id, and the `granted_scopes`
+  list `_save_token` persists so `check_scopes` can run on every invocation. But
+  this only works if the Cloud project's OAuth consent screen is **In
+  production**: under *Testing*, refresh tokens expire after 7 days. On the
+  laptop that is invisible, because `auth.py` deletes the dead token and opens a
+  browser. On a headless box it is a hard stop arriving a week after cutover and
+  presenting as "the sync stopped working" — the recurring lesson's exact shape,
+  a failure that does not look like its cause. Check it before copying the
+  token, not after.
 
 ---
 

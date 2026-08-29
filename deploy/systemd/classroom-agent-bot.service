@@ -1,0 +1,31 @@
+# The long-poll listener. Replaces the Startup .vbs calling pythonw.exe, which
+# existed only because a windowless Task Scheduler entry needed S4U rights the
+# laptop account did not have. systemd has no such problem, so the crude
+# mechanism retires here.
+
+[Unit]
+Description=classroom-agent: Telegram button listener
+After=network-online.target
+Wants=network-online.target
+# The default start limit gives up after 5 restarts in 10s and leaves the unit
+# dead. A dead bot is a gate that silently stops answering taps, which is the
+# failure mode this project ranks worst. Let it loop; journald shows why.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/classroom-agent
+ExecStart=/home/ubuntu/classroom-agent/.venv/bin/agent bot
+Restart=always
+RestartSec=15
+# cmd_bot catches KeyboardInterrupt, not SIGTERM, so `finally: conn.close()`
+# does not run on a stop and the -wal/-shm files are left for the next open to
+# recover. That is safe rather than untidy: `agent bot` holds no state a
+# restart could lose -- every button carries ids, every state is a committed
+# row, and the getUpdates offset lives in bot_state. Nothing to drain, so no
+# reason to wait long.
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

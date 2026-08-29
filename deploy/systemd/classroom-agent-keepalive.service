@@ -1,0 +1,31 @@
+# Burns one core so Oracle does not reclaim the instance.
+#
+# This exists only because the account stays on Always Free. Oracle's documented
+# idle criteria are ANDed over a 7-day window -- 95th-percentile CPU below 20%
+# and network below 20% -- and a twice-daily sync plus an idle long-poll sits
+# far under both.
+#
+# The arithmetic, written out so that changing it is a decision rather than a
+# guess (the same reason config.example.yaml spells out the OCR quota):
+#
+#   On 2 OCPU, one core at 100% reads as 50% utilization, which is over the 20%
+#   line. To lift the 95th PERCENTILE above 20%, more than 5% of samples have to
+#   be over it. Four 30-minute slices a day is 2h, or 8.3% of samples, which
+#   clears it with margin. One hour a day is 4.2%, which does not.
+#
+# It is a workaround for a policy Oracle can change at will, and it is the first
+# thing to delete if the account is ever upgraded to Pay-As-You-Go, which is
+# exempt from reclamation outright.
+
+[Unit]
+Description=classroom-agent: keep the Always Free instance from being reclaimed
+
+[Service]
+Type=oneshot
+User=ubuntu
+# One core, thirty minutes. `nice` so it yields instantly to anything real --
+# the point is to be measured as busy, not to actually compete for the CPU.
+ExecStart=/usr/bin/nice -n 19 /usr/bin/timeout 1800 /usr/bin/openssl speed -seconds 1700 aes-256-cbc
+# openssl exits 124 under timeout, which is expected and not a failure.
+SuccessExitStatus=0 124
+TimeoutStartSec=2400

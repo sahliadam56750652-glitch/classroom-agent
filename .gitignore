@@ -15,3 +15,10 @@ sample/
 data/
 
 probe-output.txt
+
+# transient migration artifacts -- deploy/README.md step 2 writes these
+laptop.txt
+server.txt
+laptop-manifest.txt
+data-dev/
+data-standby/
