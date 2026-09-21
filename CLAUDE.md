@@ -60,11 +60,11 @@ bug even if the tests pass.
 
 ```
 src/agent/
-  config.py  auth.py  cli.py  scope.py
+  config.py  auth.py  cli.py  scope.py  manual.py
   classroom/   client.py  models.py
   db/          schema.sql  store.py
   sync/        poller.py  differ.py  deadlines.py
-  files/       drive.py  extract.py  packs.py  ocr.py
+  files/       drive.py  extract.py  packs.py  ocr.py  upload.py
   llm/         provider.py
   notify/      telegram.py  dispatch.py
   digest/      composer.py
@@ -125,6 +125,16 @@ where the table used to be in `db/schema.sql`.
   `agent run` fires twice, so OCR takes 12 and the gate has ~8. Raising the OCR
   limit is spending the quiz's allowance; the arithmetic is written out in
   `config.example.yaml` so that is a deliberate choice rather than a surprise.
+- **Everything entered by hand carries the `manual-` id prefix**, and that is
+  what makes it distinguishable from a Classroom row sitting in the same table.
+  `manual.py` owns the namespace and the minting; `agent upload` writes a post,
+  an attachment and a `fetched` extraction row -- exactly what `agent fetch`
+  would have left -- so **download is the only stage an upload skips.** The
+  prefix is enforced, not trusted: `courses.tracked` refuses one,
+  `soft_delete_missing` never stamps one, and `drive_references` never offers
+  one to Drive. That last pair matter because an upload may be FOR a tracked
+  subject, which puts a manual row inside a course the sync does reconcile.
+
 - **`tracked` and `in scope` are two different lists.** Tracked is the poller's
   allowlist -- which Classroom courses to fetch, curated by hand in
   `config.yaml`. In scope is what this semester is about: every course id

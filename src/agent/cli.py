@@ -15,7 +15,7 @@ from .classroom.models import parse_course
 from .config import Config, ConfigError, load_config
 from .db import store
 from .digest import composer
-from .files import drive, extract, ocr, packs
+from .files import drive, extract, ocr, packs, upload as upload_mod
 from .gate import bot as gate_bot
 from .gate import messages as gate_messages
 from .gate import quiz as gate_quiz
@@ -254,6 +254,40 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="ID",
         default=None,
         help="put skipped study items back in the queue (the only way out of skipped)",
+    )
+
+    upload_parser = sub.add_parser(
+        "upload",
+        parents=[shared],
+        help="add a local file to a subject's library -- a board, notes, a handout",
+    )
+    upload_parser.add_argument(
+        "file",
+        type=Path,
+        help="the PDF or photograph to add",
+    )
+    upload_parser.add_argument(
+        "--subject",
+        required=True,
+        metavar="NAME",
+        help="the timetable subject it belongs to (exact, never a near-match)",
+    )
+    upload_parser.add_argument(
+        "--title",
+        default=None,
+        metavar="TEXT",
+        help="what to call it in the gate and the pack (default: the filename)",
+    )
+    upload_parser.add_argument(
+        "--posted",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="when the material is dated, which is what the OCR queue sorts on",
+    )
+    upload_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="resolve, check the bytes and report; write nothing",
     )
 
     subjects_parser = sub.add_parser(
@@ -1354,6 +1388,63 @@ def _session_line(session) -> list[str]:
     return lines
 
 
+def cmd_upload(config: Config, args: argparse.Namespace) -> int:
+    """Put a local file into a subject's library, one stage in."""
+    try:
+        table = timetable_mod.load(config.timetable_path)
+    except timetable_mod.TimetableError as err:
+        print(err, file=sys.stderr)
+        return 1
+
+    conn = store.open_db(config)
+    try:
+        try:
+            plan = upload_mod.prepare(
+                config, conn, table,
+                subject=args.subject, path=args.file,
+                title=args.title, posted=args.posted,
+            )
+        except upload_mod.UploadError as err:
+            print(f"error: {err}", file=sys.stderr)
+            return 1
+
+        print(f"  subject: {plan.subject} ({plan.course_name})")
+        print(f"  title:   {plan.title}")
+        print(f"  dated:   {plan.posted_at}")
+        print(f"  file:    {plan.file_id}  {plan.mime_type}  "
+              f"{plan.size_bytes / 1024:.0f} KB")
+
+        if plan.already_held:
+            # Keyed by content, so this is not a conflict -- it is the same
+            # file. Said plainly rather than written again.
+            print()
+            print("  already in the library: these exact bytes are already held")
+            print(f"  as {plan.file_id}. Nothing written.")
+            return 0
+
+        if args.dry_run:
+            print()
+            print(f"  would write: library/{plan.local_path}")
+            print("  dry run -- nothing written")
+            return 0
+
+        upload_mod.commit(config, conn, plan, args.file.read_bytes())
+        conn.commit()
+    finally:
+        conn.close()
+
+    print()
+    print(f"  wrote library/{plan.local_path} and a 'fetched' extraction row.")
+    print("  Download is the only stage an upload skips -- the rest of the")
+    print("  pipeline reads it exactly as it reads a lecture from Drive.")
+    print()
+    print("  Next: `agent run` picks it up at 07:30 and 19:30. To use it tonight:")
+    print("      agent extract")
+    print(f'      agent ocr --course "{plan.subject}"')
+    print("      agent studyitems")
+    return 0
+
+
 def _identity(course_id: str | None, tracked: set[str]) -> str:
     """How a subject is identified, in the words that say what to do about it."""
     if course_id is None:
@@ -2233,6 +2324,7 @@ COMMANDS = {
     "packs": cmd_packs,
     "missing": cmd_missing,
     "studyitems": cmd_studyitems,
+    "upload": cmd_upload,
     "subjects": cmd_subjects,
     "timetable": cmd_timetable,
     "gate": cmd_gate,
@@ -2282,6 +2374,7 @@ def main(argv: list[str] | None = None) -> int:
         SeedWouldBuryBacklog,
         ocr.OCRError,
         packs.PackError,
+        upload_mod.UploadError,
         llm_provider.LLMError,
     ) as err:
         print(f"error: {err}", file=sys.stderr)
