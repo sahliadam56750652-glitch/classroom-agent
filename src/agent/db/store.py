@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .. import manual
 from ..classroom.models import (
     Announcement,
     Course,
@@ -21,6 +22,7 @@ from ..classroom.models import (
     CourseWorkMaterial,
     Material,
     Submission,
+    content_hash,
 )
 from ..config import Config
 
@@ -42,6 +44,19 @@ BUSY_TIMEOUT_MS = 30_000
 RESOURCE_TABLES = frozenset(
     {"coursework", "coursework_materials", "announcements", "submissions", "materials"}
 )
+
+# Where a manual row's reserved prefix lives, per reconcilable table. Four of
+# them carry it on `id`; `materials` carries it on `parent_id`, because
+# `models.material_id` composes an attachment id as
+# `<parent_type>:<parent_id>:<kind>:<ref>` and the prefix is therefore in the
+# middle of it rather than at the front. See `agent/manual.py`.
+_MANUAL_COLUMN = {
+    "coursework": "id",
+    "coursework_materials": "id",
+    "announcements": "id",
+    "submissions": "id",
+    "materials": "parent_id",
+}
 
 
 class StoreError(Exception):
@@ -282,6 +297,52 @@ def upsert_course(conn: sqlite3.Connection, course: Course, *, now: str | None =
     )
 
 
+def ensure_manual_course(
+    conn: sqlite3.Connection, course_id: str, name: str, *, now: str | None = None
+) -> bool:
+    """Register a subject that has no Classroom. True if it is new.
+
+    A manual course is structurally an ordinary course row -- that is the point
+    of the minted id -- so everything downstream (study items, packs, the gate,
+    the OCR queue) reads it without knowing the difference. Only two fields say
+    what it is: the `manual-` id, and `course_state`.
+
+    `course_state` is 'MANUAL' rather than ACTIVE or ARCHIVED. The column is
+    stored metadata that drives nothing (see the schema note), so this costs
+    no behaviour and makes `SELECT * FROM courses` legible.
+
+    Refuses to overwrite a Classroom course that happens to share the id, which
+    cannot occur -- Classroom ids are decimal digits -- but is cheap to state.
+    """
+    if not manual.is_manual(course_id):
+        raise ValueError(
+            f"{course_id!r} is not a manual course id; it must start with "
+            f"{manual.PREFIX!r}. See agent/manual.py."
+        )
+    existing = get_course(conn, course_id)
+    if existing is not None:
+        conn.execute("UPDATE courses SET name = ? WHERE id = ?", (name, course_id))
+        return False
+
+    stamp = now or _utc_now_iso()
+    conn.execute(
+        "INSERT INTO courses (id, name, section, room, owner_id, course_state, "
+        "enrollment_code, alternate_link, creation_time, update_time, "
+        "content_hash, first_seen_at) "
+        "VALUES (?, ?, NULL, NULL, NULL, 'MANUAL', NULL, NULL, ?, ?, ?, ?)",
+        (course_id, name, stamp, stamp, content_hash({"manual": course_id, "name": name}), stamp),
+    )
+    return True
+
+
+def manual_courses(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every subject registered as having no Classroom."""
+    return conn.execute(
+        "SELECT * FROM courses WHERE id LIKE ? ORDER BY name",
+        (f"{manual.PREFIX}%",),
+    ).fetchall()
+
+
 def upsert_coursework(conn: sqlite3.Connection, work: CourseWork, *, now: str | None = None) -> None:
     _upsert(
         conn,
@@ -461,6 +522,13 @@ def drive_references(
     fetcher's job, because it is the thing that knows a file only needs
     downloading once. Soft-deleted materials are excluded: the post is gone
     from Classroom, so there is nothing to revise.
+
+    Manually uploaded files are excluded too, and not as a nicety. An upload
+    for a TRACKED subject sits in a tracked course's materials, so `agent
+    fetch` would hand `manual-file-...` to `drive.files.get`, take the 404 as
+    a dead reference, and rewrite the row from 'fetched' to 'missing' -- losing
+    a file that is sitting on the disk, for a reason that would read as
+    Classroom having deleted something.
     """
     sql = [
         "SELECT m.id, m.drive_id, m.title, m.url, m.course_id,",
@@ -471,8 +539,9 @@ def drive_references(
         "  LEFT JOIN extractions e ON e.drive_id = m.drive_id",
         " WHERE m.kind = 'driveFile' AND m.drive_id IS NOT NULL",
         "   AND m.deleted_at IS NULL",
+        "   AND m.drive_id NOT LIKE ?",
     ]
-    params: list[Any] = []
+    params: list[Any] = [f"{manual.PREFIX}%"]
     if course_ids is not None:
         placeholders = ", ".join("?" for _ in course_ids)
         # An empty allowlist means "no courses", not "every course". IN () is a
@@ -1657,8 +1726,24 @@ def soft_delete_missing(
     """
     _check_resource_table(table)
     live = set(live_ids)
+    # Manual rows are excluded from the comparison entirely, and this is the
+    # guard that matters most in the whole of Phase 6.
+    #
+    # A manual COURSE is never polled, because the poller walks
+    # courses.tracked and a manual id can never be in it (config refuses one).
+    # But an upload may be FOR a tracked subject -- a photographed board for
+    # UNIX -- and then this function is reached with a genuinely tracked
+    # course_id, the live state legitimately does not contain the manual post,
+    # and without this clause one sync would stamp deleted_at across it.
+    #
+    # Expressed as "these rows are not part of the comparison" rather than as
+    # "undo it afterwards": a row that was never a candidate cannot be missed.
+    column = _MANUAL_COLUMN[table]
     stored = conn.execute(
-        f"SELECT id FROM {table} WHERE course_id = ? AND deleted_at IS NULL", (course_id,)
+        f"SELECT id FROM {table} "
+        f" WHERE course_id = ? AND deleted_at IS NULL "
+        f"   AND ({column} IS NULL OR {column} NOT LIKE ?)",
+        (course_id, f"{manual.PREFIX}%"),
     ).fetchall()
 
     missing = [row["id"] for row in stored if row["id"] not in live]

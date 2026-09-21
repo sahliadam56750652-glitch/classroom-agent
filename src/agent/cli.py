@@ -24,6 +24,7 @@ from .gate import sections as gate_sections
 from .gate import timetable as timetable_mod
 from .llm import provider as llm_provider
 from .notify import dispatch
+from . import manual
 from . import scope as scope_mod
 from .notify import telegram as telegram_api
 from .sync import deadlines, poller
@@ -253,6 +254,21 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="ID",
         default=None,
         help="put skipped study items back in the queue (the only way out of skipped)",
+    )
+
+    subjects_parser = sub.add_parser(
+        "subjects",
+        parents=[shared],
+        help="show each subject's identity, or mint one for a subject with no Classroom",
+    )
+    subjects_parser.add_argument(
+        "--add",
+        metavar="NAME",
+        default=None,
+        help=(
+            "mint a course-like id for a subject that has no Classroom and never "
+            "will, and print the timetable.yaml line to paste"
+        ),
     )
 
     timetable_parser = sub.add_parser(
@@ -1338,6 +1354,127 @@ def _session_line(session) -> list[str]:
     return lines
 
 
+def _identity(course_id: str | None, tracked: set[str]) -> str:
+    """How a subject is identified, in the words that say what to do about it."""
+    if course_id is None:
+        return "awaiting a Classroom id"
+    if manual.is_manual(course_id):
+        return f"{course_id}  (manual)"
+    return f"{course_id}  ({'tracked' if course_id in tracked else 'NOT tracked'})"
+
+
+def cmd_subjects(config: Config, args: argparse.Namespace) -> int:
+    """Every subject's identity -- and where one is missing, how to mint it."""
+    try:
+        table = timetable_mod.load(config.timetable_path)
+    except timetable_mod.TimetableError as err:
+        print(err, file=sys.stderr)
+        return 1
+
+    if args.add is not None:
+        return _add_manual_subject(config, table, args.add)
+
+    tracked = set(config.tracked_courses)
+    local = scope_mod.local(config, table)
+    conn = store.open_db(config)
+    try:
+        counts = store.study_item_counts(conn)
+    finally:
+        conn.close()
+
+    rows = []
+    for name in sorted(table.subjects, key=str.casefold):
+        course_id = table.subjects[name]
+        rows.append([
+            name,
+            _identity(course_id, tracked),
+            "yes" if course_id in local else "no",
+            str(counts.get(course_id or "", 0)) if course_id in local else "-",
+        ])
+
+    print(f"timetable: {table.path}")
+    print()
+    _print_table(["subject", "identity", "gated?", "items"], rows)
+    print()
+
+    awaiting = table.subjects_awaiting_course()
+    if awaiting:
+        print(f"  {len(awaiting)} subject(s) await a Classroom course id.")
+        print("  Join the course, run `agent courses`, and paste the id in --")
+        print('  or, if there will never be one: agent subjects --add "<name>"')
+    return 0
+
+
+def _add_manual_subject(config: Config, table, name: str) -> int:
+    """Mint an identity for a subject with no Classroom, and say where to put it.
+
+    This never writes timetable.yaml. The file is the single source of truth
+    for the weekly pattern and Phase 3a settled that it keeps ONE writer -- me.
+    So the command does the half that needs the database and prints the half
+    that needs the file.
+    """
+    matches = [key for key in table.subjects if key.casefold() == name.casefold()]
+    if not matches:
+        known = ", ".join(sorted(table.subjects)) or "(none)"
+        print(
+            f"{name!r} is not a subject in {config.timetable_path.name}, and "
+            f"names are never matched approximately.\n  Known subjects: {known}",
+            file=sys.stderr,
+        )
+        return 1
+    subject = matches[0]
+    existing = table.subjects[subject]
+
+    if existing is not None and not manual.is_manual(existing):
+        print(
+            f"{subject!r} already maps to Classroom course {existing}. A subject "
+            f"has one identity; if that course is wrong, edit "
+            f"{config.timetable_path.name}.",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        course_id = manual.course_id(subject)
+    except manual.ManualIdError as err:
+        print(err, file=sys.stderr)
+        return 1
+
+    if existing is not None and existing != course_id:
+        print(
+            f"{subject!r} already maps to manual course {existing}, which is not "
+            f"the id this name mints ({course_id}). Leave the file as it is, or "
+            f"edit it by hand -- renaming a course id orphans its study items.",
+            file=sys.stderr,
+        )
+        return 1
+
+    conn = store.open_db(config)
+    try:
+        created = store.ensure_manual_course(conn, course_id, subject)
+        conn.commit()
+    finally:
+        conn.close()
+
+    print(f"  {'registered' if created else 'already registered'}: "
+          f"{course_id}  ({subject})")
+    print()
+    if existing == course_id:
+        print(f"  {config.timetable_path.name} already maps it. Nothing to paste.")
+        return 0
+
+    print(f"  Now paste this line into {config.timetable_path.name}, "
+          f"under `subjects:`:")
+    print()
+    print(f"      {subject}: {course_id}")
+    print()
+    print("  This command does not edit that file. The timetable is the one")
+    print("  source of truth for the weekly pattern, and it keeps one writer.")
+    print()
+    print("  Then: agent timetable --check")
+    return 0
+
+
 def cmd_timetable(config: Config, args: argparse.Namespace) -> int:
     try:
         table = timetable_mod.load(config.timetable_path)
@@ -2096,6 +2233,7 @@ COMMANDS = {
     "packs": cmd_packs,
     "missing": cmd_missing,
     "studyitems": cmd_studyitems,
+    "subjects": cmd_subjects,
     "timetable": cmd_timetable,
     "gate": cmd_gate,
     "quiz": cmd_quiz,

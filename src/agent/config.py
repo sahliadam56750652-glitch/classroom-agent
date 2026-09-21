@@ -16,6 +16,8 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
+from . import manual
+
 # src/agent/config.py -> src/agent -> src -> repo root
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config.yaml"
@@ -143,7 +145,29 @@ def _course_ids(value: Any, key: str, config_path: Path) -> list[str]:
         )
     # Classroom course IDs are strings, but YAML reads a bare 7712... as an int.
     # Coerce so comparisons against API responses never silently fail.
-    return [str(item) for item in value]
+    ids = [str(item) for item in value]
+
+    if key == "courses.tracked":
+        # The one constraint Phase 6 cannot enforce anywhere later. `tracked`
+        # is what the poller walks and what `soft_delete_missing` reconciles
+        # against live state, so a manual id in this list means the poller 404s
+        # on a course that was never in Classroom and one sync stamps
+        # deleted_at across everything typed in by hand.
+        #
+        # Refused here, by name, at load: every command goes through this
+        # function, so there is no path that reaches the poller without passing
+        # it. See agent/manual.py.
+        minted = [course for course in ids if manual.is_manual(course)]
+        if minted:
+            raise ConfigError(
+                f"{config_path}: '{key}' names {len(minted)} manual course "
+                f"id(s): {', '.join(minted)}.\n"
+                f"A manual subject has no Classroom, so the poller would 404 "
+                f"on it and one sync would mark every manually entered row "
+                f"deleted. Manual subjects belong in timetable.yaml's "
+                f"'subjects' map and nowhere else -- remove them from here."
+            )
+    return ids
 
 
 def _telegram_chat_id(raw: dict[str, Any], config_path: Path) -> int | None:
