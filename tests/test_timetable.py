@@ -311,3 +311,81 @@ def test_a_bare_date_exception_gets_a_reason_that_reads_as_a_cause(table):
     """It is printed after "no sessions:", so "no sessions" would say nothing."""
     assert table.exception_for(date(2026, 10, 15)).reason == tt.DEFAULT_REASON
     assert table.exception_for(date(2026, 12, 28)).reason == "winter break"
+
+
+# --------------------------------------------------------------- identity
+#
+# Phase 6.2: null and "no Classroom, ever" were one value, and the conflation
+# meant a third of my week was reported as a permanent gap. One of them is a
+# thing to do; the other is the shape of the week.
+
+MANUAL = "manual-calculus-ii"
+
+
+def test_a_manual_id_loads_exactly_like_a_classroom_one(tmp_path):
+    """No new validation. That is what keeps my current all-null file valid."""
+    text = VALID.replace("Calculus II: null", f"Calculus II: {MANUAL}")
+    assert tt.load(write(tmp_path, text)).course_for("Calculus II") == MANUAL
+
+
+def test_the_three_identities_are_separately_reportable(tmp_path):
+    text = VALID.replace("Calculus II: null", f"Calculus II: {MANUAL}\n  Philosophy: null")
+    loaded = tt.load(write(tmp_path, text))
+
+    assert loaded.manual_subjects() == ["Calculus II"]
+    assert loaded.subjects_awaiting_course() == ["Philosophy"]
+    assert loaded.classroom_subjects() == ["DSA", "Database", "OS"]
+
+
+def test_a_manual_subject_is_not_awaiting_anything(tmp_path):
+    """It is not missing an id. It has one, and it will never have another."""
+    text = VALID.replace("Calculus II: null", f"Calculus II: {MANUAL}")
+    loaded = tt.load(write(tmp_path, text))
+    assert loaded.subjects_awaiting_course() == []
+    assert loaded.manual_subjects() == ["Calculus II"]
+
+
+def test_a_session_part_knows_which_of_the_three_it_is(tmp_path):
+    text = VALID.replace("Calculus II: null", f"Calculus II: {MANUAL}")
+    monday = tt.load(write(tmp_path, text)).sessions_on(date(2026, 9, 14))
+    parts = {part.subject: part for session in monday for part in session.parts}
+
+    assert parts["Calculus II"].manual is True
+    assert parts["Calculus II"].identified is True
+    assert parts["Database"].manual is False
+    assert parts["Database"].identified is True
+
+
+def test_awaiting_and_manual_are_two_different_warnings(tmp_path):
+    text = VALID.replace("Calculus II: null", f"Calculus II: {MANUAL}\n  Philosophy: null")
+    notes = tt.warnings(tt.load(write(tmp_path, text)), ["842149328479", "840878703017"])
+    joined = "\n".join(notes)
+
+    assert "awaiting a Classroom course id" in joined
+    assert "Philosophy" in joined
+    assert "run with no Classroom" in joined
+    assert "This is not a gap" in joined
+    # And the two facts are not in one sentence.
+    awaiting = next(note for note in notes if "awaiting" in note)
+    assert "Calculus II" not in awaiting
+
+
+def test_a_manual_subject_is_never_reported_as_untracked(tmp_path):
+    """A manual id can never be in courses.tracked -- that is the design, and
+    reporting it as a defect every run forever is how a check stops being read."""
+    text = VALID.replace("Calculus II: null", f"Calculus II: {MANUAL}")
+    notes = tt.warnings(tt.load(write(tmp_path, text)), ["842149328479", "840878703017"])
+    untracked = [note for note in notes if "courses.tracked" in note]
+    assert untracked, "the untracked-course warning should still fire"
+    assert all(MANUAL not in note for note in untracked)
+    # The genuinely untracked Classroom course is still reported.
+    assert any("DSA" in note for note in untracked)
+
+
+def test_an_all_null_file_reports_every_subject_as_awaiting(tmp_path):
+    """The shape of my real file today. Nothing may read as manual."""
+    loaded = tt.load(write(tmp_path))
+    notes = tt.warnings(loaded, [])
+    assert loaded.manual_subjects() == []
+    assert "Calculus II" in "\n".join(notes)
+    assert not any("run with no Classroom" in note for note in notes)

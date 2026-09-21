@@ -26,6 +26,7 @@ from datetime import date
 from collections.abc import Collection
 from typing import Any
 
+from .. import manual
 from ..db import store
 from ..files import packs
 from . import timetable as tt
@@ -91,6 +92,12 @@ class Subject:
     course_name: str
     sessions: tuple[tt.Session, ...]
     items: tuple[Item, ...] = ()
+    # What timetable.yaml maps this subject to, before any filtering. Carried
+    # because `course_id` being None conflates three different facts, and the
+    # difference between them is what the reader needs: no id yet (a gap that
+    # closes), a manual id (the permanent shape of the week), or a Classroom id
+    # for a course this install holds no material for.
+    mapped_course: str | None = None
     # Set when the course has no study items at all, which is not the same as
     # being up to date. Probability & Statistics is the live example: 20 of 20
     # attachments are gone from Drive, so nothing was ever readable.
@@ -100,6 +107,16 @@ class Subject:
     @property
     def gated(self) -> bool:
         return self.course_id is not None
+
+    @property
+    def manual(self) -> bool:
+        """Runs with no Classroom. Gated from material entered by hand."""
+        return manual.is_manual(self.mapped_course)
+
+    @property
+    def awaiting_course(self) -> bool:
+        """Mapped to null -- a Classroom I have not joined yet."""
+        return self.mapped_course is None
 
     @property
     def first_start(self) -> str:
@@ -358,6 +375,7 @@ def plan_for(
                 course_name=names.get(gated or "", gated or "") if gated else "",
                 sessions=tuple(met),
                 items=tuple(backlog.get(gated or "", ())),
+                mapped_course=course_id,
                 dead_files=dead.get(gated or "", 0),
                 has_items=bool(item_counts.get(gated or "", 0)) if gated else True,
             )

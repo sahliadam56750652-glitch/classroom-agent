@@ -21,18 +21,33 @@
 # 842149328479 as an integer, and every comparison downstream is against a
 # string.
 #
-# null is legal and normal. Most of my week has no Classroom presence at all,
-# and those subjects still belong here: they appear in the schedule so a day
-# reads like my actual day, and they are never gated. `agent timetable --check`
-# lists them so their absence is a stated fact rather than a silent one.
+# A subject's value is one of three things, and they are three different facts:
+#
+#   "842149328479"        a Classroom course id.
+#   null                  I have NOT JOINED the Classroom yet. A gap that
+#                         closes the day I paste an id in. Listed by
+#                         `agent timetable --check` as something to do.
+#   manual-linear-algebra a subject that has NO Classroom and never will.
+#                         Gated from material I enter by hand -- uploads,
+#                         logged sessions, exercise sheets. Mint the id with
+#                         `agent subjects --add "Linear Algebra"`, which prints
+#                         the line to paste here; it never edits this file.
+#
+# null and manual- were one value until Phase 6, and conflating them meant a
+# third of my week was reported as a permanent gap. One of them is a thing to
+# do; the other is the shape of the week.
+#
+# Either way the subject appears in the schedule, so a day reads like my actual
+# day. A null subject is never gated. A manual one is gated exactly like a
+# Classroom one -- same pipeline, same quiz, same study items.
 subjects:
   Database:                 "842149328479"   # Database GA 2026
   DSA:                      "806468143345"   # DSA- pi1A
   AI:                       "814337506504"   # Fundamentals of AI (2025-2026)
   OS:                       "840878703017"   # Operating Systems
   Probability & Statistics: "842730964192"   # Probability & Statistics 2025-26
-  Calculus II:              null             # no Classroom course
-  Linear Algebra:           null
+  Calculus II:              null                    # not joined yet
+  Linear Algebra:           manual-linear-algebra   # no Classroom, ever
 
 
 # -------------------------------------------------------------- exceptions

@@ -1325,11 +1325,16 @@ def _session_line(session) -> list[str]:
 
     lines = [head]
     for part in session.parts:
-        if not part.tracked:
-            # Said out loud every time. Six of eleven subjects are like this,
-            # and a subject that is silently never gated is the failure mode
-            # that takes months to notice.
-            lines.append(f"           {part.subject}: no Classroom course -- never gated")
+        if part.manual:
+            lines.append(f"           {part.subject}: manual -- gated from what I enter")
+        elif not part.identified:
+            # Said out loud every time. A subject that is silently never gated
+            # is the failure mode that takes months to notice. The two cases
+            # are separated because one of them is a thing to do.
+            lines.append(
+                f"           {part.subject}: awaiting a Classroom course id "
+                f"-- never gated"
+            )
     return lines
 
 
@@ -1469,10 +1474,19 @@ def _print_plan(plan: gate_scheduler.GatePlan) -> None:
     for subject in plan.subjects:
         meets = ", ".join(f"{s.start} {s.kind}" for s in subject.sessions)
         if not subject.gated:
-            print(f"  {subject.name:24} {meets:22} not tracked in Classroom")
+            why = (
+                "awaiting a Classroom course id"
+                if subject.awaiting_course
+                else "mapped to a course with no material here"
+            )
+            print(f"  {subject.name:24} {meets:22} {why}")
             continue
         if not subject.has_items:
-            note = f"no readable material ({subject.dead_files} dead attachment(s))"
+            note = (
+                "nothing entered yet"
+                if subject.manual
+                else f"no readable material ({subject.dead_files} dead attachment(s))"
+            )
         elif not subject.items:
             note = "up to date"
         else:

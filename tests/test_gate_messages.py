@@ -43,13 +43,20 @@ def item(item_id=8, label="Chapter 1", pages=92, unread=0, chars=31520, files=1,
     )
 
 
+_UNSET = object()
+MANUAL = "manual-calculus-iii"
+
+
 def subject(name="DSA", course_id=DSA, items=None, has_items=True, dead=0,
-            sessions=None):
+            sessions=None, mapped_course=_UNSET):
     return Subject(
         name=name, course_id=course_id, course_name=f"{name} course",
         sessions=tuple(sessions or [session()]),
         items=tuple(items if items is not None else [item()]),
         dead_files=dead, has_items=has_items,
+        # A gated subject is mapped to the course it is gated on; the default
+        # keeps every existing caller saying what it always meant.
+        mapped_course=course_id if mapped_course is _UNSET else mapped_course,
     )
 
 
@@ -179,9 +186,31 @@ def test_an_up_to_date_subject_says_so():
     assert "up to date" in text
 
 
-def test_an_untracked_subject_is_listed_but_marked():
+def test_a_subject_awaiting_a_course_id_is_listed_and_marked_as_a_gap():
     plan = build([subject("Calculus II", None, items=[])])
-    assert "no Classroom course, never gated" in messages.compose(plan)
+    assert "no Classroom course yet, never gated" in messages.compose(plan)
+
+
+def test_a_manual_subject_with_nothing_entered_is_not_reported_as_missing():
+    """The Phase 6.2 distinction, at the point I actually read it.
+
+    "No readable material" is what Probability & Statistics says, and it means
+    20 attachments are gone from Drive. A manual subject with nothing uploaded
+    yet is not that: nothing is broken, and there is a thing to do about it.
+    """
+    plan = build([subject("Calculus III", MANUAL, items=[], has_items=False)])
+    text = messages.compose(plan)
+    assert "nothing entered yet" in text
+    assert "no readable material" not in text
+    assert "no Classroom" not in text
+
+
+def test_a_manual_subject_with_a_backlog_reads_like_any_other():
+    """Nothing about the gate prompt should betray where the bytes came from."""
+    plan = build([subject("Calculus III", MANUAL)])
+    text = messages.compose(plan)
+    assert "1 unreviewed" in text
+    assert "manual" not in text.lower()
 
 
 # --------------------------------------------------------------- shape

@@ -36,6 +36,8 @@ from typing import Any
 
 import yaml
 
+from .. import manual
+
 # Monday to Saturday. Sunday is rejected by name rather than merely absent from
 # the map, so a session typed into the wrong day says so instead of failing an
 # obscure key lookup.
@@ -74,9 +76,29 @@ class SessionPart:
     room: str | None
 
     @property
-    def tracked(self) -> bool:
-        """Whether this part can ever be gated. False is normal, not an error."""
+    def identified(self) -> bool:
+        """Whether this part has a course to hold material against.
+
+        False is normal, not an error: it means the subject is still awaiting a
+        Classroom id. True covers both a Classroom course and a manual one --
+        an identity is an identity, wherever it came from.
+        """
         return self.course_id is not None
+
+    @property
+    def manual(self) -> bool:
+        """A subject that runs with no Classroom, and never will have one."""
+        return manual.is_manual(self.course_id)
+
+    @property
+    def tracked(self) -> bool:
+        """Deprecated spelling of `identified`, kept while callers move.
+
+        It meant "has a course id" and never meant `courses.tracked`; the name
+        became actively misleading when a manual subject gained a course id
+        that can never be tracked.
+        """
+        return self.identified
 
 
 @dataclass(frozen=True)
@@ -189,7 +211,37 @@ class Timetable:
         return self.subjects.get(subject)
 
     def subjects_without_course(self) -> list[str]:
+        """Subjects with no identity at all. See `subjects_awaiting_course`."""
         return sorted(name for name, course in self.subjects.items() if course is None)
+
+    def subjects_awaiting_course(self) -> list[str]:
+        """Mapped to null: a Classroom I have not joined yet.
+
+        This is a gap that CLOSES -- I paste an id and the subject starts being
+        gated. It is not the same fact as `manual_subjects`, and conflating the
+        two is what Phase 6.2 exists to stop: one of them is a thing to do, and
+        the other is the permanent shape of the week.
+        """
+        return self.subjects_without_course()
+
+    def manual_subjects(self) -> list[str]:
+        """Subjects that run with no Classroom and never will have one.
+
+        Calculus III, Algebra III, Philosophy and Communication. They are
+        gated from material entered by hand, so they are not missing anything
+        and must never be reported as a gap.
+        """
+        return sorted(
+            name for name, course in self.subjects.items() if manual.is_manual(course)
+        )
+
+    def classroom_subjects(self) -> list[str]:
+        """Subjects mapped to a real Classroom course id."""
+        return sorted(
+            name
+            for name, course in self.subjects.items()
+            if course is not None and not manual.is_manual(course)
+        )
 
 
 # --------------------------------------------------------------------------
@@ -482,25 +534,42 @@ def load(path: Path) -> Timetable:
 def warnings(timetable: Timetable, tracked_courses: list[str]) -> list[str]:
     """Things worth saying about a file that is nonetheless valid.
 
-    Both of these are the normal state of my timetable rather than mistakes --
-    six of my eleven subjects have no Classroom course at all -- so neither is
-    an error. They are printed because the alternative is discovering months
-    later that a subject was never gated and never said so.
+    None of these is an error -- they are the normal state of my timetable, and
+    they are printed because the alternative is discovering months later that a
+    subject was never gated and never said so.
+
+    The first two used to be one note, and separating them is the whole of
+    Phase 6.2. "Awaiting a course id" is a gap that closes the day I paste one
+    in. "Runs manually" is the permanent shape of a third of my week, and
+    reporting it as a gap forever is how a check stops being read.
     """
     notes: list[str] = []
 
-    unmapped = timetable.subjects_without_course()
-    if unmapped:
+    awaiting = timetable.subjects_awaiting_course()
+    if awaiting:
         notes.append(
-            f"{len(unmapped)} subject(s) have no Classroom course, so they appear "
-            f"in the schedule but are never gated: {', '.join(unmapped)}"
+            f"{len(awaiting)} subject(s) are awaiting a Classroom course id, so "
+            f"they appear in the schedule but are never gated. Join the course, "
+            f"run `agent courses`, and paste the id in -- or, if there will "
+            f"never be one, run `agent subjects --add`: {', '.join(awaiting)}"
+        )
+
+    manual_names = timetable.manual_subjects()
+    if manual_names:
+        notes.append(
+            f"{len(manual_names)} subject(s) run with no Classroom and are gated "
+            f"from material entered by hand. This is not a gap: "
+            f"{', '.join(manual_names)}"
         )
 
     tracked = set(tracked_courses)
+    # Manual ids are excluded rather than exempted: a manual course can never
+    # be in courses.tracked (see manual.py), so listing one here would be
+    # reporting the design as a defect, every run, forever.
     untracked = sorted(
         f"{name} ({course})"
         for name, course in timetable.subjects.items()
-        if course is not None and course not in tracked
+        if course is not None and not manual.is_manual(course) and course not in tracked
     )
     if untracked:
         notes.append(

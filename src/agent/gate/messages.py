@@ -116,16 +116,23 @@ def _session_line(session) -> str:
 def _subject_line(subject: Subject) -> str:
     """One subject's standing, in the terms that make it honest.
 
-    Four distinguishable states, and the difference between the last two is the
-    whole point of this phase: a subject with nothing readable must never render
-    the same way as a subject I am on top of.
+    Distinguishable states, and the differences between them are the whole
+    point: a subject with nothing readable must never render the same way as a
+    subject I am on top of, and a subject that runs with no Classroom must
+    never render as one that is missing something.
     """
     name = f"<b>{escape(subject.name)}</b>"
 
     if not subject.gated:
-        return f"{name} — no Classroom course, never gated"
+        if subject.awaiting_course:
+            return f"{name} — no Classroom course yet, never gated"
+        return f"{name} — mapped to a course with no material here"
 
     if not subject.has_items:
+        if subject.manual:
+            # Not "no readable material": nothing is missing, nothing is
+            # broken, and there is a thing to do about it.
+            return f"{name} — nothing entered yet"
         missing = (
             f" — {subject.dead_files} attachment(s) are gone from Drive"
             if subject.dead_files
