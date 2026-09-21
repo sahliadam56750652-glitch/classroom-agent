@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from . import auth
+from . import backup
 from .classroom.client import ClassroomClient
 from .classroom.models import ISO_FORMAT, parse_course
 from .config import Config, ConfigError, load_config
@@ -254,6 +255,28 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="ID",
         default=None,
         help="put skipped study items back in the queue (the only way out of skipped)",
+    )
+
+    backup_parser = sub.add_parser(
+        "backup",
+        parents=[shared],
+        help="snapshot everything no amount of re-syncing can recover, or restore one",
+    )
+    backup_parser.add_argument(
+        "--out", type=Path, default=None, metavar="DIR",
+        help="where to write it (default: DATA_DIR/backups/manual-<UTC>)",
+    )
+    backup_parser.add_argument(
+        "--restore", type=Path, default=None, metavar="DIR",
+        help="put a snapshot back. Adds what is missing; never overwrites",
+    )
+    backup_parser.add_argument(
+        "--list", action="store_true", dest="show",
+        help="report what a snapshot would hold; write nothing",
+    )
+    backup_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="report what would be written or restored; change nothing",
     )
 
     projects_parser = sub.add_parser(
@@ -1566,6 +1589,76 @@ def _today(config: Config) -> date:
 def _lines(values: list[str] | None) -> str | None:
     """Repeated flags as one TEXT column, one per line. Described, never computed."""
     return "\n".join(values) if values else None
+
+
+def cmd_backup(config: Config, args: argparse.Namespace) -> int:
+    """Snapshot what cannot be rebuilt, or put one back.
+
+    `deploy/README.md` already has the mechanism -- a weekly rsync pull of the
+    whole DATA_DIR. Phase 6 is what makes losing it expensive, and this is the
+    part that can be CHECKED rather than believed: a backup that has never been
+    restored is a belief, not a backup.
+    """
+    conn = store.open_db(config)
+    try:
+        if args.show:
+            print("A snapshot taken now would hold:")
+            print()
+            for line in backup.describe(config, conn):
+                print(f"  {line}")
+            return 0
+
+        if args.restore is not None:
+            return _do_restore(config, conn, args.restore, dry_run=args.dry_run)
+
+        snapshot = backup.write(config, conn, args.out, dry_run=args.dry_run)
+    except backup.BackupError as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+
+    for table, count in snapshot.rows.items():
+        if count:
+            print(f"  {table:<24} {count}")
+    print(f"  {'uploaded files':<24} {snapshot.files} "
+          f"({snapshot.bytes_copied / 1024:.0f} KB)")
+    print()
+    if snapshot.dry_run:
+        print(f"  dry run -- would write {snapshot.total_rows} row(s) to "
+              f"{snapshot.path}")
+        return 0
+    print(f"  wrote {snapshot.total_rows} row(s) to {snapshot.path}")
+    print()
+    print("  Restore it, into a throwaway DATA_DIR, before trusting it:")
+    print(f"      DATA_DIR=./data-check agent backup --restore {snapshot.path}")
+    return 0
+
+
+def _do_restore(config: Config, conn, snapshot_dir, *, dry_run: bool) -> int:
+    result = backup.restore(config, conn, snapshot_dir, dry_run=dry_run)
+    if not dry_run:
+        conn.commit()
+
+    # Per table, so a partial restore is visible rather than assumed. The two
+    # numbers are different facts: "added" is what was missing, "kept" is what
+    # was already here and was deliberately not overwritten.
+    print(f"  {'table':<24} {'added':>7} {'kept':>7}")
+    for table in result.added:
+        added, skipped = result.added[table], result.skipped[table]
+        if added or skipped:
+            print(f"  {table:<24} {added:>7} {skipped:>7}")
+    print(f"  {'uploaded files':<24} {result.files_added:>7} "
+          f"{result.files_present:>7}")
+    print()
+    if dry_run:
+        print(f"  dry run -- would add {result.total_added} row(s), "
+              f"leaving {result.total_skipped} already here")
+        return 0
+    print(f"  added {result.total_added} row(s); left {result.total_skipped} alone.")
+    if not result.total_added:
+        print("  Nothing was missing. A restore is a no-op when it has already run.")
+    return 0
 
 
 def cmd_projects(config: Config, args: argparse.Namespace) -> int:
@@ -2914,6 +3007,7 @@ COMMANDS = {
     "missing": cmd_missing,
     "studyitems": cmd_studyitems,
     "upload": cmd_upload,
+    "backup": cmd_backup,
     "projects": cmd_projects,
     "sessions": cmd_sessions,
     "tasks": cmd_tasks,
@@ -2967,6 +3061,7 @@ def main(argv: list[str] | None = None) -> int:
         ocr.OCRError,
         packs.PackError,
         upload_mod.UploadError,
+        backup.BackupError,
         llm_provider.LLMError,
     ) as err:
         print(f"error: {err}", file=sys.stderr)

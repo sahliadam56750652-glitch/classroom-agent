@@ -27,11 +27,26 @@ from pathlib import Path
 
 # The rows that cannot be rebuilt from the Classroom API, and the one that
 # cannot be rebuilt at all. Everything else in the database is a mirror.
+#
+# Phase 6 lengthened this list considerably. Everything entered by hand is
+# irreplaceable by definition -- there is no API to re-ask -- and for a subject
+# with no Classroom those rows are the BULK of what the subject knows about
+# itself. A missing table reports as "unavailable" rather than failing, because
+# this script has to run against an older DATA_DIR too.
 IRREPLACEABLE = (
     ("events.notified_at", "SELECT count(*) FROM events WHERE notified_at IS NOT NULL"),
     ("study_items", "SELECT count(*) FROM study_items"),
     ("ocr_pages ok", "SELECT count(*) FROM ocr_pages WHERE status = 'ok'"),
     ("bot_state", "SELECT count(*) FROM bot_state"),
+    ("manual courses", "SELECT count(*) FROM courses WHERE id LIKE 'manual-%'"),
+    ("manual posts",
+     "SELECT count(*) FROM coursework_materials WHERE id LIKE 'manual-%'"),
+    ("uploaded files",
+     "SELECT count(*) FROM extractions WHERE drive_id LIKE 'manual-%'"),
+    ("manual_sessions", "SELECT count(*) FROM manual_sessions"),
+    ("manual_tasks", "SELECT count(*) FROM manual_tasks"),
+    ("projects", "SELECT count(*) FROM projects"),
+    ("project_milestones", "SELECT count(*) FROM project_milestones"),
 )
 
 

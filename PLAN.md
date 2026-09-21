@@ -59,6 +59,35 @@ evening before, the material is delivered on a tap, and the only way to
   the open problem at the end of this file for what was measured, what was
   chosen, and what is deliberately waiting for September.
 
+**Phase 6 — complete, backend and CLI.** Manual entries: material that is
+real in my week and absent from every API this project can call. Seven stages,
+seven commits, no `schema_version` bump — four new tables and one reserved id
+prefix were enough.
+
+- **6.1 — complete.** `scope.py` separates **tracked** (the poller's allowlist)
+  from **in scope** (what this semester is about, which is what the OCR queue
+  prioritises), with **local** as the union that every stage reading material
+  off this disk takes. No current output moved: every course this timetable
+  names is also tracked, so `local == tracked` today.
+- **6.2 — complete.** `null` in the subjects map no longer means two things.
+  A subject is *awaiting a course id* (a gap that closes) or *manual* (the
+  permanent shape of a third of my week), and `agent timetable --check` says
+  which. No new load-time validation, so the current all-null file stays valid.
+- **6.3 — complete.** `manual.py`, `agent subjects [--add]`, and the three
+  guards that keep a minted id out of the poller. Each is pinned by a test with
+  a control, so deleting the guard cannot leave the suite green.
+- **6.4 — complete.** `agent upload`. Download is the only stage an upload
+  skips; extract, OCR, packs, quiz and the gate are untouched.
+- **6.5 — complete.** `agent sessions` and `agent tasks`, joining the existing
+  deadline scanner as extra candidate sources rather than as a second scanner.
+- **6.6 — complete.** `agent projects`, milestone-based, with one deadline
+  shared with a linked Classroom assignment.
+- **6.7 — complete.** `agent backup` and a restore that is tested rather than
+  assumed.
+
+Phase 5c (the web UI) will call these same functions; nothing here is
+CLI-shaped below `cli.py`.
+
 **Phase 5a — planned, code and units built, not yet cut over.** The move to an
 Oracle Always Free ARM instance, so that the backend is up when the laptop is
 not. `deploy/` holds the runbook, the four systemd units and
@@ -447,6 +476,49 @@ gate on Wednesday evening through the same code path as a Drive PDF; and
 `agent ocr --status` puts that photograph ahead of last year's archive rather
 than behind it.
 
+#### What Phase 6 settled
+
+- **The identity is a reserved id prefix, not a parallel set of tables.**
+  `manual-<slug>` for a course, `manual-post-<hash>` for a post,
+  `manual-file-<sha256>` for a file. Every one is filename-safe (`:` is illegal
+  on Windows and `library/files/<drive_id>.<ext>` puts a file id straight into a
+  path) and cannot collide with a Classroom id, which is decimal digits. The
+  alternative — `manual_posts` and `manual_materials` — needed `schema_version`
+  4, a rebuild of `study_items` and `materials` to widen two CHECK constraints,
+  and a fork of every query that unions the parent tables, for rows that are
+  structurally identical.
+
+- **The dangerous case is an upload for a TRACKED subject, and PLAN.md had not
+  named it.** The stated constraint was "a manual course id must never enter
+  `courses.tracked`", which the config guard handles. But a photographed board
+  for UNIX puts a manual post *inside a Classroom course*, so the reconciler
+  runs against it with a real course id and a live state that legitimately does
+  not contain it — and `agent fetch` would hand `manual-file-…` to Drive, take
+  the 404 as a dead reference, and rewrite a file sitting on the disk to
+  `missing`. Hence `soft_delete_missing` excluding manual rows from the
+  comparison, and `drive_references` omitting manual drive ids.
+
+- **Manual deadlines are candidate sources, not a second scanner.** A
+  `Candidate` type and one function per kind; the threshold logic, the
+  most-urgent-speaks-for-all rule and the stateless recompute are untouched.
+  `events.entity_type` carries no CHECK and no foreign key, so a new kind of
+  deadline needed no schema change at all.
+
+- **A linked project's deadline is the professor's, not mine.** The surviving
+  candidate is keyed on the *coursework*, so events written months earlier keep
+  deduplicating it; the posted due date wins because it is the fact, and the
+  typed one is a memory of a verbal brief. When the assignment carries no
+  `dueDate` — 54% of measured coursework, and the common case for a project —
+  the project's own deadline is used, which is the reason the link is worth
+  having. The alert names the project either way.
+
+- **The backup carries Classroom `courses` rows as ANCHORS, and that was found
+  by restoring rather than by thinking.** An exercise sheet recorded against
+  UNIX is a manual row whose `course_id` is a Classroom course, and `courses`
+  has a foreign key — so into an empty database it had nothing to attach to and
+  the restore failed outright. No Classroom *content* is in the file; only the
+  course rows the snapshot's own rows point at.
+
 ---
 
 ## Settled decisions — do not revisit
@@ -815,6 +887,31 @@ is running — the tracked list is curated by hand and always will be.
   restriction is enforced in code. Adding `drive.file` would be the opposite —
   a write scope requested because the project means to write. That is a
   decision to take on the record, not a line to add quietly to `auth.SCOPES`.
+
+- **Should `agent run` gain a `studyitems` stage?** Raised by Phase 6.4 and
+  deliberately not decided there, because it is a change to a documented
+  pipeline rather than part of the phase.
+
+  The pipeline is sync → fetch → extract → ocr → packs → deadlines → notify.
+  There is no `studyitems` stage, so a post whose material has just become
+  readable does not become a *study item* until `agent studyitems` is run by
+  hand — and the gate cannot serve what has no item. An uploaded board is
+  therefore extracted and transcribed unattended by the 19:30 run, and then
+  waits for a manual command before it can be gated.
+
+  This is **pre-existing and affects Classroom material equally**; Phase 6 only
+  made it visible, because a manual upload is the first material that arrives
+  expecting to be gated the next evening.
+
+  **Recommendation: add it, between `packs` and `deadlines`.** It is cheap
+  (`ensure_study_item` is already `INSERT … ON CONFLICT DO NOTHING`, so the
+  stage is idempotent and silent when nothing is new), it needs no schema
+  change, and `_stage()` already isolates every stage so a failure there cannot
+  suppress the briefing. The one thing to check before doing it is `--seed`:
+  `_do_studyitems` refuses `--seed` when items already exist, and the pipeline
+  stage must never pass it. The argument against is that it makes `agent run`
+  one stage longer for a gap that a habit also closes — but a habit is exactly
+  what the rest of this project refuses to rely on.
 
 - **Whether NotebookLM stays the study surface.** Still open, but narrower:
   packs are built and land wherever `packs_dir` points, so nothing in the code

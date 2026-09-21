@@ -176,6 +176,25 @@ This doubles as the liveness check. A reclaimed instance fails by going quiet,
 which is the failure mode this project ranks worst, and a weekly pull that
 errors is the signal. `sync_runs` should also gain two rows a day.
 
+**Since Phase 6, take a snapshot on the box first**, so the pull carries a
+verifiable one rather than only the live files:
+
+    ssh BOX 'cd AGENT_HOME && .venv/bin/agent backup'
+    rsync -av BOX:AGENT_HOME/data/ ./data-standby/
+
+The whole `data/` copy already contains everything, so this is not redundancy
+for its own sake: the snapshot is *checkable*. It carries a sha256 per uploaded
+file and one over the rows, so a truncated transfer refuses to restore instead
+of half-working. And `agent backup --restore` is the only thing in this project
+that proves the manual rows can come back — which for a Classroom-less subject
+is the bulk of what it knows about itself, with no API to re-ask.
+
+Do the restore drill on a snapshot too, not only on the directory copy:
+
+    DATA_DIR=./data-check agent backup --restore ./data-standby/backups/manual-<UTC>
+    DATA_DIR=./data-check agent projects
+    DATA_DIR=./data-check agent tasks
+
 ## 7. Rollback
 
 The recovery artifact is `data/` plus the three root config files — **not the
