@@ -29,6 +29,7 @@ from typing import Any
 from .. import manual
 from ..db import store
 from ..files import packs
+from . import adjustments as adjust
 from . import timetable as tt
 
 # Below this, a post has no text worth calling readable -- a title slide, or a
@@ -153,6 +154,10 @@ class GatePlan:
     provisional: bool
     sessions: tuple[tt.Session, ...] = ()
     subjects: tuple[Subject, ...] = ()
+    # The same sessions, each with why it is here if it is not simply the
+    # pattern. Carried alongside rather than instead of `sessions`, so nothing
+    # that already reads a plan has to learn about adjustments to keep working.
+    adjusted: tuple[adjust.Resolved, ...] = ()
     # Why there is nothing to send, when there is nothing to send. Carried so
     # `agent gate --dry-run` can say which of the three it was rather than
     # printing an unexplained blank.
@@ -180,6 +185,13 @@ class GatePlan:
         fine" every evening is how it gets muted.
         """
         return bool(self.actionable)
+
+    def note_for(self, session: tt.Session) -> str:
+        """Why this session is on this date, when the pattern does not say so."""
+        for resolved in self.adjusted:
+            if resolved.session is session:
+                return resolved.note
+        return ""
 
     def subject_at(self, index: int) -> Subject | None:
         """Resolve a keyboard index. Out of range is normal on a stale button."""
@@ -301,32 +313,35 @@ def plan_for(
     table: tt.Timetable,
     for_date: date,
 ) -> GatePlan:
-    """Everything tomorrow needs, or a plan that says why it needs nothing."""
+    """Everything tomorrow needs, or a plan that says why it needs nothing.
+
+    The pattern is resolved against this date's adjustments BEFORE anything is
+    decided, including whether to be silent. A session moved onto a holiday, or
+    onto a date no version covers, still happens -- and the old order of checks
+    would have returned silence without ever looking. See gate/adjustments.py.
+    """
     version = table.version_for(for_date)
-    if version is None:
-        return GatePlan(
-            for_date=for_date,
-            version_label=None,
-            provisional=False,
-            silent_because="no timetable version covers this date",
-        )
-
     excused = table.exception_for(for_date)
-    if excused is not None:
-        return GatePlan(
-            for_date=for_date,
-            version_label=version.label,
-            provisional=version.provisional,
-            silent_because=f"no sessions: {excused.reason}",
-        )
+    resolved = adjust.sessions_on(conn, table, for_date)
+    sessions = tuple(item.session for item in resolved)
 
-    sessions = table.sessions_on(for_date)
     if not sessions:
+        # Which of the ways there is nothing, said specifically. An adjustment
+        # can empty a day that the pattern filled, and "no sessions on a
+        # Monday" would be a wrong answer to the question I am asking.
+        if any(item for item in store.adjustments_for(conn, for_date.isoformat())):
+            why = "every session on this date is cancelled or moved away"
+        elif version is None:
+            why = "no timetable version covers this date"
+        elif excused is not None:
+            why = f"no sessions: {excused.reason}"
+        else:
+            why = f"no sessions on a {for_date:%A}"
         return GatePlan(
             for_date=for_date,
-            version_label=version.label,
-            provisional=version.provisional,
-            silent_because=f"no sessions on a {for_date:%A}",
+            version_label=version.label if version else None,
+            provisional=version.provisional if version else False,
+            silent_because=why,
         )
 
     # One entry per SUBJECT, not per session -- a subject meeting twice
@@ -387,8 +402,9 @@ def plan_for(
 
     return GatePlan(
         for_date=for_date,
-        version_label=version.label,
-        provisional=version.provisional,
+        version_label=version.label if version else None,
+        provisional=version.provisional if version else False,
         sessions=sessions,
         subjects=tuple(subjects),
+        adjusted=resolved,
     )

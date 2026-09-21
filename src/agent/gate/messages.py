@@ -99,7 +99,7 @@ def url_button(text: str, url: str) -> dict[str, str]:
 # the evening prompt
 # --------------------------------------------------------------------------
 
-def _session_line(session) -> str:
+def _session_line(session, note: str = "") -> str:
     people = " / ".join(part.teacher for part in session.parts if part.teacher)
     rooms = " / ".join(
         dict.fromkeys(part.room for part in session.parts if part.room)
@@ -110,6 +110,11 @@ def _session_line(session) -> str:
         f"{escape(session.kind)} · {escape(subjects)}"
     )
     trailing = " · ".join(part for part in (people, rooms) if part)
+    if note:
+        # Why this session is on tomorrow at all, when the printed
+        # timetable says otherwise. Without it, a lecture moved into
+        # tomorrow reads as the gate having invented one.
+        trailing = f"{trailing} · {note}" if trailing else note
     return f"{line}\n    <i>{escape(trailing)}</i>" if trailing else line
 
 
@@ -175,7 +180,9 @@ def compose(plan: GatePlan) -> str:
         status = " · provisional" if plan.provisional else ""
         header.append(f"<i>{escape(plan.version_label)}{escape(status)}</i>")
 
-    schedule = [_session_line(session) for session in plan.sessions]
+    schedule = [
+        _session_line(session, plan.note_for(session)) for session in plan.sessions
+    ]
     standing = [_subject_line(subject) for subject in plan.subjects]
 
     waiting = plan.total_items
