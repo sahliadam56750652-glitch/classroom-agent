@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import date
+from collections.abc import Collection
 from typing import Any
 
 from ..db import store
@@ -279,7 +280,7 @@ def item_by_id(conn, item_id: int) -> Item | None:
 
 def plan_for(
     conn,
-    tracked_courses: list[str],
+    local_courses: Collection[str],
     table: tt.Timetable,
     for_date: date,
 ) -> GatePlan:
@@ -324,7 +325,7 @@ def plan_for(
     wanted = [
         course_of[name]
         for name in by_subject
-        if course_of[name] is not None and course_of[name] in tracked_courses
+        if course_of[name] is not None and course_of[name] in local_courses
     ]
     backlog: dict[str, list[Item]] = {}
     names: dict[str, str] = {}
@@ -342,10 +343,14 @@ def plan_for(
     subjects = []
     for name, met in by_subject.items():
         course_id = course_of[name]
-        # A course mapped in the timetable but absent from courses.tracked can
-        # never be gated: nothing syncs it, so its backlog would always read as
-        # empty. Treated as untracked rather than as up to date.
-        gated = course_id if course_id in tracked_courses else None
+        # A course the timetable maps but this install holds no material for
+        # can never be gated: its backlog would always read as empty. Treated
+        # as ungated rather than as up to date.
+        #
+        # `local_courses` is tracked UNION in scope (see agent/scope.py), not
+        # courses.tracked. A manual subject is in scope and never tracked, and
+        # gating it is the whole point of Phase 6.
+        gated = course_id if course_id in local_courses else None
         subjects.append(
             Subject(
                 name=name,

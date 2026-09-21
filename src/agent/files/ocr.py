@@ -294,18 +294,30 @@ def pending_candidates(db: sqlite3.Connection) -> list[sqlite3.Row]:
 # material ahead of a new term's slides is a fortnight during which the gate
 # cannot quiz on anything I am actually being taught.
 #
-#   0  tracked AND named in timetable.yaml -- a subject that actually meets
+#   0  IN SCOPE -- named in timetable.yaml, so it is a subject I actually have
+#      this semester. Tracked or not: a manual subject is never tracked and its
+#      material is the most urgent thing in the library, because the gate
+#      cannot quiz on pages nothing has read.
 #   1  tracked -- synced, gateable, but nothing in the week points at it
 #   2  everything else -- last year's archive, and material for courses I
 #      chose not to track. Still transcribed, but only once the rest is done.
-TIER_TIMETABLED = 0
+#
+# Tier 0 deliberately does NOT require tracked. That was one condition while
+# every course came from Classroom; splitting them is what lets a photographed
+# board for Calculus III outrank 279 pages of archive. See `agent/scope.py`.
+TIER_IN_SCOPE = 0
 TIER_TRACKED = 1
 TIER_OTHER = 2
 
+# Kept as an alias: TIER_TIMETABLED was the name while "in scope" and "tracked"
+# were one condition, and it reads correctly still -- in scope IS "named in the
+# timetable". Nothing new should use it.
+TIER_TIMETABLED = TIER_IN_SCOPE
+
 TIER_NAMES = {
-    TIER_TIMETABLED: "tracked, in timetable",
+    TIER_IN_SCOPE: "in scope this semester",
     TIER_TRACKED: "tracked",
-    TIER_OTHER: "not tracked",
+    TIER_OTHER: "not in scope",
 }
 
 
@@ -354,9 +366,17 @@ def _facts_by_file(posts: list[sqlite3.Row]) -> dict[str, list[Post]]:
     return facts
 
 
-def _tier(course_id: str, tracked: frozenset[str], timetabled: frozenset[str]) -> int:
+def _tier(course_id: str, in_scope: frozenset[str], tracked: frozenset[str]) -> int:
+    """In scope beats tracked, and tracked beats everything else.
+
+    In scope is tested FIRST and independently of tracked, which is the whole
+    of the tracked/in-scope split: a manual course is in scope and can never be
+    tracked, so a test of `tracked` first would sort it to the back.
+    """
+    if course_id in in_scope:
+        return TIER_IN_SCOPE
     if course_id in tracked:
-        return TIER_TIMETABLED if course_id in timetabled else TIER_TRACKED
+        return TIER_TRACKED
     return TIER_OTHER
 
 
@@ -365,7 +385,7 @@ def queue(
     posts: list[sqlite3.Row],
     *,
     tracked: list[str] | None = None,
-    timetabled: list[str] | None = None,
+    in_scope: list[str] | None = None,
     courses: list[str] | None = None,
 ) -> list[Ranked]:
     """The candidate files in the order they should be transcribed.
@@ -382,13 +402,17 @@ def queue(
     that reshuffles every Monday is the same defect wearing a different hat --
     see invariant 1.
 
+    in_scope and tracked are two different lists (see `agent/scope.py`) and the
+    caller supplies both. This function stays pure: it takes the sets, it does
+    not read a timetable or a config.
+
     A file attached in two courses takes the best tier and the newest posting:
-    a deck shared by a tracked course and an archived one is tracked material.
+    a deck shared by an in-scope course and an archived one is in-scope material.
     """
     known = _facts_by_file(posts)
     wanted = frozenset(courses) if courses else None
     tracked_set = frozenset(tracked or ())
-    timetabled_set = frozenset(timetabled or ())
+    in_scope_set = frozenset(in_scope or ())
 
     ranked: list[Ranked] = []
     for row in rows:
@@ -400,16 +424,16 @@ def queue(
         if found:
             # Best tier, then the newest posting seen in a course of that tier,
             # so a file's rank never rests on its least relevant attachment.
-            tier = min(_tier(post.course_id, tracked_set, timetabled_set) for post in found)
+            tier = min(_tier(post.course_id, in_scope_set, tracked_set) for post in found)
             best = max(
                 (post for post in found
-                 if _tier(post.course_id, tracked_set, timetabled_set) == tier),
+                 if _tier(post.course_id, in_scope_set, tracked_set) == tier),
                 key=lambda post: (post.posted_at, post.course_id),
             )
         else:
             # No parent post on file. Real: a material row whose parent has been
             # soft-deleted, and every fixture that never made one. Undated and
-            # untracked, so it sorts to the very back -- never dropped, because
+            # out of scope, so it sorts to the very back -- never dropped, because
             # the bytes are on disk and nothing else will ever look at them.
             tier, best = TIER_OTHER, Post(course_id="", posted_at="")
         ranked.append(
@@ -465,7 +489,7 @@ def run(
     limit: int | None = None,
     force: bool = False,
     verbose: bool = False,
-    timetabled: list[str] | None = None,
+    in_scope: list[str] | None = None,
     courses: list[str] | None = None,
     sleep=time.sleep,
     now: str | None = None,
@@ -488,7 +512,7 @@ def run(
         _candidates(db),
         store.ocr_candidate_posts(db),
         tracked=config.tracked_courses,
-        timetabled=timetabled,
+        in_scope=in_scope,
         courses=courses,
     )
     result.queue = ordered

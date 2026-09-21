@@ -24,6 +24,7 @@ from .gate import sections as gate_sections
 from .gate import timetable as timetable_mod
 from .llm import provider as llm_provider
 from .notify import dispatch
+from . import scope as scope_mod
 from .notify import telegram as telegram_api
 from .sync import deadlines, poller
 
@@ -756,7 +757,7 @@ def _do_ocr(
     limit: int | None = None,
     force: bool = False,
     verbose: bool = False,
-    timetabled: list[str] | None = None,
+    in_scope: list[str] | None = None,
     courses: list[str] | None = None,
 ) -> ocr.OCRResult:
     """Transcribe unread pages. The only stage in this project that costs money."""
@@ -777,7 +778,7 @@ def _do_ocr(
     try:
         result = ocr.run(
             config, conn, provider=provider, dry_run=dry_run, limit=limit,
-            force=force, verbose=verbose, timetabled=timetabled, courses=courses,
+            force=force, verbose=verbose, in_scope=in_scope, courses=courses,
         )
     except Exception as err:
         conn.rollback()
@@ -790,22 +791,16 @@ def _do_ocr(
     return result
 
 
-def _timetabled_courses(config: Config) -> tuple[list[str], str | None]:
-    """Course ids named in timetable.yaml, and a note when there are none.
+def _in_scope_courses(config: Config) -> tuple[list[str], list[str], str | None]:
+    """(in scope, local, note) -- the two course sets a local stage needs.
 
-    A broken or absent timetable must not stop OCR. It costs the top tier --
-    everything tracked falls back to one bucket ordered by posting date, which
-    is still the right answer, just a blunter one -- so the note is returned
-    rather than raised, and printed where the ordering is being explained.
+    In scope is what this semester is about; local is that union tracked. See
+    `agent/scope.py` for why they are two lists. A broken or absent timetable
+    must not stop OCR or packs, so the note is returned rather than raised and
+    printed where the ordering is being explained.
     """
-    try:
-        table = timetable_mod.load(config.timetable_path)
-    except timetable_mod.TimetableError as err:
-        return [], f"timetable not read, so no subject can be preferred: {err}"
-    found = sorted({course for course in table.subjects.values() if course})
-    if not found:
-        return [], "timetable names no Classroom course, so none can be preferred"
-    return found, None
+    in_scope, local, note = scope_mod.resolve(config)
+    return sorted(in_scope), sorted(local), note
 
 
 def _resolve_courses(config: Config, wanted: list[str] | None) -> list[str]:
@@ -828,6 +823,8 @@ def _resolve_courses(config: Config, wanted: list[str] | None) -> list[str]:
 
     resolved: list[str] = []
     for value in wanted:
+        # A manual course id is never in courses.tracked by design, so the
+        # subjects map is the only place it can be recognised from.
         if value in config.tracked_courses or value in subjects.values():
             resolved.append(value)
             continue
@@ -935,7 +932,7 @@ def _print_ocr_status(rows: list, dead: int) -> None:
 
 
 def cmd_ocr(config: Config, args: argparse.Namespace) -> int:
-    timetabled, note = _timetabled_courses(config)
+    in_scope, _local, note = _in_scope_courses(config)
     try:
         wanted = _resolve_courses(config, getattr(args, "courses", None))
     except ConfigError as err:
@@ -949,7 +946,7 @@ def cmd_ocr(config: Config, args: argparse.Namespace) -> int:
                 ocr.pending_candidates(conn),
                 store.ocr_candidate_posts(conn),
                 tracked=config.tracked_courses,
-                timetabled=timetabled,
+                in_scope=in_scope,
                 courses=wanted or None,
             )
             rows = store.ocr_progress(conn)
@@ -974,7 +971,7 @@ def cmd_ocr(config: Config, args: argparse.Namespace) -> int:
         result = _do_ocr(
             config, conn, dry_run=args.dry_run, limit=args.limit,
             force=args.force, verbose=args.verbose,
-            timetabled=timetabled, courses=wanted or None,
+            in_scope=in_scope, courses=wanted or None,
         )
         states = store.count_ocr_pages_by_status(conn)
         dead = len(store.dead_references(conn))
@@ -1099,7 +1096,14 @@ def _do_packs(
     courses: list[str] | None = None,
     force: bool = False,
 ) -> packs.PacksResult:
-    """Assemble the study documents. Local files only -- nothing is uploaded."""
+    """Assemble the study documents. Local files only -- nothing is uploaded.
+
+    With no --course, the set is `local`: tracked plus in scope. A manual
+    subject has a library and a backlog without ever being tracked, so packs
+    built from courses.tracked alone would silently omit it.
+    """
+    if courses is None:
+        courses = _in_scope_courses(config)[1]
     run_id = None if dry_run else store.start_sync_run(conn)
     try:
         result = packs.build(
@@ -1215,7 +1219,9 @@ def _do_studyitems(
             f"study item(s). Pass --force if that is genuinely what you want."
         )
 
-    rows = store.parents_with_extracted_material(conn, config.tracked_courses)
+    # `local`, not tracked: a manually uploaded board is a post with extracted
+    # material that the gate can never serve if no study item is made for it.
+    rows = store.parents_with_extracted_material(conn, _in_scope_courses(config)[1])
     if dry_run:
         existing = {
             (row["entity_type"], row["entity_id"])
@@ -1499,7 +1505,7 @@ def cmd_gate(config: Config, args: argparse.Namespace) -> int:
     conn = store.open_db(config)
     try:
         plan = gate_scheduler.plan_for(
-            conn, list(config.tracked_courses), table, for_date
+            conn, scope_mod.local(config, table), table, for_date
         )
         _print_plan(plan)
 
@@ -1765,7 +1771,7 @@ def cmd_bot(config: Config, args: argparse.Namespace) -> int:
         table = timetable_mod.load(config.timetable_path)
         plan = gate_scheduler.plan_for(
             conn,
-            list(config.tracked_courses),
+            scope_mod.local(config, table),
             table,
             date.fromisoformat(str(run["for_date"])),
         )

@@ -60,7 +60,7 @@ bug even if the tests pass.
 
 ```
 src/agent/
-  config.py  auth.py  cli.py
+  config.py  auth.py  cli.py  scope.py
   classroom/   client.py  models.py
   db/          schema.sql  store.py
   sync/        poller.py  differ.py  deadlines.py
@@ -125,9 +125,17 @@ where the table used to be in `db/schema.sql`.
   `agent run` fires twice, so OCR takes 12 and the gate has ~8. Raising the OCR
   limit is spending the quiz's allowance; the arithmetic is written out in
   `config.example.yaml` so that is a deliberate choice rather than a surprise.
+- **`tracked` and `in scope` are two different lists.** Tracked is the poller's
+  allowlist -- which Classroom courses to fetch, curated by hand in
+  `config.yaml`. In scope is what this semester is about: every course id
+  `timetable.yaml` names. `scope.py` holds both and their union, `local`, which
+  is what every stage reading material off this disk takes -- study items,
+  packs, the gate. They were one list only because every course came from
+  Classroom, and they stop being one list the moment a subject does not.
+
 - **At 12 pages a day the OCR ORDER is the whole feature.** The queue is sorted
-  by (tier, posting date descending, drive_id): tracked-and-timetabled first,
-  then tracked, then everything else, and newest material first within each.
+  by (tier, posting date descending, drive_id): in scope first, then merely
+  tracked, then everything else, and newest material first within each.
   Otherwise a backlog of archived courses starves a new term's slides for a
   fortnight, and the gate cannot quiz on pages nothing has read. The order is a
   function of the material only -- never of the clock or of OCR progress -- so a

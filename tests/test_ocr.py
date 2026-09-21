@@ -1132,11 +1132,11 @@ def test_a_tracked_course_precedes_an_untracked_one():
     )
     assert _order(ranked) == ["tracked", "untracked"]
     assert ranked[0].why == "tracked"
-    assert ranked[1].why == "not tracked"
+    assert ranked[1].why == "not in scope"
 
 
-def test_a_timetabled_course_precedes_a_merely_tracked_one():
-    """A subject that meets is worth more than one that is only synced."""
+def test_an_in_scope_course_precedes_a_merely_tracked_one():
+    """A subject this semester is about is worth more than one only synced."""
     ranked = ocr.queue(
         _files("meets", "synced"),
         _posts(
@@ -1144,10 +1144,10 @@ def test_a_timetabled_course_precedes_a_merely_tracked_one():
             ("synced", "c2", "2026-09-14T10:00:00Z"),
         ),
         tracked=["c1", "c2"],
-        timetabled=["c1"],
+        in_scope=["c1"],
     )
     assert _order(ranked) == ["meets", "synced"]
-    assert ranked[0].why == "tracked, in timetable"
+    assert ranked[0].why == "in scope this semester"
 
 
 def test_the_new_semester_beats_the_archive_wholesale():
@@ -1163,7 +1163,7 @@ def test_the_new_semester_beats_the_archive_wholesale():
             ("term2", "new", "2026-09-16T10:00:00Z"),
         ),
         tracked=["new"],
-        timetabled=["new"],
+        in_scope=["new"],
     )
     assert _order(ranked)[:2] == ["term2", "term1"]
     assert set(_order(ranked)[2:]) == {"arch1", "arch2", "arch3"}
@@ -1199,9 +1199,9 @@ def test_the_order_is_stable_across_runs():
         ("c", "c2", "2026-09-05T10:00:00Z"),
         ("d", "cX", "2026-09-09T10:00:00Z"),
     )
-    first = _order(ocr.queue(files, posts, tracked=["c1", "c2"], timetabled=["c1"]))
+    first = _order(ocr.queue(files, posts, tracked=["c1", "c2"], in_scope=["c1"]))
     for _ in range(5):
-        assert _order(ocr.queue(files, posts, tracked=["c1", "c2"], timetabled=["c1"])) == first
+        assert _order(ocr.queue(files, posts, tracked=["c1", "c2"], in_scope=["c1"])) == first
     # And the tie between a and b is broken by drive_id, not by luck.
     assert first == ["a", "b", "c", "d"]
 
@@ -1312,10 +1312,10 @@ def test_the_timetable_lifts_a_tracked_course_above_another(config, conn, two_co
     config.tracked_courses.append("c2")
     ordered = ocr.queue(
         ocr._candidates(conn), store.ocr_candidate_posts(conn),
-        tracked=config.tracked_courses, timetabled=["c2"],
+        tracked=config.tracked_courses, in_scope=["c2"],
     )
     assert [item.drive_id for item in ordered] == ["aaa_old", "zzz_new"]
-    assert ordered[0].why == "tracked, in timetable"
+    assert ordered[0].why == "in scope this semester"
 
 
 def test_a_partly_drained_queue_resumes_where_it_left_off(config, conn, two_courses):
@@ -1418,7 +1418,7 @@ def test_status_shows_which_course_is_next(config, conn, two_courses, monkeypatc
     assert "next: Operating Systems" in out
     assert "queue order" in out
     # The prioritisation stated, not merely applied.
-    assert "tracked, in timetable" in out
+    assert "in scope this semester" in out
     assert out.index("new.pdf") < out.index("old.pdf")
 
 
