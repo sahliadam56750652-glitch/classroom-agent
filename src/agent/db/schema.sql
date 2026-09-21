@@ -689,3 +689,78 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 );
 
 CREATE INDEX IF NOT EXISTS ix_sync_runs_started ON sync_runs (started_at);
+
+
+-- ======================================================================
+-- Phase 6 -- what Google does not know about
+-- ======================================================================
+--
+-- Four new tables, so no schema_version bump: CREATE TABLE IF NOT EXISTS is
+-- safe against an older file, and nothing existing changes shape.
+--
+-- Everything below is entered by hand and CANNOT BE REBUILT BY RE-SYNCING.
+-- That puts these tables alongside events.notified_at and study_items on the
+-- short list of things a fresh sync cannot restore -- and unlike those, for a
+-- subject with no Classroom these rows are the BULK of what the subject knows
+-- about itself. `agent backup` exists for exactly this.
+--
+-- Manually uploaded material is deliberately NOT here. An upload is a post and
+-- an attachment, which `coursework_materials` and `materials` already describe
+-- exactly; a parallel pair of tables would have meant widening two CHECK
+-- constraints, rebuilding study_items, and forking every query that unions the
+-- parent tables -- for rows that are structurally identical. What keeps them
+-- distinguishable is the reserved `manual-` id prefix. See src/agent/manual.py.
+
+
+-- --------------------------------------------------------- manual_sessions
+
+-- A session that happened, and what it covered. The timetable says a session
+-- was SCHEDULED; this says one took place and what was in it, which is the
+-- fact no file can hold because it is not known until afterwards.
+--
+-- Nothing reads this for the gate yet. It is the record that makes a manual
+-- subject's history legible at all -- for a subject with no Classroom there is
+-- otherwise no answer to "what did we actually do in week 3".
+CREATE TABLE IF NOT EXISTS manual_sessions (
+    id         INTEGER PRIMARY KEY,
+    course_id  TEXT NOT NULL REFERENCES courses (id) ON DELETE CASCADE,
+    held_on    TEXT NOT NULL,           -- a local calendar date, YYYY-MM-DD
+    kind       TEXT NOT NULL CHECK (kind IN ('LEC', 'TUT', 'LAB', 'Project')),
+    covered    TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_manual_sessions_course
+    ON manual_sessions (course_id, held_on);
+
+
+-- ------------------------------------------------------------ manual_tasks
+
+-- A tutorial or exercise sheet that is due. A due date on a row is all
+-- sync/deadlines.py needs, so these join the EXISTING T-72/24/3 scanner rather
+-- than getting a parallel one -- which is what makes them catch-up safe for
+-- nothing. A second scanner would have to re-earn that.
+--
+-- due_at is UTC ISO-8601 like every other timestamp here. A date entered with
+-- no time means end of day LOCAL, which mirrors Classroom's absent dueTime,
+-- and the conversion happens once at entry.
+--
+-- done_at rather than a boolean: "when" is strictly more information than
+-- "whether", and the scanner's rule is the same either way -- work that is
+-- done is not chased.
+CREATE TABLE IF NOT EXISTS manual_tasks (
+    id         INTEGER PRIMARY KEY,
+    course_id  TEXT NOT NULL REFERENCES courses (id) ON DELETE CASCADE,
+    title      TEXT NOT NULL,
+    kind       TEXT NOT NULL DEFAULT 'tutorial'
+        CHECK (kind IN ('tutorial', 'exercise_sheet', 'other')),
+    due_at     TEXT,
+    notes      TEXT,
+    source     TEXT,                    -- where it came from: "handed out in class"
+    done_at    TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (course_id, title, due_at)
+);
+
+CREATE INDEX IF NOT EXISTS ix_manual_tasks_due ON manual_tasks (due_at)
+    WHERE due_at IS NOT NULL AND done_at IS NULL;

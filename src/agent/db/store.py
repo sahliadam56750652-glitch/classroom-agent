@@ -1882,3 +1882,117 @@ def mark_notified(
     )
     conn.commit()
     return cursor.rowcount
+
+
+# --------------------------------------------------------------------------
+# Phase 6 -- what Google does not know about
+# --------------------------------------------------------------------------
+#
+# None of these rows can be rebuilt by re-syncing. See the note at the top of
+# the Phase 6 section in schema.sql, and `agent backup`.
+
+def log_manual_session(
+    conn: sqlite3.Connection,
+    *,
+    course_id: str,
+    held_on: str,
+    kind: str,
+    covered: str | None = None,
+    now: str | None = None,
+) -> int:
+    """Record that a session happened, and what was in it."""
+    cursor = conn.execute(
+        "INSERT INTO manual_sessions (course_id, held_on, kind, covered, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (course_id, held_on, kind, covered, now or _utc_now_iso()),
+    )
+    return int(cursor.lastrowid)
+
+
+def manual_sessions(
+    conn: sqlite3.Connection, course_ids: Sequence[str] | None = None, limit: int = 50
+) -> list[sqlite3.Row]:
+    sql = [
+        "SELECT s.*, c.name AS course_name",
+        "  FROM manual_sessions s",
+        "  LEFT JOIN courses c ON c.id = s.course_id",
+    ]
+    params: list[Any] = []
+    if course_ids is not None:
+        placeholders = ", ".join("?" for _ in course_ids)
+        sql.append(f" WHERE s.course_id IN ({placeholders})" if course_ids else " WHERE 0")
+        params.extend(course_ids)
+    sql.append(" ORDER BY s.held_on DESC, s.id DESC LIMIT ?")
+    params.append(limit)
+    return conn.execute("\n".join(sql), params).fetchall()
+
+
+def add_manual_task(
+    conn: sqlite3.Connection,
+    *,
+    course_id: str,
+    title: str,
+    kind: str = "tutorial",
+    due_at: str | None = None,
+    notes: str | None = None,
+    source: str | None = None,
+    now: str | None = None,
+) -> int | None:
+    """Record something due. None when that exact task is already recorded.
+
+    The UNIQUE key is (course_id, title, due_at), so entering the same sheet
+    twice is refused rather than duplicated -- which matters because the
+    deadline scanner would otherwise alert about both.
+    """
+    try:
+        cursor = conn.execute(
+            "INSERT INTO manual_tasks (course_id, title, kind, due_at, notes, "
+            "source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (course_id, title, kind, due_at, notes, source, now or _utc_now_iso()),
+        )
+    except sqlite3.IntegrityError:
+        return None
+    return int(cursor.lastrowid)
+
+
+def get_manual_task(conn: sqlite3.Connection, task_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT t.*, c.name AS course_name FROM manual_tasks t "
+        "LEFT JOIN courses c ON c.id = t.course_id WHERE t.id = ?",
+        (task_id,),
+    ).fetchone()
+
+
+def manual_tasks(
+    conn: sqlite3.Connection,
+    course_ids: Sequence[str] | None = None,
+    *,
+    include_done: bool = False,
+) -> list[sqlite3.Row]:
+    sql = [
+        "SELECT t.*, c.name AS course_name",
+        "  FROM manual_tasks t",
+        "  LEFT JOIN courses c ON c.id = t.course_id",
+        " WHERE 1",
+    ]
+    params: list[Any] = []
+    if not include_done:
+        sql.append("   AND t.done_at IS NULL")
+    if course_ids is not None:
+        placeholders = ", ".join("?" for _ in course_ids)
+        sql.append(f"   AND t.course_id IN ({placeholders})" if course_ids else "   AND 0")
+        params.extend(course_ids)
+    # Undated tasks last: they are real, but nothing can be said about when.
+    sql.append(" ORDER BY t.due_at IS NULL, t.due_at, t.id")
+    return conn.execute("\n".join(sql), params).fetchall()
+
+
+def complete_manual_task(
+    conn: sqlite3.Connection, task_id: int, *, now: str | None = None
+) -> bool:
+    """Mark a task done. False when it does not exist or was already done."""
+    cursor = conn.execute(
+        "UPDATE manual_tasks SET done_at = ? WHERE id = ? AND done_at IS NULL",
+        (now or _utc_now_iso(), task_id),
+    )
+    return cursor.rowcount > 0

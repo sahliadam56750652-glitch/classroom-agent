@@ -6,12 +6,12 @@ import argparse
 import json
 import os
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from . import auth
 from .classroom.client import ClassroomClient
-from .classroom.models import parse_course
+from .classroom.models import ISO_FORMAT, parse_course
 from .config import Config, ConfigError, load_config
 from .db import store
 from .digest import composer
@@ -254,6 +254,77 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="ID",
         default=None,
         help="put skipped study items back in the queue (the only way out of skipped)",
+    )
+
+    sessions_parser = sub.add_parser(
+        "sessions",
+        parents=[shared],
+        help="log that a session happened and what it covered, or list what was logged",
+    )
+    sessions_parser.add_argument(
+        "--subject", default=None, metavar="NAME",
+        help="the timetable subject (required to log; filters the listing)",
+    )
+    sessions_parser.add_argument(
+        "--on", default=None, metavar="YYYY-MM-DD",
+        help="the day it was held (default: today, locally)",
+    )
+    sessions_parser.add_argument(
+        "--kind", default="LEC", choices=sorted(timetable_mod.KINDS),
+        help="LEC, TUT, LAB or Project (default: LEC)",
+    )
+    sessions_parser.add_argument(
+        "--covered", default=None, metavar="TEXT",
+        help="what was actually covered -- this is the whole point of logging it",
+    )
+    sessions_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="report what would be logged; write nothing",
+    )
+
+    tasks_parser = sub.add_parser(
+        "tasks",
+        parents=[shared],
+        help="record a tutorial or exercise sheet as due, or list what is outstanding",
+    )
+    tasks_parser.add_argument(
+        "--subject", default=None, metavar="NAME",
+        help="the timetable subject (required to add; filters the listing)",
+    )
+    tasks_parser.add_argument(
+        "--title", default=None, metavar="TEXT",
+        help="what it is called, e.g. 'TD 3, exercises 1-6'",
+    )
+    tasks_parser.add_argument(
+        "--due", default=None, metavar="WHEN",
+        help=(
+            "YYYY-MM-DD, or 'YYYY-MM-DD HH:MM'. A date with no time means end "
+            "of day locally, as an absent Classroom dueTime does"
+        ),
+    )
+    tasks_parser.add_argument(
+        "--kind", default="tutorial",
+        choices=["tutorial", "exercise_sheet", "other"],
+        help="what kind of thing it is (default: tutorial)",
+    )
+    tasks_parser.add_argument(
+        "--notes", default=None, metavar="TEXT", help="anything worth remembering",
+    )
+    tasks_parser.add_argument(
+        "--source", default=None, metavar="TEXT",
+        help="where it came from, e.g. 'handed out in class'",
+    )
+    tasks_parser.add_argument(
+        "--done", type=int, default=None, metavar="ID",
+        help="mark a task done (it then stops being chased by the scanner)",
+    )
+    tasks_parser.add_argument(
+        "--all", action="store_true", dest="include_done",
+        help="include completed tasks in the listing",
+    )
+    tasks_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="report what would be recorded; write nothing",
     )
 
     upload_parser = sub.add_parser(
@@ -1388,6 +1459,258 @@ def _session_line(session) -> list[str]:
     return lines
 
 
+def _subject_course(config: Config, name: str) -> tuple[str, str]:
+    """(subject, course id) for a name. Exact, and it says what to do if not.
+
+    Shared by every Phase 6 entry command, so a subject resolves one way
+    everywhere -- through the timetable's `subjects:` map and never a
+    near-match, because a wrong match files work under the wrong subject and
+    looks exactly like the feature working.
+    """
+    table = timetable_mod.load(config.timetable_path)
+    return upload_mod.resolve_subject(table, name)
+
+
+def _due_at(config: Config, value: str) -> str:
+    """A due date as I would say it, stored as UTC like everything else.
+
+    A date with no time means END OF DAY locally, which is what Classroom
+    means by an absent dueTime -- so a sheet due "Friday" is not silently due
+    at Friday midnight, twenty-four hours early.
+    """
+    zone = composer.display_zone(config.timezone)
+    text = value.strip().replace("T", " ")
+    for pattern, complete in (("%Y-%m-%d %H:%M", None), ("%Y-%m-%d", "eod")):
+        try:
+            parsed = datetime.strptime(text, pattern)
+        except ValueError:
+            continue
+        if complete == "eod":
+            parsed = parsed.replace(hour=23, minute=59)
+        local = parsed.replace(tzinfo=zone)
+        return local.astimezone(timezone.utc).strftime(ISO_FORMAT)
+    raise ConfigError(
+        f"--due must be YYYY-MM-DD or 'YYYY-MM-DD HH:MM', got {value!r}."
+    )
+
+
+def _today(config: Config) -> date:
+    """Today, locally. A session was held on a wall-clock day."""
+    return datetime.now(composer.display_zone(config.timezone)).date()
+
+
+def cmd_sessions(config: Config, args: argparse.Namespace) -> int:
+    """Log that a session happened, or show what has been logged.
+
+    The timetable says a session was SCHEDULED. This says one took place and
+    what was in it -- which is the fact no file can hold, because it is not
+    known until afterwards.
+    """
+    if args.subject is not None and (args.covered is not None or args.on is not None):
+        return _log_session(config, args)
+
+    conn = store.open_db(config)
+    try:
+        courses = None
+        if args.subject is not None:
+            try:
+                _, course_id = _subject_course(config, args.subject)
+            except (upload_mod.UploadError, timetable_mod.TimetableError) as err:
+                print(f"error: {err}", file=sys.stderr)
+                return 1
+            courses = [course_id]
+        rows = store.manual_sessions(conn, courses)
+    finally:
+        conn.close()
+
+    if not rows:
+        print("No sessions logged.")
+        print('  agent sessions --subject "Calculus III" --on 2026-09-21 \\')
+        print('                 --kind LEC --covered "Cauchy sequences"')
+        return 0
+
+    _print_table(
+        ["id", "held", "subject", "kind", "covered"],
+        [
+            [
+                str(row["id"]), row["held_on"],
+                str(row["course_name"] or row["course_id"]),
+                row["kind"], (row["covered"] or "")[:52],
+            ]
+            for row in rows
+        ],
+    )
+    return 0
+
+
+def _log_session(config: Config, args: argparse.Namespace) -> int:
+    try:
+        subject, course_id = _subject_course(config, args.subject)
+    except (upload_mod.UploadError, timetable_mod.TimetableError) as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+
+    if args.on is None:
+        held_on = _today(config).isoformat()
+    else:
+        try:
+            held_on = date.fromisoformat(args.on).isoformat()
+        except ValueError:
+            print(f"--on must be a date like 2026-09-21, got {args.on!r}",
+                  file=sys.stderr)
+            return 1
+
+    print(f"  subject: {subject}")
+    print(f"  held:    {held_on}  {args.kind}")
+    print(f"  covered: {args.covered or '(not recorded)'}")
+
+    if args.dry_run:
+        print()
+        print("  dry run -- nothing written")
+        return 0
+
+    conn = store.open_db(config)
+    try:
+        session_id = store.log_manual_session(
+            conn, course_id=course_id, held_on=held_on,
+            kind=args.kind, covered=args.covered,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    print()
+    print(f"  logged as session {session_id}.")
+    return 0
+
+
+def cmd_tasks(config: Config, args: argparse.Namespace) -> int:
+    """Record something due, mark one done, or list what is outstanding.
+
+    A due date on a row is all `sync/deadlines.py` needs, so these join the
+    EXISTING T-72/24/3 scanner rather than getting a parallel one -- which is
+    how they inherit catch-up safety for nothing.
+    """
+    if args.done is not None:
+        return _complete_task(config, args.done)
+    if args.subject is not None and args.title is not None:
+        return _add_task(config, args)
+    if args.title is not None:
+        print("--title needs --subject: a task belongs to a subject.", file=sys.stderr)
+        return 1
+
+    conn = store.open_db(config)
+    try:
+        courses = None
+        if args.subject is not None:
+            try:
+                _, course_id = _subject_course(config, args.subject)
+            except (upload_mod.UploadError, timetable_mod.TimetableError) as err:
+                print(f"error: {err}", file=sys.stderr)
+                return 1
+            courses = [course_id]
+        rows = store.manual_tasks(conn, courses, include_done=args.include_done)
+    finally:
+        conn.close()
+
+    if not rows:
+        print("Nothing outstanding.")
+        print('  agent tasks --subject "Calculus III" --title "TD 3" --due 2026-10-05')
+        return 0
+
+    zone = composer.display_zone(config.timezone)
+    _print_table(
+        ["id", "due", "subject", "kind", "title", "done"],
+        [
+            [
+                str(row["id"]),
+                _local_stamp(row["due_at"], zone) or "no date",
+                str(row["course_name"] or row["course_id"]),
+                str(row["kind"]).replace("_", " "),
+                str(row["title"])[:40],
+                "yes" if row["done_at"] else "",
+            ]
+            for row in rows
+        ],
+    )
+    return 0
+
+
+def _local_stamp(value: str | None, zone) -> str:
+    """A stored UTC timestamp as local wall clock. Display only, per the rule."""
+    if not value:
+        return ""
+    try:
+        moment = datetime.strptime(value, ISO_FORMAT).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return str(value)
+    return moment.astimezone(zone).strftime("%a %d %b %H:%M")
+
+
+def _add_task(config: Config, args: argparse.Namespace) -> int:
+    try:
+        subject, course_id = _subject_course(config, args.subject)
+        due_at = _due_at(config, args.due) if args.due else None
+    except (upload_mod.UploadError, timetable_mod.TimetableError, ConfigError) as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+
+    zone = composer.display_zone(config.timezone)
+    print(f"  subject: {subject}")
+    print(f"  title:   {args.title}")
+    print(f"  kind:    {args.kind.replace('_', ' ')}")
+    print(f"  due:     {_local_stamp(due_at, zone) or 'no date'}"
+          f"{f'  ({due_at})' if due_at else ''}")
+
+    if not due_at:
+        # Said out loud: an undated task is recorded, and it is also invisible
+        # to the only thing that would have chased it.
+        print()
+        print("  no --due, so the deadline scanner will never alert on this.")
+
+    if args.dry_run:
+        print()
+        print("  dry run -- nothing written")
+        return 0
+
+    conn = store.open_db(config)
+    try:
+        task_id = store.add_manual_task(
+            conn, course_id=course_id, title=args.title, kind=args.kind,
+            due_at=due_at, notes=args.notes, source=args.source,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    print()
+    if task_id is None:
+        # Not an error: the UNIQUE key did its job. Two identical rows would
+        # mean two alerts for one sheet.
+        print("  already recorded -- same subject, title and due date. Nothing written.")
+        return 0
+    print(f"  recorded as task {task_id}. It joins the T-72/24/3 scanner from now on.")
+    return 0
+
+
+def _complete_task(config: Config, task_id: int) -> int:
+    conn = store.open_db(config)
+    try:
+        row = store.get_manual_task(conn, task_id)
+        if row is None:
+            print(f"no task with id {task_id}.", file=sys.stderr)
+            return 1
+        if row["done_at"]:
+            # A distinct outcome from "marked it done", and worth saying so.
+            print(f"  task {task_id} was already done ({row['done_at']}).")
+            return 0
+        store.complete_manual_task(conn, task_id)
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"  done: {row['title']}")
+    return 0
+
+
 def cmd_upload(config: Config, args: argparse.Namespace) -> int:
     """Put a local file into a subject's library, one stage in."""
     try:
@@ -2325,6 +2648,8 @@ COMMANDS = {
     "missing": cmd_missing,
     "studyitems": cmd_studyitems,
     "upload": cmd_upload,
+    "sessions": cmd_sessions,
+    "tasks": cmd_tasks,
     "subjects": cmd_subjects,
     "timetable": cmd_timetable,
     "gate": cmd_gate,
