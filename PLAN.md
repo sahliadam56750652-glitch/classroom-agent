@@ -283,10 +283,169 @@ desktop web, the installed PWA, and a real APK with a home-screen icon. The API
 and the static client are served from one origin so CORS never enters the
 picture. Telegram does not go away — see the settled decision below.
 
+**Requirement — a moved or cancelled session must be recordable from the app.**
+Professors move and cancel individual sessions at short notice, and the only way
+to record that today is to hand-edit `timetable.yaml`. On a phone at 22:00 that
+does not happen, so the gate prepares me for a lecture that is not taking place
+— the exact failure `exceptions:` exists to prevent, arriving one session at a
+time rather than one day at a time.
+
+The constraint is that **`timetable.yaml` stays the source of truth for the
+stable weekly pattern.** Phase 3a removed the `timetable` table in favour of the
+file deliberately (settled decision below), and an app that wrote sessions back
+into the database would undo that by giving one source of truth two writers.
+
+Proposed shape, to be confirmed at 5c when the app is actually built:
+
+- A separate **adjustments** layer in the database, written by the app, holding
+  dated one-off changes: a session moved to a different time or day, a session
+  cancelled, an extra session added.
+- The gate resolves the weekly pattern from the file, then applies any
+  adjustment for that specific date. The file is read and never written.
+- An adjustment names the session it modifies and the date it applies to, and
+  never alters the pattern itself. Nothing in the file changes because a
+  professor moved one Tuesday.
+- This generalises `exceptions:`, which cancels whole days and is static
+  configuration. An adjustment is per-session and entered while the semester is
+  running.
+
+Two consequences worth recording now, because both outlive whatever shape 5c
+settles on:
+
+- **Adjustments are entered by hand and cannot be rebuilt by re-syncing.** They
+  join `events.notified_at` and `study_items` on the short list of things a
+  fresh sync cannot restore, so they inherit the same backup obligation — and
+  CLAUDE.md's "the only two such things" becomes three the day this ships.
+- **Recording them as data yields a history the file could never give.** How
+  often each session actually moves is a fact about the semester worth having.
+  A file edited in place answers that only through `git log`, and
+  `timetable.yaml` is gitignored, so it does not answer it at all.
+
 **Done when** the PWA installs on the S25 Ultra from a `*.vercel.app` or
 `*.pages.dev` origin, the APK verifies its Digital Asset Links against that
-origin and opens with no browser chrome, the same build works on desktop, and
-deadline alerts still arrive by Telegram independently of the web client.
+origin and opens with no browser chrome, the same build works on desktop,
+deadline alerts still arrive by Telegram independently of the web client, and a
+session the professor moved can be recorded in a few taps — changing what the
+gate asks that evening with `timetable.yaml` untouched.
+
+### Phase 6 — manual entries
+
+Everything before this phase assumes Google knows the work exists. Two things it
+does not know about, and they are one problem: material that is real in my week
+and absent from every API this project can call.
+
+**6.1 — Projects.** HIDE is project-based and the briefs are verbal, so a
+project reaches Classroom late or never. Last year three project deadlines
+landed on one day with none of them ready, and nothing here could have warned
+me, because nothing here knew they existed.
+
+Requirements: title, subject, deliverables, team, deadline, **milestone-based
+progress rather than a self-reported percentage**, an optional link to a
+Classroom coursework id for the projects that do get posted, and deadlines that
+join the existing T-72/24/3 scanner rather than getting a parallel one.
+
+The milestone rule is not a UI preference. A percentage is a feeling typed into
+a box, and DESIGN.md's closing constraint is that nothing may make honesty cost
+me anything — a number I quietly revise upward is exactly that. A milestone
+either happened or it did not, and I cannot round it.
+
+Joining the existing scanner is load-bearing too. `sync/deadlines.py` is
+stateless on purpose: it recomputes every candidate from stored state on every
+run and has no "last scanned" timestamp anywhere in it, which is what lets a
+laptop closed for four days still report every threshold it slept through. A
+project deadline is a due date on a row, which is all that scanner needs, so it
+inherits catch-up safety for nothing. A second scanner would have to re-earn it.
+
+**6.2 — Subjects with no Classroom at all.** The 2026-27 timetable has twelve
+subjects and three carry a course id today. Several will never carry one:
+Calculus III, Algebra III, Philosophy and Communication have no Classroom and
+are not going to acquire one. They appear in the schedule and are never gated —
+which is the correct, designed behaviour for a `null` subject, and also means
+roughly a third of my week is invisible to the feature this project exists for.
+
+**`null` currently means two different things, and Phase 6 has to separate
+them.** "Not joined yet" is a gap that closes when I paste an id. "There is no
+Classroom and there never will be" is a subject that runs manually all year.
+The `subjects:` map cannot tell them apart, and `agent timetable --check`
+reports both as the same gap.
+
+Requirements:
+
+- Log that a session happened, with what was covered.
+- Record a tutorial or exercise sheet as due, with a deadline.
+- **Upload a file for that subject** — a photographed board, a classmate's
+  notes, an emailed handout.
+- **An uploaded file enters the existing pipeline unchanged**: extraction, OCR
+  where the pages are images, study packs, quiz generation, the gate. This is
+  the point of the feature and not a refinement of it. A gate covering three
+  subjects out of twelve is a gate I stop believing.
+- **A manually added subject needs a course-like identity**, so `study_items`,
+  the `subjects:` map and the gate reference it exactly as they reference a
+  Classroom course, without a Classroom course id.
+
+#### What the existing code already permits — and the one place it fights back
+
+Checked rather than assumed, because "enters the pipeline unchanged" is a claim
+about code that is already written.
+
+**The identity is free.** `courses.id` and `extractions.drive_id` are both
+`TEXT PRIMARY KEY`. A locally minted id is structurally a course and
+structurally a file, and nothing downstream inspects the shape of either.
+
+**The pipeline can be joined one stage in.** `agent extract` selects
+`FROM extractions WHERE status IN ('fetched', 'ok')`, and `fetched` means
+exactly "the bytes are on disk and nothing has read them". An upload that writes
+into `library/files/` and inserts a `fetched` row lands precisely where
+`agent fetch` would have left it. **Download is the only stage an upload
+skips**; extract, OCR, packs, quiz and gate read the database and the library
+and cannot tell where the bytes came from.
+
+**The sync already leaves manual rows alone, and it is worth writing down why.**
+`store.soft_delete_missing` is what stamps `deleted_at` on anything the live
+state stopped returning, and it runs per course id, for tracked courses only. A
+manual course is not in `courses.tracked`, so it is never polled and never
+compared against a live state it has no counterpart in. Hence a sharp
+constraint: **a manual course id must never enter `courses.tracked`.** If one
+does, the poller 404s on it and a single sync stamps `deleted_at` across
+everything typed in by hand.
+
+**And the conflict.** `ocr.queue` derives its top tier from that same
+`courses.tracked` list — `_tier` returns tier 2, behind last year's archive, for
+any course id not in it. So the two requirements pull in opposite directions. A
+photographed board for a subject that meets tomorrow would sort behind 279 pages
+of archived material and wait a fortnight at ~12 pages a day for the OCR the
+gate needs before it can ask anything, which defeats the stated point of 6.2
+exactly.
+
+**So Phase 6 must separate "tracked" from "in scope".** Tracked is the poller's
+allowlist: which Classroom courses to fetch. In scope is the queue's question:
+which material belongs to the week I am actually having. They have been one list
+so far only because every course came from Classroom. They stop being one list
+the moment a subject does not.
+
+#### Constraints
+
+- **Manual rows cannot be rebuilt by re-syncing.** They join
+  `events.notified_at`, `study_items` and Phase 5's session adjustments on the
+  list of what no amount of re-running recovers — and unlike those, manual rows
+  are the *bulk* of what a Classroom-less subject knows about itself. **Backup
+  stops being prudent and becomes a requirement.** The weekly pull in
+  `deploy/README.md` is the mechanism and it already exists; Phase 6 is what
+  makes losing it expensive.
+- **The sync must never treat a manual row as stale.** The protection today is
+  that manual courses sit outside `courses.tracked` — a property to pin with a
+  test, not one to remember.
+- **Entry belongs in the web app.** Photographing a board is natural on a phone
+  and miserable through Telegram, which is also why this is Phase 6 and not
+  Phase 4.
+
+**Done when** a project with milestones and a deadline alerts at T-72, T-24 and
+T-3 exactly as a Classroom assignment does; a subject with no Classroom carries
+logged sessions, a due exercise sheet and uploaded material; a photograph of a
+board taken on Tuesday is extracted, transcribed, packed and asked about by the
+gate on Wednesday evening through the same code path as a Drive PDF; and
+`agent ocr --status` puts that photograph ahead of last year's archive rather
+than behind it.
 
 ---
 
@@ -395,6 +554,12 @@ deadline alerts still arrive by Telegram independently of the web client.
   schema does not `DROP` it, because that would be a statement running on every
   open of every future file to tidy one empty table once.
 
+  This decision constrains the Phase 5 web app rather than being reopened by
+  it. The app must be able to record a moved or cancelled session, and it does
+  that in a separate dated adjustments layer that the gate applies *on top of*
+  the file — not by writing sessions back. The file keeps the weekly pattern
+  and stays single-writer; the database holds only what is dated and one-off.
+
 - **Subject-to-course mapping is explicit and never fuzzy.** "Database" vs
   "Database GA 2026". A session naming a subject absent from the `subjects:`
   map is a load error, not a near-match, because a wrong match gates the wrong
@@ -406,6 +571,22 @@ deadline alerts still arrive by Telegram independently of the web client.
   invariant 6 forbids writing to Drive. Pointing `packs_dir` at a Drive-synced
   folder is how they reach NotebookLM — which has no API either, so a pack
   arrives there as a file whatever this project does.
+
+  **The Drive-synced-folder half of that dies at 5a.** It depends on a desktop
+  sync client and the server does not have one, so on the box `packs_dir`
+  points at a directory nobody can see. See the open question below; the rest
+  of the decision stands.
+
+- **NotebookLM has no usable API. This is a finding, not an assumption.**
+  Checked September 2026: the consumer product still exposes no public API.
+  Google documents notebook APIs for the **Enterprise** edition only, and the
+  product has been rebranded to **Gemini Notebook**. Unofficial clients exist,
+  and every one of them authenticates with Google session cookies against
+  reverse-engineered internal RPC endpoints — a reasonable thing to have break
+  under a hobby script, and an unreasonable thing to have break under something
+  I rely on for exam deadlines. **The bridge stays a study pack added to a
+  notebook by hand.** Nothing in the code depends on this, because a pack is a
+  file wherever `packs_dir` points.
 
 - **The Gemini free tier is ~20 requests/day, and that binds the backfill
   rather than the code.** The remaining pages drain through scheduled runs at
@@ -614,6 +795,26 @@ is running — the tracked list is curated by hand and always will be.
   touching the gate — and the model *name* is already configurable via
   `GEMINI_MODEL`, because a model being retired underneath this project has
   happened once and will happen again.
+
+- **How study packs reach me once the server is the host.** Not whether packs
+  are built — they are — but how one gets from the box to a notebook. The
+  Drive-synced-folder route is gone at 5a (no sync client on the server), so
+  this needs a stated decision rather than a default.
+
+  Either **the web app serves packs for download**, which costs nothing beyond
+  the file serving Phase 5b already needs and leaves invariant 6 untouched. Or
+  **the project adds the `drive.file` scope** — a narrow write, limited to
+  files the app itself created, blind to everything else in the Drive — and
+  uploads packs into a dedicated folder, restoring a path to a notebook from
+  any device with no sync client anywhere.
+
+  The second would be **a deliberate second exception to invariant 6, and must
+  be recorded as one if it is taken.** The first exception is not comparable:
+  `classroom.coursework.me` is read-write because Google refuses to register
+  the `.readonly` variant, so the grant is wider than the intent and the
+  restriction is enforced in code. Adding `drive.file` would be the opposite —
+  a write scope requested because the project means to write. That is a
+  decision to take on the record, not a line to add quietly to `auth.SCOPES`.
 
 - **Whether NotebookLM stays the study surface.** Still open, but narrower:
   packs are built and land wherever `packs_dir` points, so nothing in the code
