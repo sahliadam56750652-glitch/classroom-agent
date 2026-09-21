@@ -100,6 +100,12 @@ where the table used to be in `db/schema.sql`.
   `events.notified_at` and `study_items` are the only things in this project
   that cannot be rebuilt from the API.
 - Every long-running command takes `--dry-run`.
+- **`agent run`'s `studyitems` stage is strictly in scope**, which is narrower
+  than the `agent studyitems` command's `local`. Typed by hand it is a
+  deliberate act with `--seed` and `--force` available; run unattended twice a
+  day it must never widen the backlog on its own, or the gate claims a backlog
+  I do not have. It never seeds, it is idempotent, and an unreadable timetable
+  makes it create nothing rather than everything.
 - The gate is the one part that is deliberately NOT catch-up safe. Invariant 1
   is about the sync: a prompt for a lecture that already happened is noise, so
   a gate that has not run for three days fires once, for tomorrow, and not
@@ -180,7 +186,7 @@ them must not inherit another's.
 
 | when | how | command | why |
 |---|---|---|---|
-| 07:30, 19:30 | Task Scheduler | `agent run` | sync → fetch → extract → ocr → packs → deadlines → notify |
+| 07:30, 19:30 | Task Scheduler | `agent run` | sync → fetch → extract → ocr → studyitems → packs → deadlines → notify |
 | 20:00 | Task Scheduler | `agent gate` | tomorrow's revision prompt, after the 19:30 sync has pulled the day's material |
 | at logon | Startup `.vbs` → `pythonw.exe` | `agent bot` | the long-poll listener; restart-safe, so killing it is harmless |
 

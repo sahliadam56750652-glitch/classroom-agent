@@ -30,8 +30,8 @@ carries `notified_at` exactly once.
 
 **Phase 2 — complete.** Drive fetch, text extraction, per-page OCR through
 Gemini vision, study packs, and a real pipeline: `agent run` is now
-sync → fetch → extract → ocr → packs → deadlines → notify, with every stage
-before notify isolated so no failure can suppress the briefing. `agent fetch`,
+sync → fetch → extract → ocr → studyitems → packs → deadlines → notify, with
+every stage before notify isolated so no failure can suppress the briefing. `agent fetch`,
 `agent extract`, `agent ocr`, `agent packs`, `agent studyitems` and
 `agent missing` all exist alongside the Phase 1 commands.
 
@@ -147,8 +147,10 @@ what it would build without touching Drive.
 
 **Status — complete.** `agent fetch`, `agent extract`, `agent ocr`,
 `agent packs` and `agent studyitems` are built and tested, and `agent run` is
-now sync → fetch → extract → ocr → packs → deadlines → notify, with every
-stage before notify best-effort so no failure can suppress the briefing.
+now sync → fetch → extract → ocr → studyitems → packs → deadlines → notify,
+with every stage before notify best-effort so no failure can suppress the
+briefing. (`studyitems` was added straight after Phase 6 — see the settled
+decision below.)
 
 Several decisions here departed from what this section originally described,
 every one driven by measurement rather than preference. They are recorded under
@@ -687,6 +689,47 @@ than behind it.
   a subject name through `timetable.yaml` exactly and refuses anything it cannot
   match, for the same reason the gate's subject mapping is never fuzzy.
 
+- **`agent run` has a `studyitems` stage, after `ocr` and before `packs`.**
+  Raised as an open question by Phase 6.4 and settled straight after it.
+
+  Without it, a post whose material has just become readable does not become a
+  *study item* until `agent studyitems` is typed by hand — and the gate cannot
+  serve what has no item. So a board photographed on Tuesday was extracted and
+  transcribed unattended by the 19:30 run, and then sat there.
+
+  **The reason it is a defect and not a preference: new material that reaches
+  the gate only if I remember a command is a silent failure, and this project
+  treats those as defects.** It is the recurring lesson in its purest form —
+  nothing errors, nothing is logged, the run reports success, and the only
+  visible symptom is a gate that is quietly emptier than the library. That is
+  the failure mode this whole file ranks worst.
+
+  It was pre-existing and affected Classroom material equally; Phase 6 only
+  made it visible, because a manual upload is the first material that arrives
+  expecting to be gated the next evening.
+
+  **The stage is strictly IN SCOPE, which is narrower than the command's
+  `local`**, and that asymmetry is deliberate rather than an oversight:
+
+  - Typed by hand, `agent studyitems` is a deliberate act with `--seed` and
+    `--force` available and its output in front of me, so it reaches every
+    course whose material is held.
+  - Run unattended twice a day, it must never widen the backlog on its own. An
+    archived or ignored course still has material in the library from earlier
+    phases, and a course I track to fetch files from is not one I am being
+    taught. Pending items for either would make the gate claim a backlog I do
+    not have and Phase 4's coverage figure a lie — the same reason `--seed`
+    exists at all.
+
+  Three properties make it safe to schedule. It is **idempotent**:
+  `ensure_study_item` is `INSERT … ON CONFLICT DO NOTHING`, so a second run is
+  silent rather than duplicating. It **never seeds**: `--seed` is a first-run
+  tool and an unattended pipeline must not reach for it. And it **fails safe**:
+  an unreadable `timetable.yaml` makes `scope.in_scope` empty, so nothing is
+  created rather than the whole library being filed under the wrong set. It is
+  wrapped in `_stage()` like everything else, so its failure cannot suppress
+  the briefing.
+
 - **The gate fires ONCE per day, the evening before, covering tomorrow's
   subjects.** Not once per session. The real week is ~20 sessions across ~11
   subjects, so a per-session prompt would arrive three times a day and be muted
@@ -887,31 +930,6 @@ is running — the tracked list is curated by hand and always will be.
   restriction is enforced in code. Adding `drive.file` would be the opposite —
   a write scope requested because the project means to write. That is a
   decision to take on the record, not a line to add quietly to `auth.SCOPES`.
-
-- **Should `agent run` gain a `studyitems` stage?** Raised by Phase 6.4 and
-  deliberately not decided there, because it is a change to a documented
-  pipeline rather than part of the phase.
-
-  The pipeline is sync → fetch → extract → ocr → packs → deadlines → notify.
-  There is no `studyitems` stage, so a post whose material has just become
-  readable does not become a *study item* until `agent studyitems` is run by
-  hand — and the gate cannot serve what has no item. An uploaded board is
-  therefore extracted and transcribed unattended by the 19:30 run, and then
-  waits for a manual command before it can be gated.
-
-  This is **pre-existing and affects Classroom material equally**; Phase 6 only
-  made it visible, because a manual upload is the first material that arrives
-  expecting to be gated the next evening.
-
-  **Recommendation: add it, between `packs` and `deadlines`.** It is cheap
-  (`ensure_study_item` is already `INSERT … ON CONFLICT DO NOTHING`, so the
-  stage is idempotent and silent when nothing is new), it needs no schema
-  change, and `_stage()` already isolates every stage so a failure there cannot
-  suppress the briefing. The one thing to check before doing it is `--seed`:
-  `_do_studyitems` refuses `--seed` when items already exist, and the pipeline
-  stage must never pass it. The argument against is that it makes `agent run`
-  one stage longer for a gap that a habit also closes — but a habit is exactly
-  what the rest of this project refuses to rely on.
 
 - **Whether NotebookLM stays the study surface.** Still open, but narrower:
   packs are built and land wherever `packs_dir` points, so nothing in the code

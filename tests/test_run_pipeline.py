@@ -14,8 +14,11 @@ import argparse
 
 import pytest
 
-from agent import cli
-from agent.classroom.models import Course
+from datetime import date
+
+from agent import cli, scope
+from agent.classroom.models import Course, Material, material_id
+from agent.gate import scheduler, timetable as tt
 from agent.config import Config
 from agent.db import store
 from agent.files import drive, extract, ocr, packs
@@ -83,6 +86,7 @@ def pipeline(monkeypatch, conn):
     monkeypatch.setattr(cli, "_do_fetch", record("fetch", drive.FetchResult()))
     monkeypatch.setattr(cli, "_do_extract", record("extract", extract.ExtractResult()))
     monkeypatch.setattr(cli, "_do_ocr", record("ocr", ocr.OCRResult()))
+    monkeypatch.setattr(cli, "_do_studyitems", record("studyitems", (0, 0)))
     monkeypatch.setattr(cli, "_do_packs", record("packs", packs.PacksResult()))
     monkeypatch.setattr(
         cli, "_do_deadlines", record("deadlines", deadlines_mod.DeadlineScan(events=[]))
@@ -118,7 +122,8 @@ def test_the_stages_run_in_dependency_order(config, pipeline):
     assert cli.cmd_run(config, args()) == 0
 
     assert pipeline == [
-        "sync", "fetch", "extract", "ocr", "packs", "deadlines", "notify",
+        "sync", "fetch", "extract", "ocr", "studyitems", "packs", "deadlines",
+        "notify",
     ]
 
 
@@ -128,6 +133,7 @@ def test_the_stages_run_in_dependency_order(config, pipeline):
         ("_do_fetch", drive.DriveError("Drive is down")),
         ("_do_extract", extract.ExtractError("PyMuPDF exploded")),
         ("_do_ocr", ocr.OCRError("no provider")),
+        ("_do_studyitems", RuntimeError("timetable unreadable")),
         ("_do_packs", packs.PackError("disk full")),
         ("_do_deadlines", RuntimeError("scanner broke")),
     ],
@@ -153,7 +159,9 @@ def test_a_failing_stage_does_not_stop_the_ones_after_it(config, pipeline, monke
 
     cli.cmd_run(config, args())
 
-    assert pipeline == ["sync", "extract", "ocr", "packs", "deadlines", "notify"]
+    assert pipeline == [
+        "sync", "extract", "ocr", "studyitems", "packs", "deadlines", "notify",
+    ]
 
 
 def test_a_failing_stage_says_so_loudly(config, pipeline, monkeypatch, capsys):
@@ -175,12 +183,32 @@ def test_even_a_failing_sync_still_sends_the_briefing(config, pipeline, monkeypa
     assert pipeline[-1] == "notify"
 
 
-def test_no_tracked_courses_ends_the_run_early(config, pipeline, monkeypatch):
-    """Nothing downstream has anything to work on, and that is not a failure."""
+def test_no_tracked_courses_no_longer_ends_the_run(config, pipeline, monkeypatch):
+    """Nothing tracked is not nothing to do -- not since Phase 6.
+
+    A subject can have a library, a backlog and a deadline without Classroom
+    knowing it exists, and at the start of a term, before any course is joined,
+    that is the NORMAL state rather than an edge case. Stopping here would mean
+    an uploaded board is never extracted, never gated, and no briefing is sent
+    about an exercise sheet due tomorrow.
+    """
     monkeypatch.setattr(cli, "_do_sync", lambda *a, **kw: None)
 
     assert cli.cmd_run(config, args()) == 0
-    assert pipeline == []
+    assert pipeline == [
+        "fetch", "extract", "ocr", "studyitems", "packs", "deadlines", "notify",
+    ]
+
+
+def test_no_tracked_courses_still_says_so(config, pipeline, monkeypatch, capsys):
+    """Continuing must not make the advice disappear: a first-run install with
+    an empty tracked list still needs to be told how to fill it."""
+    monkeypatch.setattr(cli, "_do_sync", lambda *a, **kw: None)
+
+    cli.cmd_run(config, args())
+    out = capsys.readouterr().out
+    assert "No courses are tracked" in out
+    assert "Continuing" in out
 
 
 # --------------------------------------------------------------------------
@@ -237,3 +265,229 @@ def test_the_run_limit_is_configurable(tmp_path):
     )
 
     assert load_config(tmp_path / "config.yaml").ocr_run_limit == 3
+
+
+# --------------------------------------------------------------------------
+# the studyitems stage
+#
+# Settled after Phase 6: new material that reaches the gate only if I remember
+# a command is a silent failure, and this project treats those as defects. The
+# stage is narrower than the command on purpose -- strictly in scope -- because
+# it runs unattended twice a day and must never widen the backlog on its own.
+# --------------------------------------------------------------------------
+
+REAL_TIMETABLE = """
+subjects:
+  Calculus III: manual-calculus-iii
+  Operating Systems: "c1"
+
+versions:
+  - label: S1
+    status: provisional
+    effective_from: 2026-09-15
+    effective_to: 2027-01-23
+    sessions:
+      - { day: mon, start: "08:30", end: "10:00", kind: LEC,
+          subject: Calculus III }
+      - { day: tue, start: "13:00", end: "14:30", kind: LEC,
+          subject: Operating Systems }
+"""
+
+
+@pytest.fixture
+def real_studyitems(config, conn, monkeypatch, tmp_path):
+    """Every stage stubbed EXCEPT studyitems, which runs for real.
+
+    The stages around it need a network or a model; this one needs neither, so
+    it is the one worth exercising end to end.
+    """
+    path = tmp_path / "timetable.yaml"
+    path.write_text(REAL_TIMETABLE, encoding="utf-8")
+    scoped = Config(
+        account=config.account,
+        timezone=config.timezone,
+        data_dir=config.data_dir,
+        tracked_courses=config.tracked_courses,
+        ignored_courses=config.ignored_courses,
+        telegram_chat_id=config.telegram_chat_id,
+        timetable_path_override=path,
+    )
+
+    monkeypatch.setattr(store, "open_db", lambda _config: KeepOpen(conn))
+    for name, value in (
+        ("_do_sync", poller.SyncResult()),
+        ("_do_fetch", drive.FetchResult()),
+        ("_do_extract", extract.ExtractResult()),
+        ("_do_ocr", ocr.OCRResult()),
+        ("_do_packs", packs.PacksResult()),
+        ("_do_deadlines", deadlines_mod.DeadlineScan(events=[])),
+    ):
+        monkeypatch.setattr(cli, name, lambda *a, _v=value, **kw: _v)
+    monkeypatch.setattr(cli, "_do_notify", lambda *a, **kw: 0)
+    return scoped
+
+
+def a_post_with_material(conn, *, course_id, post_id, drive_id, title, posted):
+    """A post whose attachment has extracted text -- what `agent studyitems`
+    looks for, and all it looks for."""
+    conn.execute(
+        "INSERT INTO coursework_materials (id, course_id, title, content_hash, "
+        "first_seen_at, creation_time) VALUES (?, ?, ?, 'h', ?, ?)",
+        (post_id, course_id, title, posted, posted),
+    )
+    store.upsert_material(conn, Material(
+        id=material_id("coursework_material", post_id, "driveFile", drive_id),
+        parent_type="coursework_material", parent_id=post_id, course_id=course_id,
+        kind="driveFile", ref=drive_id, drive_id=drive_id, title=title,
+        url=None, content_hash="h",
+    ))
+    store.upsert_extraction(
+        conn, drive_id, status="ok", mime_type="image/jpeg",
+        local_path=f"files/{drive_id}.jpg", text_path=f"text/{drive_id}.txt",
+        method="image", pages=1, scan_pages=1, chars=0,
+    )
+    conn.commit()
+
+
+def test_an_upload_reaches_the_gate_through_agent_run_alone(real_studyitems, conn):
+    """The reason this stage exists.
+
+    A board photographed on Tuesday is extracted and transcribed unattended by
+    the 19:30 run. Before this stage it then sat there: no study item, so
+    nothing for the gate to serve, until `agent studyitems` was typed by hand.
+    New material that reaches the gate only if I remember a command is a silent
+    failure.
+    """
+    store.ensure_manual_course(conn, "manual-calculus-iii", "Calculus III")
+    a_post_with_material(
+        conn, course_id="manual-calculus-iii", post_id="manual-post-abc",
+        drive_id="manual-file-abc", title="Board, 21 Sep",
+        posted="2026-09-21T12:00:00Z",
+    )
+
+    assert cli.cmd_run(real_studyitems, args()) == 0
+
+    # The item exists, unprompted, and it is pending rather than skipped.
+    row = conn.execute(
+        "SELECT state FROM study_items WHERE course_id = 'manual-calculus-iii'"
+    ).fetchone()
+    assert row is not None, "the run did not create a study item for the upload"
+    assert row["state"] == "pending"
+
+    # And the gate serves it: Monday 21 Sep 2026 is a Calculus III lecture.
+    table = tt.load(real_studyitems.timetable_path)
+    plan = scheduler.plan_for(
+        conn, scope.local(real_studyitems, table), table, date(2026, 9, 21)
+    )
+    calculus = next(s for s in plan.subjects if s.name == "Calculus III")
+    assert calculus.gated
+    assert [item.label for item in calculus.items] == ["Board, 21 Sep"]
+    assert plan.worth_sending
+
+
+def test_archived_material_creates_nothing(real_studyitems, conn):
+    """The stage is strictly in scope, and this is what that buys.
+
+    An archived or ignored course still has material in the library from
+    earlier phases. Turning it into pending items twice a day would make the
+    gate claim a backlog I do not have, and Phase 4's coverage figure a lie.
+    """
+    store.upsert_course(conn, Course(
+        id="archived", name="Probability & Statistics 2025-26", section=None,
+        room=None, owner_id=None, course_state="ARCHIVED", enrollment_code=None,
+        alternate_link=None, creation_time=None, update_time=None, content_hash="h",
+    ))
+    a_post_with_material(
+        conn, course_id="archived", post_id="arch1", drive_id="1ArchiveDriveId",
+        title="Chapter 9", posted="2026-05-01T10:00:00Z",
+    )
+
+    assert cli.cmd_run(real_studyitems, args()) == 0
+    assert store.count_rows(conn, "study_items") == 0
+
+
+def test_a_tracked_course_off_the_timetable_creates_nothing_either(
+    real_studyitems, conn
+):
+    """`courses.tracked` is a fetching decision, not a revising one.
+
+    A course I track to pull its files from, but which does not meet this
+    semester, is not something the gate should start asking about. That is the
+    difference between the stage's `in scope` and the command's `local`, and it
+    is the whole reason the stage takes a narrower set.
+    """
+    store.upsert_course(conn, Course(
+        id="c2", name="Tracked but not taught", section=None, room=None,
+        owner_id=None, course_state="ACTIVE", enrollment_code=None,
+        alternate_link=None, creation_time=None, update_time=None, content_hash="h",
+    ))
+    real_studyitems.tracked_courses.append("c2")
+    a_post_with_material(
+        conn, course_id="c2", post_id="p2", drive_id="1OtherDriveId",
+        title="Slides", posted="2026-09-20T10:00:00Z",
+    )
+
+    assert cli.cmd_run(real_studyitems, args()) == 0
+    assert store.count_rows(conn, "study_items") == 0
+
+    # But typing the command by hand still reaches it -- that is a deliberate
+    # act, and it is the difference the two callers exist for.
+    created, _seen = cli._do_studyitems(real_studyitems, conn)
+    assert created == 1
+
+
+def test_the_stage_is_idempotent(real_studyitems, conn):
+    """It runs twice a day forever. `ensure_study_item` is INSERT .. DO NOTHING,
+    so a second run is silent rather than duplicating."""
+    store.ensure_manual_course(conn, "manual-calculus-iii", "Calculus III")
+    a_post_with_material(
+        conn, course_id="manual-calculus-iii", post_id="manual-post-abc",
+        drive_id="manual-file-abc", title="Board", posted="2026-09-21T12:00:00Z",
+    )
+
+    cli.cmd_run(real_studyitems, args())
+    cli.cmd_run(real_studyitems, args())
+    assert store.count_rows(conn, "study_items") == 1
+
+
+def test_the_stage_never_seeds(real_studyitems, conn):
+    """--seed records everything as already skipped. It is a first-run tool and
+    an unattended pipeline must never reach for it."""
+    store.ensure_manual_course(conn, "manual-calculus-iii", "Calculus III")
+    a_post_with_material(
+        conn, course_id="manual-calculus-iii", post_id="manual-post-abc",
+        drive_id="manual-file-abc", title="Board", posted="2026-09-21T12:00:00Z",
+    )
+
+    cli.cmd_run(real_studyitems, args())
+    row = conn.execute("SELECT state, skip_source FROM study_items").fetchone()
+    assert (row["state"], row["skip_source"]) == ("pending", None)
+
+
+def test_a_dry_run_creates_nothing(real_studyitems, conn, capsys):
+    store.ensure_manual_course(conn, "manual-calculus-iii", "Calculus III")
+    a_post_with_material(
+        conn, course_id="manual-calculus-iii", post_id="manual-post-abc",
+        drive_id="manual-file-abc", title="Board", posted="2026-09-21T12:00:00Z",
+    )
+
+    cli.cmd_run(real_studyitems, args(dry_run=True))
+    assert store.count_rows(conn, "study_items") == 0
+    assert "would create 1 study item(s)" in capsys.readouterr().out
+
+
+def test_an_unreadable_timetable_creates_nothing_rather_than_everything(
+    real_studyitems, conn, capsys
+):
+    """The stage fails SAFE. `scope.in_scope(None)` is empty, so a broken file
+    costs the stage rather than filing the whole library under the wrong set."""
+    real_studyitems.timetable_path.write_text("versions: [", encoding="utf-8")
+    store.ensure_manual_course(conn, "manual-calculus-iii", "Calculus III")
+    a_post_with_material(
+        conn, course_id="manual-calculus-iii", post_id="manual-post-abc",
+        drive_id="manual-file-abc", title="Board", posted="2026-09-21T12:00:00Z",
+    )
+
+    assert cli.cmd_run(real_studyitems, args()) == 0
+    assert store.count_rows(conn, "study_items") == 0
+    assert "created 0 study item(s)" in capsys.readouterr().out

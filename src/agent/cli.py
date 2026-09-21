@@ -1296,6 +1296,28 @@ def _print_dead_pointer(dead: int) -> None:
         print(f"  {dead} attachment(s) no longer exist in Drive. Run `agent missing` to list them.")
 
 
+def _timetable_or_none(config: Config):
+    """The timetable, or None when it cannot be read.
+
+    A broken timetable must not stop the pipeline, and in this stage it fails
+    SAFE: `scope.in_scope(None)` is empty, so nothing is created rather than
+    everything being created against the wrong set.
+    """
+    return scope_mod.load(config)[0]
+
+
+def _print_studyitems_stage(result: tuple[int, int], *, dry_run: bool) -> None:
+    """What the stage did, in the two numbers that are different facts.
+
+    "seen" is how many posts have readable material at all; "created" is how
+    many of them the gate did not already know about. Printing only the second
+    would make a quiet run and an empty library look identical.
+    """
+    created, seen = result
+    verb = "would create" if dry_run else "created"
+    print(f"  {verb} {created} study item(s) from {seen} post(s) with material")
+
+
 def _do_packs(
     config: Config,
     conn,
@@ -1410,7 +1432,13 @@ class SeedWouldBuryBacklog(Exception):
 
 
 def _do_studyitems(
-    config: Config, conn, *, dry_run: bool = False, seed: bool = False, force: bool = False
+    config: Config,
+    conn,
+    *,
+    dry_run: bool = False,
+    seed: bool = False,
+    force: bool = False,
+    course_ids: list[str] | None = None,
 ) -> tuple[int, int]:
     """Create one study item per post with extracted material. (created, seen).
 
@@ -1419,6 +1447,18 @@ def _do_studyitems(
     am 90 lectures behind and make the Phase 4 coverage figure a lie from day
     one. --seed records that history as skipped, with a reason, because a skip
     recorded as anything else is exactly the dishonesty the gate cannot afford.
+
+    `course_ids` is how the `agent run` stage narrows this to **in scope**
+    while the command keeps the wider **local** set. The two callers want
+    genuinely different things:
+
+      * Typed by hand, this is a deliberate act with `--seed` and `--force`
+        available, so it reaches every course whose material is held --
+        tracked or in scope -- and I can see what it did.
+      * Run unattended twice a day, it must never widen the backlog on its own.
+        A course that is tracked but absent from this semester's timetable is
+        one I am fetching files from, not one I am being taught, and pending
+        items for it would make the gate claim a backlog I do not have.
     """
     if seed and not force and store.count_rows(conn, "study_items") > 0:
         raise SeedWouldBuryBacklog(
@@ -1429,7 +1469,9 @@ def _do_studyitems(
 
     # `local`, not tracked: a manually uploaded board is a post with extracted
     # material that the gate can never serve if no study item is made for it.
-    rows = store.parents_with_extracted_material(conn, _in_scope_courses(config)[1])
+    if course_ids is None:
+        course_ids = _in_scope_courses(config)[1]
+    rows = store.parents_with_extracted_material(conn, course_ids)
     if dry_run:
         existing = {
             (row["entity_type"], row["entity_id"])
@@ -2917,12 +2959,13 @@ def _stage(name: str, work, *, report=None) -> bool:
 def cmd_run(config: Config, args: argparse.Namespace) -> int:
     """The whole pipeline, in the order each stage feeds the next.
 
-    sync -> fetch -> extract -> ocr -> deadlines -> notify.
+    sync -> fetch -> extract -> ocr -> studyitems -> packs -> deadlines -> notify.
 
     Classroom state arrives first because everything else reads it; bytes are
     fetched before they can be extracted; text is extracted before a model can
-    be asked about the pages it could not read; and the digest goes last so it
-    can report what the earlier stages just learned.
+    be asked about the pages it could not read; study items are made once the
+    material they point at is readable; and the digest goes last so it can
+    report what the earlier stages just learned.
 
     Only sync failing ends the run, and only because the stages after it would
     have nothing to work on. Everything else is best-effort -- see _stage.
@@ -2941,9 +2984,17 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
             sync_result = None
         else:
             if sync_result is None:
+                # Nothing tracked is no longer nothing to do. Since Phase 6 a
+                # subject can have a library, a backlog and a deadline without
+                # Classroom knowing it exists -- and at the start of a term,
+                # before any course is joined, that is the NORMAL state rather
+                # than an edge case. Returning here would mean an uploaded
+                # board is never extracted, never gated, and no briefing is
+                # sent about an exercise sheet due tomorrow.
                 _no_tracked_courses()
-                return 0
-            _print_sync(sync_result)
+                print("  Continuing: manual material and deadlines do not need one.")
+            else:
+                _print_sync(sync_result)
 
         _stage(
             "fetch",
@@ -2977,6 +3028,18 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
             print("== ocr ==")
             print("  skipped: ocr.run_limit is 0 in config.yaml")
 
+        # Strictly in scope, and narrower than the command on purpose: see
+        # _do_studyitems. An archived or ignored course has material in the
+        # library from earlier phases, and this stage must never turn it into a
+        # backlog the gate then claims I am behind on.
+        _stage(
+            "studyitems",
+            lambda: _do_studyitems(
+                config, conn, dry_run=args.dry_run,
+                course_ids=sorted(scope_mod.in_scope(_timetable_or_none(config))),
+            ),
+            report=lambda result: _print_studyitems_stage(result, dry_run=args.dry_run),
+        )
         _stage(
             "packs",
             lambda: _do_packs(config, conn, dry_run=args.dry_run),

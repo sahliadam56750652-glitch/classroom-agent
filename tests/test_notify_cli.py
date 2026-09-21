@@ -305,7 +305,13 @@ def test_run_dry_run_writes_nothing_and_sends_nothing(config, conn, monkeypatch,
     assert store.count_events(conn) == 0
 
 
-def test_run_stops_early_when_nothing_is_tracked(config, conn, monkeypatch, capsys):
+def test_the_briefing_still_goes_out_when_nothing_is_tracked(
+    config, conn, monkeypatch, capsys
+):
+    """Since Phase 6 a deadline can exist with no Classroom behind it -- a
+    tutorial handed out on paper, a project briefed verbally. Stopping before
+    notify would mean the one alert this project cannot afford to miss is the
+    one it never sends."""
     monkeypatch.setattr(cli, "_do_sync", lambda cfg, connection, **kw: None)
     monkeypatch.setattr(cli.store, "open_db", lambda cfg: KeepOpen(conn))
 
@@ -314,4 +320,4 @@ def test_run_stops_early_when_nothing_is_tracked(config, conn, monkeypatch, caps
 
     out = capsys.readouterr().out
     assert "No courses are tracked" in out
-    assert "== notify ==" not in out
+    assert "== notify ==" in out
