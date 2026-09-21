@@ -27,7 +27,7 @@ three is worse than not being told twice.
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -72,6 +72,9 @@ class Candidate:
     # Carried into the payload so the digest can say what kind of thing it is
     # without looking anything up.
     label: str = ""
+    # For a project: the Classroom coursework it is the same work as, when it
+    # was eventually posted as one. See `_merge_linked_projects`.
+    links_to: str | None = None
 
 
 @dataclass
@@ -175,9 +178,79 @@ def _manual_task_candidates(db: sqlite3.Connection) -> list[Candidate]:
     ]
 
 
+def _project_candidates(db: sqlite3.Connection) -> list[Candidate]:
+    """Open projects. Not filtered by a course list, for the same reason tasks
+    are not: a project exists because I typed it in, and most of them belong to
+    subjects Classroom knows nothing about."""
+    rows = db.execute(
+        "SELECT id, course_id, title, deadline_at, coursework_id "
+        "  FROM projects WHERE closed_at IS NULL"
+    ).fetchall()
+    return [
+        Candidate(
+            entity_type="project",
+            entity_id=str(row["id"]),
+            course_id=row["course_id"],
+            title=row["title"],
+            due_at=row["deadline_at"],
+            label="project",
+            links_to=row["coursework_id"],
+        )
+        for row in rows
+    ]
+
+
+def _merge_linked_projects(
+    coursework: list[Candidate], projects: list[Candidate]
+) -> list[Candidate]:
+    """ONE deadline for work that is both a project and a posted assignment.
+
+    A project that names a `coursework_id` is the same work as that assignment,
+    so two candidates would mean two alerts at every threshold for one hand-in.
+    The rule:
+
+      * The surviving candidate is keyed on the COURSEWORK. That matters for
+        more than tidiness -- events already written for that assignment,
+        possibly months before the project was recorded, keep deduplicating it.
+      * The professor's posted due date wins, because it is the fact; the one
+        I typed is a memory of a verbal brief. 54% of measured coursework
+        carries no dueDate at all, and in exactly that case the project's own
+        deadline is used -- which is the common case for a project, and the
+        reason the link is worth having.
+      * The event names the PROJECT, because that is what I call the work.
+      * A linked assignment that is TURNED_IN or RETURNED is already `done`,
+        so the project falls silent with it. That needs no code here.
+
+    A project whose link names an assignment the sync has not seen yet keeps
+    its own candidate: the brief usually arrives weeks before the post does.
+    """
+    by_id = {candidate.entity_id: candidate for candidate in coursework}
+    merged = dict(by_id)
+    standalone: list[Candidate] = []
+
+    for project in projects:
+        linked = by_id.get(project.links_to) if project.links_to else None
+        if linked is None:
+            standalone.append(project)
+            continue
+        merged[linked.entity_id] = replace(
+            linked,
+            title=project.title,
+            due_at=linked.due_at or project.due_at,
+            label="project",
+        )
+
+    return list(merged.values()) + standalone
+
+
 def _candidates(db: sqlite3.Connection, course_ids: list[str]) -> list[Candidate]:
     """Everything that is due, from every source that has due dates."""
-    return _coursework_candidates(db, course_ids) + _manual_task_candidates(db)
+    return (
+        _merge_linked_projects(
+            _coursework_candidates(db, course_ids), _project_candidates(db)
+        )
+        + _manual_task_candidates(db)
+    )
 
 
 def scan(

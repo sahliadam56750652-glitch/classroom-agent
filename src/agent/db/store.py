@@ -1996,3 +1996,131 @@ def complete_manual_task(
         (now or _utc_now_iso(), task_id),
     )
     return cursor.rowcount > 0
+
+
+# ------------------------------------------------------------- projects
+
+def add_project(
+    conn: sqlite3.Connection,
+    *,
+    course_id: str,
+    title: str,
+    deadline_at: str | None = None,
+    deliverables: str | None = None,
+    team: str | None = None,
+    brief_source: str | None = None,
+    coursework_id: str | None = None,
+    now: str | None = None,
+) -> int | None:
+    """Record a project. None when that subject already has one by that name."""
+    try:
+        cursor = conn.execute(
+            "INSERT INTO projects (course_id, title, deliverables, team, "
+            "brief_source, deadline_at, coursework_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (course_id, title, deliverables, team, brief_source, deadline_at,
+             coursework_id, now or _utc_now_iso()),
+        )
+    except sqlite3.IntegrityError:
+        return None
+    return int(cursor.lastrowid)
+
+
+def add_milestone(
+    conn: sqlite3.Connection,
+    project_id: int,
+    title: str,
+    *,
+    position: int | None = None,
+    now: str | None = None,
+) -> int:
+    """Append a milestone, or place one at an explicit position."""
+    if position is None:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(position), 0) AS last FROM project_milestones "
+            " WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+        position = int(row["last"]) + 1
+    cursor = conn.execute(
+        "INSERT INTO project_milestones (project_id, title, position, created_at) "
+        "VALUES (?, ?, ?, ?)",
+        (project_id, title, position, now or _utc_now_iso()),
+    )
+    return int(cursor.lastrowid)
+
+
+def complete_milestone(
+    conn: sqlite3.Connection, milestone_id: int, *, now: str | None = None
+) -> bool:
+    """Mark a milestone done. False when it does not exist or was already done.
+
+    The only way project progress moves. There is no percentage to write --
+    see the note in schema.sql.
+    """
+    cursor = conn.execute(
+        "UPDATE project_milestones SET done_at = ? WHERE id = ? AND done_at IS NULL",
+        (now or _utc_now_iso(), milestone_id),
+    )
+    return cursor.rowcount > 0
+
+
+def get_project(conn: sqlite3.Connection, project_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT p.*, c.name AS course_name FROM projects p "
+        "LEFT JOIN courses c ON c.id = p.course_id WHERE p.id = ?",
+        (project_id,),
+    ).fetchone()
+
+
+def project_milestones(conn: sqlite3.Connection, project_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM project_milestones WHERE project_id = ? ORDER BY position, id",
+        (project_id,),
+    ).fetchall()
+
+
+def get_milestone(conn: sqlite3.Connection, milestone_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT m.*, p.title AS project_title FROM project_milestones m "
+        "JOIN projects p ON p.id = m.project_id WHERE m.id = ?",
+        (milestone_id,),
+    ).fetchone()
+
+
+def projects(
+    conn: sqlite3.Connection,
+    course_ids: Sequence[str] | None = None,
+    *,
+    include_closed: bool = False,
+) -> list[sqlite3.Row]:
+    """Projects with their milestone counts. Progress is counted, never stored."""
+    sql = [
+        "SELECT p.*, c.name AS course_name,",
+        "       (SELECT count(*) FROM project_milestones m",
+        "         WHERE m.project_id = p.id) AS milestones,",
+        "       (SELECT count(*) FROM project_milestones m",
+        "         WHERE m.project_id = p.id AND m.done_at IS NOT NULL) AS milestones_done",
+        "  FROM projects p",
+        "  LEFT JOIN courses c ON c.id = p.course_id",
+        " WHERE 1",
+    ]
+    params: list[Any] = []
+    if not include_closed:
+        sql.append("   AND p.closed_at IS NULL")
+    if course_ids is not None:
+        placeholders = ", ".join("?" for _ in course_ids)
+        sql.append(f"   AND p.course_id IN ({placeholders})" if course_ids else "   AND 0")
+        params.extend(course_ids)
+    sql.append(" ORDER BY p.deadline_at IS NULL, p.deadline_at, p.id")
+    return conn.execute("\n".join(sql), params).fetchall()
+
+
+def close_project(
+    conn: sqlite3.Connection, project_id: int, *, now: str | None = None
+) -> bool:
+    cursor = conn.execute(
+        "UPDATE projects SET closed_at = ? WHERE id = ? AND closed_at IS NULL",
+        (now or _utc_now_iso(), project_id),
+    )
+    return cursor.rowcount > 0

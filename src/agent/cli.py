@@ -256,6 +256,70 @@ def _build_parser() -> argparse.ArgumentParser:
         help="put skipped study items back in the queue (the only way out of skipped)",
     )
 
+    projects_parser = sub.add_parser(
+        "projects",
+        parents=[shared],
+        help="record a project with milestones and a deadline, or show progress",
+    )
+    projects_parser.add_argument(
+        "--add", action="store_true", help="record a new project",
+    )
+    projects_parser.add_argument(
+        "--subject", default=None, metavar="NAME",
+        help="the timetable subject it belongs to",
+    )
+    projects_parser.add_argument(
+        "--title", default=None, metavar="TEXT", help="what the project is called",
+    )
+    projects_parser.add_argument(
+        "--deadline", default=None, metavar="WHEN",
+        help="YYYY-MM-DD, or 'YYYY-MM-DD HH:MM'. A date alone means end of day",
+    )
+    projects_parser.add_argument(
+        "--deliverable", action="append", dest="deliverables", default=None,
+        metavar="TEXT", help="something that has to be handed in; repeatable",
+    )
+    projects_parser.add_argument(
+        "--milestone", action="append", dest="milestones", default=None,
+        metavar="TEXT",
+        help="a step that either happened or did not; repeatable, in order",
+    )
+    projects_parser.add_argument(
+        "--team", action="append", dest="team", default=None, metavar="NAME",
+        help="who is on it; repeatable",
+    )
+    projects_parser.add_argument(
+        "--brief", default=None, metavar="TEXT",
+        help="where the brief came from, e.g. 'verbal, 15 Sep lecture'",
+    )
+    projects_parser.add_argument(
+        "--coursework", default=None, metavar="ID",
+        help=(
+            "the Classroom coursework id this is the same work as, so it has "
+            "ONE deadline and not two"
+        ),
+    )
+    projects_parser.add_argument(
+        "--show", type=int, default=None, metavar="ID",
+        help="show one project and its milestones",
+    )
+    projects_parser.add_argument(
+        "--done", type=int, default=None, metavar="ID",
+        help="mark a milestone done (the only way progress moves)",
+    )
+    projects_parser.add_argument(
+        "--close", type=int, default=None, metavar="ID",
+        help="close a project: it stops being chased for a deadline",
+    )
+    projects_parser.add_argument(
+        "--all", action="store_true", dest="include_closed",
+        help="include closed projects in the listing",
+    )
+    projects_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="report what would be recorded; write nothing",
+    )
+
     sessions_parser = sub.add_parser(
         "sessions",
         parents=[shared],
@@ -1499,6 +1563,208 @@ def _today(config: Config) -> date:
     return datetime.now(composer.display_zone(config.timezone)).date()
 
 
+def _lines(values: list[str] | None) -> str | None:
+    """Repeated flags as one TEXT column, one per line. Described, never computed."""
+    return "\n".join(values) if values else None
+
+
+def cmd_projects(config: Config, args: argparse.Namespace) -> int:
+    """Projects, their milestones, and the deadline they share with Classroom.
+
+    Progress is milestone-based and never a self-reported percentage. A
+    percentage is a feeling typed into a box and I would quietly revise it
+    upward; a milestone either happened or it did not, and I cannot round it.
+    There is no percentage column to write.
+    """
+    if args.done is not None:
+        return _complete_milestone(config, args.done)
+    if args.close is not None:
+        return _close_project(config, args.close)
+    if args.show is not None:
+        return _show_project(config, args.show)
+    if args.add:
+        return _add_project(config, args)
+
+    conn = store.open_db(config)
+    try:
+        courses = None
+        if args.subject is not None:
+            try:
+                _, course_id = _subject_course(config, args.subject)
+            except (upload_mod.UploadError, timetable_mod.TimetableError) as err:
+                print(f"error: {err}", file=sys.stderr)
+                return 1
+            courses = [course_id]
+        rows = store.projects(conn, courses, include_closed=args.include_closed)
+    finally:
+        conn.close()
+
+    if not rows:
+        print("No projects recorded.")
+        print('  agent projects --add --subject "Software Design" \\')
+        print('                 --title "Compiler front end" --deadline 2026-12-15 \\')
+        print('                 --milestone "Lexer" --milestone "Parser"')
+        return 0
+
+    zone = composer.display_zone(config.timezone)
+    _print_table(
+        ["id", "deadline", "subject", "title", "milestones", "linked"],
+        [
+            [
+                str(row["id"]),
+                _local_stamp(row["deadline_at"], zone) or "no date",
+                str(row["course_name"] or row["course_id"])[:22],
+                str(row["title"])[:34],
+                # A count, never a percentage. See DESIGN.md section 3.
+                f"{row['milestones_done']} of {row['milestones']}"
+                if row["milestones"] else "none set",
+                str(row["coursework_id"] or ""),
+            ]
+            for row in rows
+        ],
+    )
+    print()
+    print("  agent projects --show <id>     one project and its milestones")
+    print("  agent projects --done <id>     mark a MILESTONE done")
+    return 0
+
+
+def _add_project(config: Config, args: argparse.Namespace) -> int:
+    if args.subject is None or args.title is None:
+        print("--add needs --subject and --title.", file=sys.stderr)
+        return 1
+    try:
+        subject, course_id = _subject_course(config, args.subject)
+        deadline_at = _due_at(config, args.deadline) if args.deadline else None
+    except (upload_mod.UploadError, timetable_mod.TimetableError, ConfigError) as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+
+    zone = composer.display_zone(config.timezone)
+    milestones = args.milestones or []
+    print(f"  subject:  {subject}")
+    print(f"  title:    {args.title}")
+    print(f"  deadline: {_local_stamp(deadline_at, zone) or 'no date'}")
+    for name in args.deliverables or []:
+        print(f"  deliver:  {name}")
+    for name in milestones:
+        print(f"  step:     {name}")
+    if args.team:
+        print(f"  team:     {', '.join(args.team)}")
+    if args.coursework:
+        print(f"  linked:   coursework {args.coursework} -- one deadline, not two")
+    if not deadline_at:
+        print()
+        print("  no --deadline, so the scanner will never alert on this.")
+
+    if args.dry_run:
+        print()
+        print("  dry run -- nothing written")
+        return 0
+
+    conn = store.open_db(config)
+    try:
+        project_id = store.add_project(
+            conn, course_id=course_id, title=args.title, deadline_at=deadline_at,
+            deliverables=_lines(args.deliverables), team=_lines(args.team),
+            brief_source=args.brief, coursework_id=args.coursework,
+        )
+        if project_id is not None:
+            for name in milestones:
+                store.add_milestone(conn, project_id, name)
+        conn.commit()
+    finally:
+        conn.close()
+
+    print()
+    if project_id is None:
+        print(f"  {subject} already has a project called {args.title!r}. "
+              f"Nothing written.")
+        return 0
+    print(f"  recorded as project {project_id} with {len(milestones)} milestone(s).")
+    return 0
+
+
+def _show_project(config: Config, project_id: int) -> int:
+    conn = store.open_db(config)
+    try:
+        row = store.get_project(conn, project_id)
+        steps = store.project_milestones(conn, project_id) if row else []
+    finally:
+        conn.close()
+    if row is None:
+        print(f"no project with id {project_id}.", file=sys.stderr)
+        return 1
+
+    zone = composer.display_zone(config.timezone)
+    print(f"  {row['title']}  ({row['course_name'] or row['course_id']})")
+    print(f"  deadline: {_local_stamp(row['deadline_at'], zone) or 'no date'}")
+    if row["brief_source"]:
+        print(f"  brief:    {row['brief_source']}")
+    if row["team"]:
+        print(f"  team:     {', '.join(str(row['team']).splitlines())}")
+    if row["coursework_id"]:
+        print(f"  linked:   coursework {row['coursework_id']}")
+    if row["closed_at"]:
+        print(f"  closed:   {row['closed_at']}")
+
+    if row["deliverables"]:
+        print()
+        print("  deliverables")
+        for line in str(row["deliverables"]).splitlines():
+            print(f"    - {line}")
+
+    print()
+    if not steps:
+        print("  no milestones set. Progress is counted from them and from")
+        print("  nothing else, so a project with none has none to report.")
+        return 0
+    done = sum(1 for step in steps if step["done_at"])
+    print(f"  milestones -- {done} of {len(steps)}")
+    for step in steps:
+        mark = "x" if step["done_at"] else " "
+        when = f"  {str(step['done_at'])[:10]}" if step["done_at"] else ""
+        print(f"    [{mark}] {step['id']:>4}  {step['title']}{when}")
+    return 0
+
+
+def _complete_milestone(config: Config, milestone_id: int) -> int:
+    conn = store.open_db(config)
+    try:
+        row = store.get_milestone(conn, milestone_id)
+        if row is None:
+            print(f"no milestone with id {milestone_id}. "
+                  f"`agent projects --show <id>` lists them.", file=sys.stderr)
+            return 1
+        if row["done_at"]:
+            print(f"  milestone {milestone_id} was already done ({row['done_at']}).")
+            return 0
+        store.complete_milestone(conn, milestone_id)
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"  done: {row['title']}  ({row['project_title']})")
+    return 0
+
+
+def _close_project(config: Config, project_id: int) -> int:
+    conn = store.open_db(config)
+    try:
+        row = store.get_project(conn, project_id)
+        if row is None:
+            print(f"no project with id {project_id}.", file=sys.stderr)
+            return 1
+        if row["closed_at"]:
+            print(f"  project {project_id} was already closed ({row['closed_at']}).")
+            return 0
+        store.close_project(conn, project_id)
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"  closed: {row['title']}. It is no longer chased for a deadline.")
+    return 0
+
+
 def cmd_sessions(config: Config, args: argparse.Namespace) -> int:
     """Log that a session happened, or show what has been logged.
 
@@ -2648,6 +2914,7 @@ COMMANDS = {
     "missing": cmd_missing,
     "studyitems": cmd_studyitems,
     "upload": cmd_upload,
+    "projects": cmd_projects,
     "sessions": cmd_sessions,
     "tasks": cmd_tasks,
     "subjects": cmd_subjects,

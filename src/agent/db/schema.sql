@@ -764,3 +764,63 @@ CREATE TABLE IF NOT EXISTS manual_tasks (
 
 CREATE INDEX IF NOT EXISTS ix_manual_tasks_due ON manual_tasks (due_at)
     WHERE due_at IS NOT NULL AND done_at IS NULL;
+
+
+-- ---------------------------------------------------------------- projects
+
+-- HIDE is project-based and the briefs are verbal, so a project reaches
+-- Classroom late or never. Three project deadlines landed on one day last year
+-- with none of them ready, and nothing here could have warned me, because
+-- nothing here knew they existed.
+--
+-- `coursework_id` is the optional link to a Classroom assignment for the
+-- projects that DO get posted. It exists so that such a project has ONE
+-- deadline and not two: see sync/deadlines.py, where a linked project stops
+-- contributing a candidate of its own and instead names the coursework's.
+-- Deliberately not a foreign key -- the assignment is often posted weeks after
+-- the brief, and refusing to record the link until the sync catches up would
+-- be the tail wagging the dog.
+--
+-- `deliverables` and `team` are TEXT, one entry per line. They are described
+-- and never computed on, so a table each would be structure for its own sake.
+--
+-- There is NO progress column, and that is the design rather than an omission.
+-- A percentage is a feeling typed into a box and I would quietly revise it
+-- upward; DESIGN.md's closing constraint is that nothing may make honesty cost
+-- me anything. A milestone either happened or it did not, and I cannot round
+-- it. Progress is therefore COUNTED from project_milestones and stored nowhere.
+CREATE TABLE IF NOT EXISTS projects (
+    id            INTEGER PRIMARY KEY,
+    course_id     TEXT NOT NULL REFERENCES courses (id) ON DELETE CASCADE,
+    title         TEXT NOT NULL,
+    deliverables  TEXT,
+    team          TEXT,
+    brief_source  TEXT,        -- "verbal, 15 Sep lecture"; "emailed PDF"
+    deadline_at   TEXT,
+    coursework_id TEXT,        -- the same work as a Classroom assignment, if posted
+    created_at    TEXT NOT NULL,
+    closed_at     TEXT,
+    UNIQUE (course_id, title)
+);
+
+CREATE INDEX IF NOT EXISTS ix_projects_deadline ON projects (deadline_at)
+    WHERE deadline_at IS NOT NULL AND closed_at IS NULL;
+
+
+-- ------------------------------------------------------- project_milestones
+
+-- `position` orders them and is what a milestone is addressed by; `done_at`
+-- is when it happened. "When" is strictly more information than "whether", and
+-- it costs the same column.
+CREATE TABLE IF NOT EXISTS project_milestones (
+    id         INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+    title      TEXT NOT NULL,
+    position   INTEGER NOT NULL,
+    done_at    TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (project_id, position)
+);
+
+CREATE INDEX IF NOT EXISTS ix_project_milestones_project
+    ON project_milestones (project_id, position);
