@@ -132,6 +132,9 @@ SPECS: tuple[Spec, ...] = (
     Spec("manual_tasks", "1", ("id",)),
     Spec("projects", "1", ("id",)),
     Spec("project_milestones", "1", ("id",)),
+    # No course anchor is needed: `course_id` here is a note with no foreign
+    # key, so a row restores whether or not the course it mentions exists.
+    Spec("timetable_adjustments", "1", ("id",)),
 )
 
 

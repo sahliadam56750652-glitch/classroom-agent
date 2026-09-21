@@ -2124,3 +2124,134 @@ def close_project(
         (now or _utc_now_iso(), project_id),
     )
     return cursor.rowcount > 0
+
+
+# ------------------------------------------------- timetable adjustments
+
+# Mirrored from the CHECK constraint in schema.sql so a bad kind is refused
+# by name rather than as an IntegrityError indistinguishable from a clash.
+ADJUSTMENT_KINDS = frozenset({"moved", "cancelled", "extra"})
+
+def add_adjustment(
+    conn: sqlite3.Connection,
+    *,
+    applies_on: str,
+    kind: str,
+    subject: str,
+    session_start: str,
+    course_id: str | None = None,
+    to_date: str | None = None,
+    to_start: str | None = None,
+    to_end: str | None = None,
+    to_kind: str | None = None,
+    to_room: str | None = None,
+    to_teacher: str | None = None,
+    reason: str | None = None,
+    now: str | None = None,
+) -> int | None:
+    """Record one dated change to the pattern. None when one already exists.
+
+    None rather than an exception because the caller has to say which existing
+    row it clashed with, and it needs to read that row to do so. Two
+    adjustments touching one session on one date is refused rather than
+    resolved -- which of them wins is not a question anything here can answer.
+
+    A bad `kind` raises instead. Both would otherwise come back as None through
+    the same IntegrityError, and "one already exists" and "that is not a kind"
+    are different facts -- a summary that cannot tell two states apart is a
+    defect in itself.
+    """
+    if kind not in ADJUSTMENT_KINDS:
+        raise ValueError(
+            f"{kind!r} is not an adjustment kind; expected one of "
+            f"{', '.join(sorted(ADJUSTMENT_KINDS))}"
+        )
+    try:
+        cursor = conn.execute(
+            "INSERT INTO timetable_adjustments (applies_on, kind, subject, "
+            "course_id, session_start, to_date, to_start, to_end, to_kind, "
+            "to_room, to_teacher, reason, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (applies_on, kind, subject, course_id, session_start, to_date,
+             to_start, to_end, to_kind, to_room, to_teacher, reason,
+             now or _utc_now_iso()),
+        )
+    except sqlite3.IntegrityError:
+        return None
+    return int(cursor.lastrowid)
+
+
+def get_adjustment(conn: sqlite3.Connection, adjustment_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM timetable_adjustments WHERE id = ?", (adjustment_id,)
+    ).fetchone()
+
+
+def find_adjustment(
+    conn: sqlite3.Connection, *, applies_on: str, subject: str, session_start: str
+) -> sqlite3.Row | None:
+    """The row occupying this (date, subject, start), if one already does."""
+    return conn.execute(
+        "SELECT * FROM timetable_adjustments "
+        " WHERE applies_on = ? AND subject = ? AND session_start = ?",
+        (applies_on, subject, session_start),
+    ).fetchone()
+
+
+def adjustments_for(conn: sqlite3.Connection, day: str) -> list[sqlite3.Row]:
+    """Every adjustment that changes what happens on one date.
+
+    Two different questions, one answer. `applies_on = day` is what was changed
+    about that day's pattern. `to_date = day` is what was moved ONTO it from
+    somewhere else -- and a session moved in from another week is exactly the
+    case a single-column query would miss.
+    """
+    return conn.execute(
+        "SELECT * FROM timetable_adjustments "
+        " WHERE applies_on = ? OR (to_date = ? AND kind = 'moved') "
+        " ORDER BY COALESCE(to_start, session_start), id",
+        (day, day),
+    ).fetchall()
+
+
+def list_adjustments(
+    conn: sqlite3.Connection, *, since: str | None = None, limit: int = 100
+) -> list[sqlite3.Row]:
+    sql = ["SELECT * FROM timetable_adjustments WHERE 1"]
+    params: list[Any] = []
+    if since is not None:
+        # Either end of a move can be the future one, so both are compared.
+        sql.append("   AND (applies_on >= ? OR COALESCE(to_date, applies_on) >= ?)")
+        params += [since, since]
+    sql.append(" ORDER BY applies_on, COALESCE(to_start, session_start), id LIMIT ?")
+    params.append(limit)
+    return conn.execute("\n".join(sql), params).fetchall()
+
+
+def delete_adjustment(conn: sqlite3.Connection, adjustment_id: int) -> bool:
+    """Remove one. The pattern reasserts itself -- nothing in the file moved."""
+    cursor = conn.execute(
+        "DELETE FROM timetable_adjustments WHERE id = ?", (adjustment_id,)
+    )
+    return cursor.rowcount > 0
+
+
+def repoint_adjustment(
+    conn: sqlite3.Connection,
+    adjustment_id: int,
+    *,
+    subject: str,
+    course_id: str | None = None,
+) -> bool:
+    """Point an orphaned adjustment at what its subject is called now.
+
+    The one way a stored adjustment follows a timetable.yaml rename, and it is
+    deliberately a command I type rather than something inferred: re-binding by
+    course id would be a second matching path, and a wrong match adjusts the
+    wrong session and looks exactly like it working.
+    """
+    cursor = conn.execute(
+        "UPDATE timetable_adjustments SET subject = ?, course_id = ? WHERE id = ?",
+        (subject, course_id, adjustment_id),
+    )
+    return cursor.rowcount > 0

@@ -824,3 +824,67 @@ CREATE TABLE IF NOT EXISTS project_milestones (
 
 CREATE INDEX IF NOT EXISTS ix_project_milestones_project
     ON project_milestones (project_id, position);
+
+
+-- ------------------------------------------------- timetable_adjustments
+
+-- Dated one-off changes to the weekly pattern: a professor moved Tuesday's
+-- lecture, cancelled Thursday's lab, or added a catch-up session.
+--
+-- **timetable.yaml stays the source of truth for the PATTERN.** Phase 3a
+-- removed the old `timetable` table in favour of the file deliberately, and
+-- writing sessions back into the database would undo that by giving one source
+-- of truth two writers. So nothing here is a session in its own right: every
+-- row NAMES a session in the file and says what happened to it on one date.
+-- The file is read and never written. `exceptions:` cancels whole days and is
+-- static configuration; this is per-session and entered while the semester is
+-- running.
+--
+-- How a row names its session: `applies_on` (a date), `subject`, and
+-- `session_start` -- which is how the printed timetable identifies a session to
+-- a person, and survives the sessions being reordered in the file. It does NOT
+-- survive the subject being renamed, and that is deliberate rather than
+-- unsolved: matching a subject approximately is exactly what PLAN.md forbids,
+-- because a wrong match adjusts the wrong session and looks like it worked. A
+-- row whose subject no longer exists in the file becomes an ORPHAN -- reported
+-- by `agent adjust` and `agent timetable --check`, never applied, never
+-- silently dropped, and fixable with `agent adjust --repoint`.
+--
+-- `course_id` is a note, not a link, and has no foreign key on purpose: the
+-- subject may be mapped to null, or to a Classroom course the sync has not
+-- fetched yet. It is recorded so that a rename can be REPORTED usefully --
+-- "the course this pointed at is now called X" -- and never used for matching.
+--
+-- `session_start` for an 'extra' is the start of the new session, since that is
+-- what identifies it on that date. The UNIQUE key is therefore one rule for all
+-- three kinds: two adjustments may not touch the same session on the same date.
+-- Which of them would win is not a question this file can answer, so it is
+-- refused rather than guessed.
+--
+-- These rows are entered by hand and CANNOT BE REBUILT BY RE-SYNCING. They are
+-- in `agent backup`, and no sync reconciliation can reach them -- the table is
+-- not in store.RESOURCE_TABLES, so soft_delete_missing refuses it by name.
+CREATE TABLE IF NOT EXISTS timetable_adjustments (
+    id            INTEGER PRIMARY KEY,
+    applies_on    TEXT NOT NULL,       -- the date in the pattern this is about
+    kind          TEXT NOT NULL
+        CHECK (kind IN ('moved', 'cancelled', 'extra')),
+    subject       TEXT NOT NULL,       -- as timetable.yaml spells it
+    course_id     TEXT,                -- a note for reporting a rename
+    session_start TEXT NOT NULL,       -- 'HH:MM', which session on that date
+    to_date       TEXT,                -- where it goes: moved and extra
+    to_start      TEXT,
+    to_end        TEXT,
+    to_kind       TEXT,
+    to_room       TEXT,
+    to_teacher    TEXT,                -- 'extra' only: a move keeps its teacher
+    reason        TEXT,
+    created_at    TEXT NOT NULL,
+    UNIQUE (applies_on, subject, session_start)
+);
+
+CREATE INDEX IF NOT EXISTS ix_adjustments_applies ON timetable_adjustments (applies_on);
+-- A session moved onto a date has to be findable FROM that date, which is a
+-- different question from "what was adjusted on it".
+CREATE INDEX IF NOT EXISTS ix_adjustments_to_date ON timetable_adjustments (to_date)
+    WHERE to_date IS NOT NULL;
