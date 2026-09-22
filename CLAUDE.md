@@ -60,7 +60,7 @@ bug even if the tests pass.
 
 ```
 src/agent/
-  config.py  auth.py  cli.py  scope.py  manual.py
+  config.py  auth.py  cli.py  scope.py  manual.py  backup.py
   classroom/   client.py  models.py
   db/          schema.sql  store.py
   sync/        poller.py  differ.py  deadlines.py
@@ -69,7 +69,7 @@ src/agent/
   notify/      telegram.py  dispatch.py
   digest/      composer.py
   gate/        timetable.py  scheduler.py  messages.py  bot.py  quiz.py
-               sections.py
+               sections.py  adjustments.py
 tests/
 deploy/        README.md  fingerprint.py  systemd/
 data/          academic.db  token.json  library/  logs/
@@ -88,6 +88,13 @@ configuration with joint sessions and per-session teachers, none of which the
 old `timetable` table could express, and mirroring it into SQLite would add a
 second source of truth to keep in step. See `gate/timetable.py` and the note
 where the table used to be in `db/schema.sql`.
+
+**The file holds the weekly PATTERN; one-off changes are data.** A professor
+moving Tuesday's lecture is not a change to the pattern, it is one dated fact
+about one Tuesday -- so `timetable_adjustments` holds it and
+`gate/adjustments.py` resolves the two together. The file is read and never
+written by any command, which is what keeps it single-writer. See the settled
+decision in `PLAN.md`.
 
 ## Conventions
 
@@ -140,6 +147,13 @@ where the table used to be in `db/schema.sql`.
   `soft_delete_missing` never stamps one, and `drive_references` never offers
   one to Drive. That last pair matter because an upload may be FOR a tracked
   subject, which puts a manual row inside a course the sync does reconcile.
+
+- **An adjustment names a session as (date, subject, start time)** -- how the
+  printed timetable identifies one to a person. It survives the file's sessions
+  being reordered and deliberately does NOT survive the subject being renamed:
+  matching approximately is what adjusts the wrong session while looking like
+  it worked. A row that matches nothing is an ORPHAN, never applied, never
+  dropped, always printed, and moved only by `agent adjust --repoint`.
 
 - **`tracked` and `in scope` are two different lists.** Tracked is the poller's
   allowlist -- which Classroom courses to fetch, curated by hand in

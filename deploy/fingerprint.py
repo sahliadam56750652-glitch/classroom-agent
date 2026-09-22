@@ -47,6 +47,7 @@ IRREPLACEABLE = (
     ("manual_tasks", "SELECT count(*) FROM manual_tasks"),
     ("projects", "SELECT count(*) FROM projects"),
     ("project_milestones", "SELECT count(*) FROM project_milestones"),
+    ("timetable_adjustments", "SELECT count(*) FROM timetable_adjustments"),
 )
 
 

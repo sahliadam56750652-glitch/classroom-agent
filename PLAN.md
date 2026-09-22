@@ -326,11 +326,14 @@ stable weekly pattern.** Phase 3a removed the `timetable` table in favour of the
 file deliberately (settled decision below), and an app that wrote sessions back
 into the database would undo that by giving one source of truth two writers.
 
-Proposed shape, to be confirmed at 5c when the app is actually built:
+**Built, backend and CLI.** The shape below is no longer a proposal --
+`timetable_adjustments`, `gate/adjustments.py` and `agent adjust` exist, and
+the gate resolves against them. The web app at 5c is a second caller of the
+same functions, not a second implementation.
 
-- A separate **adjustments** layer in the database, written by the app, holding
-  dated one-off changes: a session moved to a different time or day, a session
-  cancelled, an extra session added.
+- A separate **adjustments** layer in the database, holding dated one-off
+  changes: a session moved to a different time or day, a session cancelled, an
+  extra session added.
 - The gate resolves the weekly pattern from the file, then applies any
   adjustment for that specific date. The file is read and never written.
 - An adjustment names the session it modifies and the date it applies to, and
@@ -689,6 +692,42 @@ than behind it.
   a subject name through `timetable.yaml` exactly and refuses anything it cannot
   match, for the same reason the gate's subject mapping is never fuzzy.
 
+- **Timetable adjustments are a dated layer in the database; the file holds
+  the pattern and is never written.** Built as backend and CLI, ahead of the
+  5c app, because the gate needed it the moment a real semester started.
+
+  **How a row names its session: (date, subject, start time).** That is how the
+  printed timetable identifies a session to a person, and it survives the
+  sessions being reordered in the file. It deliberately does NOT survive the
+  subject being renamed. Re-binding by course id was considered and rejected:
+  it is a second matching path, and a wrong match adjusts the wrong session and
+  looks exactly like it working -- the same reason subject names are never
+  matched approximately. A row that matches nothing becomes an ORPHAN, is never
+  applied, never silently dropped, printed on every timetable view, and moved
+  only by `agent adjust --repoint`, which is a command I type.
+
+  **An adjustment beats `exceptions:` and beats a date no version covers.** A
+  makeup class during a reading week is a real thing, and the adjustment is
+  both more specific and more recent than the blanket rule. This forced
+  `plan_for` to resolve before deciding to be silent -- it used to return
+  silence before it ever looked at the sessions, so a session moved past the
+  end of term would have been dropped with nothing said. A control test asserts
+  an untouched holiday is still silent, so the rule cannot rot into
+  "exceptions do nothing".
+
+  **A move changes which evening gates it**, which falls out of resolving by
+  date rather than by pattern, and `agent adjust` says which evening that now
+  is when it records one.
+
+  **Cancelling a JOINT session cancels the session.** It is one session, one
+  room, one time, two subjects; the adjustment names one of them to identify
+  it, either name finds it, and the command says both are affected before it
+  does it.
+
+  **Two adjustments on one session on one date are refused, not merged.** Which
+  of them wins is not a question anything here can answer, and guessing
+  silently discards one.
+
 - **`agent run` has a `studyitems` stage, after `ocr` and before `packs`.**
   Raised as an open question by Phase 6.4 and settled straight after it.
 
@@ -930,6 +969,32 @@ is running — the tracked list is curated by hand and always will be.
   restriction is enforced in code. Adding `drive.file` would be the opposite —
   a write scope requested because the project means to write. That is a
   decision to take on the record, not a line to add quietly to `auth.SCOPES`.
+
+- **Four things the adjustments layer deliberately does not do.** None is
+  settled by anything above, so each is recorded rather than guessed at. All
+  four are additive -- a new column or a new kind -- and none of them changes
+  the shape that exists.
+
+  **A recurring adjustment.** "This lecture is at 16:00 for the rest of the
+  month" is four rows today. Recommendation: leave it. A professor who moves a
+  session permanently has changed the pattern, and the pattern is a file I can
+  edit; a run of four rows is the honest record of four separate Tuesdays.
+  Revisit if a real semester produces a run long enough to be annoying.
+
+  **An extra JOINT session.** `--extra` builds a single-subject session, so two
+  teachers agreeing to share a slot the file does not contain cannot be
+  recorded as one thing. Recommendation: leave it until it happens. It has not.
+
+  **Moving a session to a different SUBJECT's slot**, i.e. a swap. Recorded
+  today as two adjustments, which is accurate but does not say they are one
+  event. Recommendation: leave it; the pair reads correctly in the day view.
+
+  **A report on how often each session moves.** The data is now there and the
+  Phase 5 note above says it is worth having -- *"how often each session
+  actually moves is a fact about the semester worth having"* -- but nothing
+  reads it that way yet. `agent adjust --all` is a list, not a count.
+  Recommendation: a Phase 4 concern, alongside the coverage figure, since both
+  are reporting over history rather than acting on it.
 
 - **Whether NotebookLM stays the study surface.** Still open, but narrower:
   packs are built and land wherever `packs_dir` points, so nothing in the code
