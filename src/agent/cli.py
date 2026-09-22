@@ -17,6 +17,7 @@ from .config import Config, ConfigError, load_config
 from .db import store
 from .digest import composer
 from .files import drive, extract, ocr, packs, upload as upload_mod
+from .gate import adjustments as gate_adjust
 from .gate import bot as gate_bot
 from .gate import messages as gate_messages
 from .gate import quiz as gate_quiz
@@ -255,6 +256,76 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="ID",
         default=None,
         help="put skipped study items back in the queue (the only way out of skipped)",
+    )
+
+    adjust_parser = sub.add_parser(
+        "adjust",
+        parents=[shared],
+        help="record that a professor moved, cancelled or added one session",
+    )
+    adjust_parser.add_argument(
+        "--cancel", action="store_true", help="the session did not happen",
+    )
+    adjust_parser.add_argument(
+        "--move", action="store_true", help="the session happened elsewhere or later",
+    )
+    adjust_parser.add_argument(
+        "--extra", action="store_true",
+        help="a session the weekly pattern does not contain at all",
+    )
+    adjust_parser.add_argument(
+        "--subject", default=None, metavar="NAME",
+        help="the timetable subject (exact, never a near-match)",
+    )
+    adjust_parser.add_argument(
+        "--on", default=None, metavar="YYYY-MM-DD",
+        help="the date in the pattern this is about; also filters the listing",
+    )
+    adjust_parser.add_argument(
+        "--at", default=None, metavar="HH:MM",
+        help="which session, when the subject meets more than once that day",
+    )
+    adjust_parser.add_argument(
+        "--to", dest="to_date", default=None, metavar="YYYY-MM-DD",
+        help="--move: the date it moved to",
+    )
+    adjust_parser.add_argument(
+        "--to-time", dest="to_time", default=None, metavar="HH:MM",
+        help="--move: the time it moved to; --extra: when it starts",
+    )
+    adjust_parser.add_argument(
+        "--end", default=None, metavar="HH:MM",
+        help="when it ends (default: keep the session's own length)",
+    )
+    adjust_parser.add_argument(
+        "--kind", default=None, choices=sorted(timetable_mod.KINDS),
+        help="LEC, TUT, LAB or Project",
+    )
+    adjust_parser.add_argument(
+        "--room", default=None, metavar="TEXT", help="where it happened instead",
+    )
+    adjust_parser.add_argument(
+        "--teacher", default=None, metavar="NAME", help="--extra: who takes it",
+    )
+    adjust_parser.add_argument(
+        "--reason", default=None, metavar="TEXT",
+        help="why -- worth having, because how often a session moves is a fact",
+    )
+    adjust_parser.add_argument(
+        "--remove", type=int, default=None, metavar="ID",
+        help="drop an adjustment; the pattern reasserts itself",
+    )
+    adjust_parser.add_argument(
+        "--repoint", type=int, default=None, metavar="ID",
+        help="point an orphaned adjustment at what its subject is called now",
+    )
+    adjust_parser.add_argument(
+        "--all", action="store_true", dest="include_past",
+        help="list adjustments from before today too",
+    )
+    adjust_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="resolve and report; write nothing",
     )
 
     backup_parser = sub.add_parser(
@@ -1633,6 +1704,348 @@ def _lines(values: list[str] | None) -> str | None:
     return "\n".join(values) if values else None
 
 
+def _clock_arg(value: str, flag: str) -> str:
+    """'HH:MM', validated rather than parsed.
+
+    These arrive from argparse rather than from YAML, so the sexagesimal trap
+    that `timetable._clock` exists for cannot fire here -- but a typo still
+    can, and a session stored at a time nobody wrote is exactly as wrong.
+    """
+    text = str(value).strip()
+    hours, _, minutes = text.partition(":")
+    if not (len(text) == 5 and text[2] == ":" and hours.isdigit() and minutes.isdigit()):
+        raise ConfigError(f'{flag} must look like "08:30", got {value!r}.')
+    if not (0 <= int(hours) <= 23 and 0 <= int(minutes) <= 59):
+        raise ConfigError(f"{flag} is not a real time: {value!r}.")
+    return text
+
+
+def _date_arg(value: str, flag: str) -> date:
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError as err:
+        raise ConfigError(
+            f"{flag} must be a date like 2026-09-21, got {value!r}."
+        ) from err
+
+
+def _one_session(table, day: date, subject: str, at: str | None):
+    """Which session on that date, refusing rather than guessing.
+
+    A subject meeting twice on one day is two sessions, and adjusting the wrong
+    one is a failure that looks exactly like success -- the same reason subject
+    names are never matched approximately.
+    """
+    found = gate_adjust.sessions_for_subject(table, day, subject)
+    if at is not None:
+        exact = [session for session in found if session.start == at]
+        if not exact:
+            times = ", ".join(session.start for session in found) or "none"
+            raise ConfigError(
+                f"{table.path.name} has no {subject} session at {at} on "
+                f"{day:%a %d %b %Y}. That day has: {times}"
+            )
+        return exact[0]
+    if not found:
+        raise ConfigError(
+            f"{table.path.name} has no {subject} session on {day:%a %d %b %Y}.\n"
+            f"  For a session the pattern does not contain, use --extra."
+        )
+    if len(found) > 1:
+        times = ", ".join(session.start for session in found)
+        raise ConfigError(
+            f"{subject} meets {len(found)} times on {day:%a %d %b %Y} ({times}). "
+            f"Say which with --at."
+        )
+    return found[0]
+
+
+def cmd_adjust(config: Config, args: argparse.Namespace) -> int:
+    """Record what a professor did to one session on one date.
+
+    timetable.yaml is never written. It holds the weekly PATTERN and keeps one
+    writer; this records the dated facts that the pattern cannot express, and
+    the gate resolves the two together.
+    """
+    try:
+        table = timetable_mod.load(config.timetable_path)
+    except timetable_mod.TimetableError as err:
+        print(err, file=sys.stderr)
+        return 1
+
+    if args.remove is not None:
+        return _remove_adjustment(config, args.remove)
+    if args.repoint is not None:
+        return _repoint_adjustment(config, table, args)
+
+    # The flag as I type it, and the kind as the table stores it. Spelled out
+    # rather than derived: `--move` is stored as 'moved', and deriving one from
+    # the other by string surgery is how that became a crash once already.
+    kinds = {"--cancel": "cancelled", "--move": "moved", "--extra": "extra"}
+    chosen = [name for name, on in
+              (("--cancel", args.cancel), ("--move", args.move), ("--extra", args.extra))
+              if on]
+    if len(chosen) > 1:
+        print(f"{' and '.join(chosen)} are three different things; pick one.",
+              file=sys.stderr)
+        return 1
+    if not chosen:
+        return _list_adjustments(config, table, args)
+
+    try:
+        return _record_adjustment(config, table, args, kind=kinds[chosen[0]])
+    except ConfigError as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+
+
+def _record_adjustment(config: Config, table, args, *, kind: str) -> int:
+    if args.subject is None or args.on is None:
+        raise ConfigError(f"--{kind} needs --subject and --on.")
+    day = _date_arg(args.on, "--on")
+
+    matches = [name for name in table.subjects
+               if name.casefold() == args.subject.casefold()]
+    if not matches:
+        known = ", ".join(sorted(table.subjects)) or "(none)"
+        raise ConfigError(
+            f"{args.subject!r} is not a subject in {table.path.name}, and names "
+            f"are never matched approximately -- a wrong match adjusts the wrong "
+            f"session and looks exactly like this working.\n"
+            f"  Known subjects: {known}"
+        )
+    subject = matches[0]
+
+    at = _clock_arg(args.at, "--at") if args.at else None
+    to_time = _clock_arg(args.to_time, "--to-time") if args.to_time else None
+    end = _clock_arg(args.end, "--end") if args.end else None
+
+    fields: dict[str, Any] = {
+        "applies_on": day.isoformat(),
+        "kind": kind,
+        "subject": subject,
+        "course_id": table.subjects[subject],
+        "reason": args.reason,
+    }
+    lines: list[str] = []
+
+    if kind == "extra":
+        if to_time is None and at is None:
+            raise ConfigError("--extra needs --to-time (when it starts).")
+        start = to_time or at
+        fields.update(
+            session_start=start, to_date=day.isoformat(), to_start=start,
+            to_end=end, to_kind=args.kind or "LEC", to_room=args.room,
+            to_teacher=args.teacher,
+        )
+        lines.append(f"  extra:    {subject} on {day:%a %d %b %Y} at {start}")
+    else:
+        session = _one_session(table, day, subject, at)
+        fields["session_start"] = session.start
+        if session.joint:
+            # Said out loud. "I cancelled Database" reading as "and OS with it"
+            # is worth a sentence, and it is one session either way.
+            other = " + ".join(session.subjects)
+            lines.append(f"  joint:    this session is {other} -- both are affected")
+
+        if kind == "cancelled":
+            lines.append(
+                f"  cancel:   {subject} {session.start} {session.kind} "
+                f"on {day:%a %d %b %Y}"
+            )
+        else:
+            if to_time is None and args.to_date is None:
+                raise ConfigError(
+                    "--move needs --to (a new date) or --to-time (a new time)."
+                )
+            landing = _date_arg(args.to_date, "--to") if args.to_date else day
+            fields.update(
+                to_date=landing.isoformat(), to_start=to_time, to_end=end,
+                to_kind=args.kind, to_room=args.room,
+            )
+            lines.append(
+                f"  move:     {subject} {session.start} {session.kind} "
+                f"on {day:%a %d %b %Y}"
+            )
+            lines.append(
+                f"  to:       {landing:%a %d %b %Y} at {to_time or session.start}"
+            )
+            if landing != day:
+                lines.append(
+                    f"  gate:     the prompt for it moves to "
+                    f"{landing - timedelta(days=1):%a %d %b} evening"
+                )
+    if args.room:
+        lines.append(f"  room:     {args.room}")
+    if args.reason:
+        lines.append(f"  reason:   {args.reason}")
+
+    for line in lines:
+        print(line)
+
+    if args.dry_run:
+        print()
+        print("  dry run -- nothing written")
+        return 0
+
+    conn = store.open_db(config)
+    try:
+        adjustment_id = store.add_adjustment(conn, **fields)
+        clash = None
+        if adjustment_id is None:
+            clash = store.find_adjustment(
+                conn, applies_on=fields["applies_on"], subject=subject,
+                session_start=fields["session_start"],
+            )
+        else:
+            conn.commit()
+    finally:
+        conn.close()
+
+    print()
+    if adjustment_id is None:
+        # Refused, not resolved. Which of them wins is not a question anything
+        # here can answer, and guessing would silently discard one of them.
+        print(f"  already adjusted: #{clash['id']} {clash['kind']} this session "
+              f"on that date.")
+        print(f"  Remove it first if this replaces it: agent adjust --remove "
+              f"{clash['id']}")
+        return 1
+    print(f"  recorded as adjustment {adjustment_id}. "
+          f"{table.path.name} is unchanged.")
+    return 0
+
+
+def _adjustment_line(row, table) -> list[str]:
+    kind = str(row["kind"])
+    where = f"{row['applies_on']} {row['session_start']}"
+    if kind == "cancelled":
+        what = "cancelled"
+    elif kind == "extra":
+        what = f"extra, {row['to_start']}-{row['to_end'] or '?'}"
+    else:
+        landing = row["to_date"] or row["applies_on"]
+        what = f"-> {landing} {row['to_start'] or row['session_start']}"
+    return [str(row["id"]), where, str(row["subject"])[:22], what,
+            str(row["reason"] or "")[:28]]
+
+
+def _list_adjustments(config: Config, table, args) -> int:
+    conn = store.open_db(config)
+    try:
+        if args.on:
+            try:
+                day = _date_arg(args.on, "--on")
+            except ConfigError as err:
+                print(f"error: {err}", file=sys.stderr)
+                return 1
+            rows = store.adjustments_for(conn, day.isoformat())
+            resolved = gate_adjust.sessions_on(conn, table, day)
+        else:
+            today = datetime.now(composer.display_zone(config.timezone)).date()
+            since = None if args.include_past else today.isoformat()
+            rows = store.list_adjustments(conn, since=since)
+            resolved = ()
+        stranded = gate_adjust.orphans(conn, table)
+    finally:
+        conn.close()
+
+    if args.on:
+        day = _date_arg(args.on, "--on")
+        print(f"{day:%a %d %b %Y} -- as adjusted")
+        if not resolved:
+            print("  no sessions.")
+        for item in resolved:
+            mark = f"   ({item.note})" if item.note else ""
+            print(f"  {item.session.start}-{item.session.end}  "
+                  f"{item.session.kind:7} {' + '.join(item.session.subjects)}{mark}")
+        print()
+
+    if rows:
+        _print_table(["id", "session", "subject", "what", "reason"],
+                     [_adjustment_line(row, table) for row in rows])
+    else:
+        print("No adjustments recorded." if not args.on else "  nothing adjusted.")
+        if not args.on:
+            example = next(iter(sorted(table.subjects)), "Database")
+            print(f'  agent adjust --cancel --subject "{example}" --on YYYY-MM-DD')
+            print(f'  agent adjust --move --subject "{example}" --on YYYY-MM-DD '
+                  "--to YYYY-MM-DD --to-time 16:00")
+
+    _print_orphans(stranded, table)
+    return 0
+
+
+def _print_orphans(stranded, table) -> None:
+    """Adjustments that name nothing the file still contains.
+
+    Never applied, never silently dropped. The row is still here and the only
+    way it moves is a command I type -- re-binding it automatically would be a
+    second matching path, and a wrong match adjusts the wrong session and looks
+    exactly like it working.
+
+    Printed on every timetable view and not only on demand, because the whole
+    symptom of an orphan is a day that quietly does not change.
+    """
+    if not stranded:
+        return
+    print()
+    print(f"  {len(stranded)} adjustment(s) no longer match "
+          f"{table.path.name} and are NOT applied:")
+    for orphan in stranded:
+        print(f"    #{orphan.adjustment.id}  {orphan.why}")
+        if orphan.renamed_to:
+            print(f"           that course is now called {orphan.renamed_to!r} -- "
+                  f"agent adjust --repoint {orphan.adjustment.id} "
+                  f'--subject "{orphan.renamed_to}"')
+
+
+def _remove_adjustment(config: Config, adjustment_id: int) -> int:
+    conn = store.open_db(config)
+    try:
+        row = store.get_adjustment(conn, adjustment_id)
+        if row is None:
+            print(f"no adjustment with id {adjustment_id}.", file=sys.stderr)
+            return 1
+        store.delete_adjustment(conn, adjustment_id)
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"  removed: {row['kind']} {row['subject']} on {row['applies_on']}")
+    print("  The pattern reasserts itself -- nothing in the file ever moved.")
+    return 0
+
+
+def _repoint_adjustment(config: Config, table, args) -> int:
+    if args.subject is None:
+        print("--repoint needs --subject: what the subject is called now.",
+              file=sys.stderr)
+        return 1
+    matches = [name for name in table.subjects
+               if name.casefold() == args.subject.casefold()]
+    if not matches:
+        known = ", ".join(sorted(table.subjects)) or "(none)"
+        print(f"{args.subject!r} is not a subject in {table.path.name}.\n"
+              f"  Known subjects: {known}", file=sys.stderr)
+        return 1
+    subject = matches[0]
+
+    conn = store.open_db(config)
+    try:
+        row = store.get_adjustment(conn, args.repoint)
+        if row is None:
+            print(f"no adjustment with id {args.repoint}.", file=sys.stderr)
+            return 1
+        store.repoint_adjustment(
+            conn, args.repoint, subject=subject, course_id=table.subjects[subject],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"  repointed {args.repoint}: {row['subject']!r} -> {subject!r}")
+    return 0
+
+
 def cmd_backup(config: Config, args: argparse.Namespace) -> int:
     """Snapshot what cannot be rebuilt, or put one back.
 
@@ -2329,28 +2742,65 @@ def cmd_timetable(config: Config, args: argparse.Namespace) -> int:
         today = datetime.now(composer.display_zone(config.timezone)).date()
         days = [today + timedelta(days=offset) for offset in range(7)]
 
+    conn = store.open_db(config)
+    try:
+        # The pattern AS ADJUSTED, which is the whole point of printing a day:
+        # I am looking at it to find out what is actually happening, and a
+        # cancelled lecture still listed here is the failure this prevents.
+        by_day = {day: gate_adjust.sessions_on(conn, table, day) for day in days}
+        gone_from = {day: gate_adjust.departures(conn, table, day) for day in days}
+        stranded = gate_adjust.orphans(conn, table)
+    finally:
+        conn.close()
+
     for day in days:
         version = table.version_for(day)
         label = f"  [{version.label} · {version.status}]" if version else ""
         print()
         print(f"{day:%a %d %b %Y}{label}")
 
-        if version is None:
-            print("  no timetable version covers this date -- the gate stays silent.")
-            continue
-        excused = table.exception_for(day)
-        if excused is not None:
-            print(f"  no sessions: {excused.reason}")
-            continue
-
-        sessions = table.sessions_on(day)
-        if not sessions:
-            # Sunday, or a weekday this version simply has nothing on.
+        resolved = by_day[day]
+        if not resolved and not gone_from[day]:
+            if version is None:
+                print("  no timetable version covers this date -- the gate stays silent.")
+                continue
+            excused = table.exception_for(day)
+            if excused is not None:
+                print(f"  no sessions: {excused.reason}")
+                continue
+            # Sunday, or a weekday this version simply has nothing on. A
+            # day emptied BY adjustments falls through instead, so that what
+            # was taken off it is still printed.
             print("  no sessions.")
             continue
-        for session in sessions:
+
+        if not resolved:
+            print("  nothing left on this day:")
+
+        for item in resolved:
+            session = item.session
             for line in _session_line(session):
                 print(line)
+            if item.note:
+                # Why this day differs from the printed timetable. Without it
+                # the only way to find out is to remember.
+                print(f"           ({item.note})")
+
+        if gone_from[day] and resolved:
+            # Under their own heading rather than interleaved: the list above
+            # reads down the day as it will actually happen, and a struck-out
+            # line in the middle of it reads as something to turn up for.
+            print("  not happening:")
+        for item in gone_from[day]:
+            # Shown in order to be crossed out. A cancelled lecture that simply
+            # vanishes leaves the day unexplained, and an unexplained day is
+            # indistinguishable from a bug in the resolver.
+            session = item.session
+            print(f"    {session.start}-{session.end}  {session.kind:7} "
+                  f"{' + '.join(session.subjects)}"
+                  f"  -- {gate_adjust.departure_note(item)}")
+
+    _print_orphans(stranded, table)
 
     if notes:
         print()
@@ -3070,6 +3520,7 @@ COMMANDS = {
     "missing": cmd_missing,
     "studyitems": cmd_studyitems,
     "upload": cmd_upload,
+    "adjust": cmd_adjust,
     "backup": cmd_backup,
     "projects": cmd_projects,
     "sessions": cmd_sessions,

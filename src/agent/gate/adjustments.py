@@ -296,6 +296,55 @@ def sessions_on(
     return tuple(sorted(resolved, key=lambda item: (item.session.start, item.session.kind)))
 
 
+def departures(
+    conn: sqlite3.Connection, table: tt.Timetable, day: date
+) -> tuple[Resolved, ...]:
+    """What the pattern puts on this date but no longer happens on it.
+
+    `sessions_on` answers "what is happening", which is what the gate needs.
+    This answers "why is this day shorter than the printed timetable", which is
+    what I need when I am looking at the day and counting. A cancelled lecture
+    that simply vanishes leaves the difference unexplained, and an unexplained
+    difference is indistinguishable from a bug in the resolver.
+
+    The session returned is the PATTERN's, not the relocated one -- it is being
+    shown in order to be crossed out.
+    """
+    changes = {
+        (change.session_start, change.subject): change
+        for change in (
+            from_row(row) for row in store.adjustments_for(conn, day.isoformat())
+        )
+        if change.applies_on == day and change.kind in ("cancelled", "moved")
+    }
+    gone: list[Resolved] = []
+    for session in table.sessions_on(day):
+        change = next(
+            (
+                found
+                for (start, subject), found in changes.items()
+                if start == session.start and subject in session.subjects
+            ),
+            None,
+        )
+        if change is None:
+            continue
+        if change.kind == "cancelled" or change.moves_date:
+            gone.append(Resolved(session=session, adjustment=change))
+    return tuple(sorted(gone, key=lambda item: item.session.start))
+
+
+def departure_note(resolved: Resolved) -> str:
+    """How a session that is no longer here should read. One phrase."""
+    change = resolved.adjustment
+    if change is None:
+        return ""
+    if change.kind == "cancelled":
+        return f"cancelled{f' -- {change.reason}' if change.reason else ''}"
+    landing = change.lands_on
+    return f"moved to {landing:%a %d %b} {change.to_start or resolved.session.start}"
+
+
 def orphans(conn: sqlite3.Connection, table: tt.Timetable) -> list[Orphan]:
     """Stored adjustments that name nothing the file still contains.
 
