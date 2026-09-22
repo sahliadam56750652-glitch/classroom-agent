@@ -728,6 +728,32 @@ than behind it.
   of them wins is not a question anything here can answer, and guessing
   silently discards one.
 
+- **An adjustment is always for ONE date. There are no recurring adjustments.**
+  Considered and rejected while the layer was being built, not deferred.
+
+  "This lecture is at 16:00 for the rest of the month" is four rows today, and
+  it stays four rows. A professor who moves a session permanently has not made
+  four one-off changes -- they have changed the PATTERN, and the pattern has
+  its own mechanism: a new version in `timetable.yaml` with an
+  `effective_from`. That mechanism already exists, is already versioned, and is
+  already the thing the gate reads first.
+
+  The reason for rejecting rather than deferring is the same one that made the
+  timetable a file in the first place: **two ways to express one thing, with no
+  rule for which wins.** A recurring adjustment covering a date range and a new
+  version covering an overlapping range would both claim the same Tuesday, and
+  nothing in this project could say which was meant. Versions already refuse to
+  overlap each other by name (`_check_no_overlap`) precisely because
+  last-one-wins would be a silent answer to a question the file does not
+  settle; a recurring adjustment would reintroduce exactly that ambiguity
+  across two sources instead of within one.
+
+  So the boundary is clean and worth stating as a rule rather than a
+  preference: **if it happens again, it belongs in the file. If it happened
+  once, it belongs in the table.** Four rows for four Tuesdays is the honest
+  record of four separate Tuesdays, and the day it stops being four Tuesdays it
+  stops being an adjustment.
+
 - **`agent run` has a `studyitems` stage, after `ocr` and before `packs`.**
   Raised as an open question by Phase 6.4 and settled straight after it.
 
@@ -970,31 +996,44 @@ is running — the tracked list is curated by hand and always will be.
   a write scope requested because the project means to write. That is a
   decision to take on the record, not a line to add quietly to `auth.SCOPES`.
 
-- **Four things the adjustments layer deliberately does not do.** None is
-  settled by anything above, so each is recorded rather than guessed at. All
-  four are additive -- a new column or a new kind -- and none of them changes
-  the shape that exists.
+- **A report on how often each session actually moves.** *Accepted, deferred
+  to November.* The Phase 5 note above is the argument for it -- *"how often
+  each session actually moves is a fact about the semester worth having"* --
+  and `timetable_adjustments` is the first thing in this project that can
+  answer it. A file edited in place never could, and `timetable.yaml` is
+  gitignored, so `git log` never could either.
 
-  **A recurring adjustment.** "This lecture is at 16:00 for the rest of the
-  month" is four rows today. Recommendation: leave it. A professor who moves a
-  session permanently has changed the pattern, and the pattern is a file I can
-  edit; a run of four rows is the honest record of four separate Tuesdays.
-  Revisit if a real semester produces a run long enough to be annoying.
+  Deferred rather than built because **the data accrues from today whatever I
+  do, and the report does not.** Writing it now means writing it against an
+  empty table and judging by eye whether the output is useful, which is the
+  same mistake as `gate.window_pages`: a number chosen before there was
+  anything to measure. In November there will be a term of real movement in
+  there and the shape of the report will be obvious from the data.
 
-  **An extra JOINT session.** `--extra` builds a single-subject session, so two
-  teachers agreeing to share a slot the file does not contain cannot be
-  recorded as one thing. Recommendation: leave it until it happens. It has not.
+  **Trigger:** roughly November 2026, or the first time I ask "does this
+  session always move?" and find myself counting rows in `agent adjust --all`.
+  Likely home is Phase 4 alongside the coverage figure, since both report over
+  history rather than acting on it.
 
-  **Moving a session to a different SUBJECT's slot**, i.e. a swap. Recorded
-  today as two adjustments, which is accurate but does not say they are one
-  event. Recommendation: leave it; the pair reads correctly in the day view.
+- **An extra JOINT session.** *Deferred until one occurs.* `--extra` builds a
+  single-subject session, so two teachers agreeing to share a slot the file
+  does not contain cannot be recorded as one thing today; it would be two extra
+  sessions at the same time, which reads oddly but loses nothing.
 
-  **A report on how often each session moves.** The data is now there and the
-  Phase 5 note above says it is worth having -- *"how often each session
-  actually moves is a fact about the semester worth having"* -- but nothing
-  reads it that way yet. `agent adjust --all` is a list, not a count.
-  Recommendation: a Phase 4 concern, alongside the coverage figure, since both
-  are reporting over history rather than acting on it.
+  **Trigger:** the first real one. Building for it now means guessing at a
+  shape -- how two teachers, two rooms and two subjects arrive on one command
+  line -- for an event that has never happened in a year of this timetable. The
+  change would be additive when it does: `_build_extra` already produces a
+  `Session`, which is the type that supports two parts.
+
+- **Recording a swap as one event.** *Deferred until one occurs.* Two
+  professors exchanging slots is two adjustments today. That is accurate and
+  the day view reads correctly -- one session leaves each slot and one arrives
+  -- but nothing records that the two rows are one arrangement, so removing one
+  half silently leaves the other standing.
+
+  **Trigger:** the first real swap, or the first time I remove half of one by
+  mistake. Until then the pair costs one extra command and nothing else.
 
 - **Whether NotebookLM stays the study surface.** Still open, but narrower:
   packs are built and land wherever `packs_dir` points, so nothing in the code
