@@ -322,7 +322,7 @@ def cli_config(tmp_path, conn, monkeypatch):
 def args(**kwargs):
     import argparse
 
-    return argparse.Namespace(**{"add": None, **kwargs})
+    return argparse.Namespace(**{"add": None, "standing": False, **kwargs})
 
 
 def test_subjects_lists_each_identity_with_what_to_do_about_it(cli_config, capsys):

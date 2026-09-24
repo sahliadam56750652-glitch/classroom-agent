@@ -16,6 +16,9 @@ actually prevents a route from fetching from Drive or calling a model.
 from __future__ import annotations
 
 import ast
+import json
+import subprocess
+import sys
 import inspect
 import pathlib
 
@@ -150,6 +153,77 @@ def test_the_api_never_imports_a_pipeline_stage(module):
         f"the API imports {module}: {offenders}. It reads what the scheduled "
         f"pipeline wrote and runs no stage of it."
     )
+
+
+# The modules that must not even LOAD in an API process. A narrower list than
+# FORBIDDEN_MODULES above, and a stronger guarantee: these are the ones that talk
+# to the outside world or spend quota, and none of them should be reachable at
+# all, transitively or otherwise.
+#
+# The distinction matters because three pipeline modules DO load transitively, for
+# pure helpers: gate/scheduler.py imports files/packs.py for `packs.label`,
+# gate/sections.py imports files/extract.py for `PAGE_BREAK`, and
+# sync/deadlines.py imports sync/differ.py for the `Event` dataclass. All three
+# are inert at import -- no client, no network, no file I/O -- and `agent gate`
+# loads them too. Banning them would mean moving three helpers for no change in
+# what the API can do.
+#
+# So the rule has two tiers, deliberately: nothing outward-facing may load, and
+# nothing pipeline-shaped may be imported directly or called. The first is this
+# test; the second is the two above.
+MUST_NOT_LOAD = (
+    "agent.llm.provider",
+    "agent.notify.telegram",
+    "agent.notify.dispatch",
+    "agent.files.drive",
+    "agent.files.ocr",
+    "agent.sync.poller",
+    "agent.gate.quiz",
+    "agent.classroom.client",
+)
+
+
+def _modules_loaded_with_the_api() -> set[str]:
+    """`sys.modules` after importing the app, in a clean interpreter.
+
+    A subprocess because this suite has already imported most of the project by
+    the time any test runs, so an in-process check would pass or fail on test
+    ordering rather than on what the API actually pulls in.
+    """
+    code = (
+        "import sys, json; import agent.api.app; "
+        "print(json.dumps(sorted(m for m in sys.modules if m.startswith('agent.'))))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=pathlib.Path(app_mod.__file__).parents[3],
+    )
+    assert result.returncode == 0, result.stderr
+    return set(json.loads(result.stdout))
+
+
+def test_the_api_process_never_loads_anything_outward_facing():
+    """No model client, no Telegram, no Drive, no Classroom, no OCR, no quiz.
+
+    Transitive, which the direct-import guards are not. This is the assertion
+    that "the API makes no model calls and sends nothing" rests on: a module that
+    is never imported cannot be called by a route that forgot the rule.
+    """
+    loaded = _modules_loaded_with_the_api()
+    offenders = sorted(set(MUST_NOT_LOAD) & loaded)
+    assert not offenders, f"the API process loads {offenders}"
+
+
+def test_that_check_is_looking_at_a_real_module_list():
+    """Control: the subprocess must actually have imported the package."""
+    loaded = _modules_loaded_with_the_api()
+    assert "agent.api.app" in loaded
+    assert "agent.db.store" in loaded
+    # And the three inert ones are expected, so the test above is not passing
+    # because nothing at all was loaded.
+    assert "agent.gate.scheduler" in loaded
 
 
 def test_the_forbidden_name_check_can_actually_fail(tmp_path):

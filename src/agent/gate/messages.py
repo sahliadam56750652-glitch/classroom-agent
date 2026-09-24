@@ -38,7 +38,9 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from ..notify.telegram import MESSAGE_LIMIT, escape, link, safe_filename
+from ..filenames import document_filename as _document_filename
+from ..filenames import safe_filename
+from ..notify.telegram import MESSAGE_LIMIT, escape, link
 from .quiz import Attempt, Question, Result
 from .scheduler import MAX_SUBJECT_BUTTONS, GatePlan, Item, Subject
 
@@ -127,17 +129,18 @@ def _subject_line(subject: Subject) -> str:
     never render as one that is missing something.
     """
     name = f"<b>{escape(subject.name)}</b>"
+    state = subject.state
 
-    if not subject.gated:
-        if subject.awaiting_course:
-            return f"{name} — no Classroom course yet, never gated"
+    if state == "awaiting_course":
+        return f"{name} — no Classroom course yet, never gated"
+    if state == "no_material_here":
         return f"{name} — mapped to a course with no material here"
 
-    if not subject.has_items:
-        if subject.manual:
-            # Not "no readable material": nothing is missing, nothing is
-            # broken, and there is a thing to do about it.
-            return f"{name} — nothing entered yet"
+    if state == "nothing_entered":
+        # Not "no readable material": nothing is missing, nothing is broken,
+        # and there is a thing to do about it.
+        return f"{name} — nothing entered yet"
+    if state == "no_readable_material":
         missing = (
             f" — {subject.dead_files} attachment(s) are gone from Drive"
             if subject.dead_files
@@ -145,7 +148,7 @@ def _subject_line(subject: Subject) -> str:
         )
         return f"{name} — no readable material{missing}"
 
-    if not subject.items:
+    if state == "up_to_date":
         return f"{name} — up to date"
 
     counts = f"{len(subject.items)} unreviewed"
@@ -288,21 +291,13 @@ def item_keyboard(run_id: int, item: Item) -> dict[str, Any]:
     return {"inline_keyboard": rows}
 
 
-def document_filename(title: str, path) -> str:
-    """What a lecture should be called once it is on my phone.
-
-    The Drive title, with the extension of the bytes actually being sent. Those
-    two can disagree: a Google-native document has no extension in Drive and is
-    exported to PDF locally, so "Chapter 1" has to become "Chapter 1.pdf" or
-    the phone will not know what to open it with. Where the title already
-    carries a different extension the real one is appended rather than
-    substituted -- the file opens, and what it was called is still visible.
-    """
-    actual = Path(path).suffix
-    name = safe_filename(title, fallback=Path(path).stem or "attachment")
-    if actual and not name.lower().endswith(actual.lower()):
-        name = f"{name}{actual}"
-    return safe_filename(name, fallback=Path(path).name)
+# Re-exported, not defined. It moved to agent/filenames.py so the HTTP API can
+# name a document the same way without importing this module -- which pulls in
+# gate/quiz.py, and through it llm/provider.py and files/packs.py, none of which
+# may be reachable from a process that must not call a model. CLAUDE.md's rule
+# that a document is delivered under its Drive title is only true while ONE
+# function decides it; this keeps the name importable from where it always was.
+document_filename = _document_filename
 
 
 def document_caption(title: str, pages: int | None) -> str:

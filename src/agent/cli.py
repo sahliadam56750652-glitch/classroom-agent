@@ -534,6 +534,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "will, and print the timetable.yaml line to paste"
         ),
     )
+    subjects_parser.add_argument(
+        "--standing",
+        action="store_true",
+        help=(
+            "how far behind each subject is, in the four states that keep it "
+            "honest -- the same figures the web client's coverage screen serves"
+        ),
+    )
 
     timetable_parser = sub.add_parser(
         "timetable",
@@ -2542,6 +2550,9 @@ def cmd_subjects(config: Config, args: argparse.Namespace) -> int:
     if args.add is not None:
         return _add_manual_subject(config, table, args.add)
 
+    if args.standing:
+        return _print_standing(config, table)
+
     tracked = set(config.tracked_courses)
     local = scope_mod.local(config, table)
     conn = store.open_db(config)
@@ -2570,6 +2581,55 @@ def cmd_subjects(config: Config, args: argparse.Namespace) -> int:
         print(f"  {len(awaiting)} subject(s) await a Classroom course id.")
         print("  Join the course, run `agent courses`, and paste the id in --")
         print('  or, if there will never be one: agent subjects --add "<name>"')
+    return 0
+
+
+def _print_standing(config: Config, table) -> int:
+    """Where every subject stands, from `scheduler.standing`.
+
+    The same function the API serves, printed. That is the point of it being
+    here: "the API returns what a command already computes" is only true if a
+    command computes it, and a figure I cannot get at a terminal is one I cannot
+    check the web client against.
+
+    Counts and states, never a percentage. DESIGN.md forbids a percentage of a
+    deficit, and a subject with no readable material must not read as 0 or 100.
+    """
+    conn = store.open_db(config)
+    try:
+        subjects = gate_scheduler.standing(
+            conn, scope_mod.local(config, table), table
+        )
+    finally:
+        conn.close()
+
+    rows = []
+    for subject in subjects:
+        item = subject.next_item
+        rows.append([
+            subject.name,
+            subject.state.replace("_", " "),
+            str(len(subject.items)) if subject.state == "behind" else "-",
+            str(subject.ready_count) if subject.state == "behind" else "-",
+            str(subject.unread_pages) if subject.state == "behind" else "-",
+            (item.label[:28] if item else ""),
+        ])
+
+    print(f"timetable: {table.path}")
+    print()
+    _print_table(
+        ["subject", "state", "unreviewed", "ready", "unread pp", "next"], rows
+    )
+    print()
+    behind = [subject for subject in subjects if subject.state == "behind"]
+    if not behind:
+        print("  Nothing unreviewed in any gated subject.")
+        return 0
+    print(f"  {len(behind)} subject(s) with something unreviewed, "
+          f"{sum(len(subject.items) for subject in behind)} item(s) in total.")
+    print("  No percentage is printed here, deliberately: a share of a deficit")
+    print("  is a number I can only feel, and a subject with no readable")
+    print("  material would have to read as 0% or 100% and is neither.")
     return 0
 
 

@@ -105,6 +105,40 @@ class Subject:
     dead_files: int = 0
     has_items: bool = True
 
+    # The six distinguishable standings. DESIGN.md names four -- no Classroom
+    # course, no readable material, up to date, N unreviewed -- and these are
+    # those four with the two that must not be collapsed into them kept apart:
+    # a subject mapped to a course this install holds nothing for is not the
+    # same as one awaiting an id, and a manual subject with nothing entered is
+    # not "no readable material" (nothing is missing and nothing is broken).
+    #
+    # An enum rather than a number, because a number is what DESIGN.md forbids:
+    # Probability & Statistics has 20 dead attachments and no items, and must
+    # never render as 0%, as 100%, or as up to date.
+    STATES = (
+        "awaiting_course",
+        "no_material_here",
+        "nothing_entered",
+        "no_readable_material",
+        "up_to_date",
+        "behind",
+    )
+
+    @property
+    def state(self) -> str:
+        """Which of the six this subject is in. One place, two readers.
+
+        `messages._subject_line` renders it for Telegram and the API returns it
+        to the web client. Expressed once so the two cannot drift -- a subject
+        reading "up to date" on one surface and "no readable material" on the
+        other would be worse than either being wrong.
+        """
+        if not self.gated:
+            return "awaiting_course" if self.awaiting_course else "no_material_here"
+        if not self.has_items:
+            return "nothing_entered" if self.manual else "no_readable_material"
+        return "up_to_date" if not self.items else "behind"
+
     @property
     def gated(self) -> bool:
         return self.course_id is not None
@@ -305,6 +339,59 @@ def item_by_id(conn, item_id: int) -> Item | None:
     """
     row = store.backlog_item(conn, item_id)
     return _item(row) if row is not None else None
+
+
+def standing(
+    conn,
+    local_courses: Collection[str],
+    table: tt.Timetable,
+) -> tuple[Subject, ...]:
+    """Every subject this semester names, and where each one stands. No date.
+
+    `plan_for` answers "what does tomorrow need", which means it only ever builds
+    Subjects for the subjects meeting on one day. This answers "how far behind am
+    I, in everything" -- the question DESIGN.md's second screen asks and the one
+    Phase 4's coverage figure will be built on.
+
+    Deliberately the same construction, so the two cannot disagree. A subject
+    reading "up to date" on the coverage screen and "6 unreviewed" in the evening
+    prompt would be worse than either being wrong, and the only way to guarantee
+    it cannot happen is for one function to decide it.
+
+    `sessions` is empty here, because a standing is not about a session. Every
+    other field means exactly what it means in a plan.
+    """
+    wanted = sorted(
+        {course for course in table.subjects.values() if course in local_courses}
+    )
+
+    backlog: dict[str, list[Item]] = {}
+    names: dict[str, str] = {}
+    for row in store.gate_backlog(conn, wanted):
+        backlog.setdefault(str(row["course_id"]), []).append(_item(row))
+        names[str(row["course_id"])] = str(row["course_name"] or row["course_id"])
+    for course in store.list_courses(conn):
+        names.setdefault(str(course["id"]), str(course["name"]))
+
+    item_counts = store.study_item_counts(conn)
+    dead = store.dead_reference_counts(conn)
+
+    found = []
+    for name, mapped in sorted(table.subjects.items()):
+        gated = mapped if mapped in local_courses else None
+        found.append(
+            Subject(
+                name=name,
+                course_id=gated,
+                course_name=names.get(gated or "", gated or "") if gated else "",
+                sessions=(),
+                items=tuple(backlog.get(gated or "", ())),
+                mapped_course=mapped,
+                dead_files=dead.get(gated or "", 0),
+                has_items=bool(item_counts.get(gated or "", 0)) if gated else True,
+            )
+        )
+    return tuple(found)
 
 
 def plan_for(

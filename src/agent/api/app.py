@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from ..config import Config, api_token
 from ..db import store
 from . import auth as api_auth
-from .routes import meta
+from .routes import deadlines, meta, study, subjects, timetable
 
 log = logging.getLogger("agent.api")
 
@@ -35,6 +35,16 @@ WRITE_ROUTES: frozenset[tuple[str, str]] = frozenset(
     {
         ("POST", "/api/session"),
         ("DELETE", "/api/session"),
+        # These four write nothing. They exist to REFUSE with a body that says
+        # why timetable.yaml is never written and what to do instead, because
+        # FastAPI's automatic 405 says "Method Not Allowed", which reads as "not
+        # built yet" and invites someone to build it. Declared here because the
+        # guard's question is "is every non-GET route accounted for", and the
+        # honest answer for these is yes, on purpose.
+        ("PUT", "/api/timetable/file"),
+        ("POST", "/api/timetable/file"),
+        ("PATCH", "/api/timetable/file"),
+        ("DELETE", "/api/timetable/file"),
     }
 )
 
@@ -78,6 +88,10 @@ def create_app(config: Config) -> FastAPI:
     app.state.limiter = api_auth.RateLimiter()
 
     app.include_router(meta.router, prefix="/api", tags=["meta"])
+    app.include_router(study.router, prefix="/api", tags=["study"])
+    app.include_router(subjects.router, prefix="/api", tags=["subjects"])
+    app.include_router(deadlines.router, prefix="/api", tags=["deadlines"])
+    app.include_router(timetable.router, prefix="/api", tags=["timetable"])
     return app
 
 

@@ -1066,6 +1066,41 @@ is running — the tracked list is curated by hand and always will be.
   write scope requested because the project means to write. Invariant 6 keeps
   exactly one exception, and it keeps the one it was always going to have.
 
+- **How strictly "the API imports no pipeline stage" should be read.**
+  *Decided during 5b with a recommendation; overrule it if you disagree.*
+
+  The 5b spec listed modules `agent/api/` may not import as one flat set. Building
+  it showed the set has two tiers, and conflating them would have meant moving
+  pure helpers around for no change in what a route can do.
+
+  **Tier one: must not LOAD at all**, transitively or otherwise --
+  `llm/provider.py`, `notify/telegram.py`, `notify/dispatch.py`, `files/drive.py`,
+  `files/ocr.py`, `sync/poller.py`, `gate/quiz.py`, `classroom/client.py`.
+  Everything that talks to the outside world or spends quota. A subprocess test
+  imports the app in a clean interpreter and asserts none of them is in
+  `sys.modules`, which is a far stronger guarantee than a grep: a module never
+  imported cannot be called by a route that forgot the rule.
+
+  **Tier two: loaded, for a pure helper, and never called.** Three arrive
+  transitively and are inert at import -- `gate/scheduler.py` imports
+  `files/packs.py` for `packs.label`, `gate/sections.py` imports
+  `files/extract.py` for `PAGE_BREAK`, and `sync/deadlines.py` imports
+  `sync/differ.py` for the `Event` dataclass. `agent gate` loads all three too.
+  The guard against *using* them is the AST identifier scan plus the route
+  whitelist.
+
+  Two functions moved to make tier one true rather than approximately true:
+  `display_zone` from `digest/composer.py` and `document_filename` /
+  `safe_filename` into the new `agent/filenames.py`, both re-exported from where
+  they were. Reaching `document_filename` through `gate/messages.py` would have
+  pulled `gate/quiz.py`, and through it a model client and the pack builder, into
+  a process that must be unable to call either.
+
+  **Recommendation: keep the two tiers.** The alternative is a second
+  implementation of the naming rule, and CLAUDE.md is explicit that there is one
+  -- "a document is delivered under its Drive title" is only true while one
+  function decides it.
+
 - **A report on how often each session actually moves.** *Accepted, deferred
   to November.* The Phase 5 note above is the argument for it -- *"how often
   each session actually moves is a fact about the semester worth having"* --
