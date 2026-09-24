@@ -917,3 +917,34 @@ CREATE TABLE IF NOT EXISTS api_sessions (
 -- Expiry is swept on use rather than by a timer, so the index that matters is
 -- the one the sweep walks.
 CREATE INDEX IF NOT EXISTS ix_api_sessions_expires ON api_sessions (expires_at);
+
+
+-- ------------------------------------------------- read_positions
+
+-- Where I stopped reading one document, from Phase 5b.
+--
+-- **The anchor is `page_hash`, not `page_index`.** The index is stored beside it
+-- only so the common case answers in one query; the hash is what identifies the
+-- page. A professor who inserts four slides moves every page after them, and an
+-- index-based cursor then silently points at different material -- which is the
+-- misreporting failure this project has already paid for four times. The hash is
+-- looked up in the new page list instead, and when it is not there the app says
+-- the document changed rather than starting again at page one.
+--
+-- Same rule as `gate/sections.py:anchor`, which computes it, and the same
+-- instinct as invariant 2: identity is what a thing IS, never when it was seen.
+--
+-- **This is the FOURTH thing no re-sync can rebuild**, after events.notified_at,
+-- study_items and timetable_adjustments. Where I stopped reading is a fact about
+-- me and not about the material, so there is no API to re-ask. `agent backup`
+-- covers it and deploy/fingerprint.py counts it.
+--
+-- No foreign key to extractions: a position outliving a re-fetch is the case this
+-- table exists for, and ON DELETE CASCADE would throw away exactly the row that
+-- would have said "the document changed".
+CREATE TABLE IF NOT EXISTS read_positions (
+    drive_id   TEXT PRIMARY KEY,
+    page_hash  TEXT,               -- the anchor; null when the page is too thin to hash
+    page_index INTEGER NOT NULL,   -- 0-based, matching ocr_pages.page_index
+    updated_at TEXT NOT NULL
+);

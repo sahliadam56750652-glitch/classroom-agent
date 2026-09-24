@@ -390,15 +390,23 @@ never fetched.
 
 ### Range requests
 
-Starlette's `FileResponse` handles `Range` natively — `206`, `Content-Range`,
-`Accept-Ranges: bytes`. **This is verified against the installed version in
-slice 1, not assumed.** If it does not, a range handler is ~40 lines and the
-fallback is known.
+**Verified against Starlette 1.7.0 rather than assumed, and the check paid for
+itself.** Two findings, one in each direction:
 
-Tested by asking for bytes 0-1023 of a real PDF and asserting `206` with the
-right `Content-Range`. A silent fall back to `200` means the whole document
-downloads and the only symptom is "the reader feels slow" — a misreport, not an
-error.
+- **Ranges work natively.** `FileResponse` answers a `Range` header with `206`, a
+  correct `Content-Range`, `Accept-Ranges: bytes`, and `416` for an unsatisfiable
+  range. No range handler is needed, and the ~40-line fallback was not.
+- **`If-None-Match` is NOT honoured.** Starlette generates an `ETag` and then
+  ignores the request header, returning `200` with the whole body. So conditional
+  GET is written out in `api/files.py:not_modified`. Without it, DESIGN.md's
+  "what has been delivered is readable offline" means re-pulling a 40 MB deck on
+  every open.
+
+Both are pinned by tests: bytes 0-1023 of a real PDF must return `206` with the
+right `Content-Range`, and a second request carrying the ETag must return `304`
+with an empty body. A silent fall back to `200` in either case means the whole
+document downloads and the only symptom is "the reader feels slow" — a misreport,
+not an error.
 
 ### Naming
 

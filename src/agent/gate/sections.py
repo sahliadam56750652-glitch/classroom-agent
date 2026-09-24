@@ -49,6 +49,12 @@ from typing import Any
 
 import pymupdf
 
+# Re-exported so that anything splitting a stored extraction into pages uses the
+# ONE separator `files/extract.py` wrote it with. The HTTP API reads pages through
+# this name rather than importing the extractor, which keeps a pipeline stage out
+# of a request handler while keeping the format in one place.
+from ..files.extract import PAGE_BREAK
+
 # How many pages one gate may ask for. Twenty is a starting value and not a
 # measured one -- how much a session actually covers cannot be known until a
 # real session happens -- so it is an argument everywhere and a constant
@@ -315,8 +321,6 @@ def read_document(
     `store.ocr_pages_for` -- the same two the quiz already assembles from, so
     this sees exactly the text a question could be built on and never more.
     """
-    from ..files import extract
-
     drive_id = str(row["drive_id"])
     title = str(row["file_title"] or drive_id)
     try:
@@ -326,7 +330,7 @@ def read_document(
         # caller as a missing file, never silently treated as an empty one.
         return None
 
-    pages = raw.split(extract.PAGE_BREAK)
+    pages = raw.split(PAGE_BREAK)
     titles = _titles_for(row, library_dir, len(pages))
 
     unread = frozenset(

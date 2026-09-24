@@ -48,6 +48,10 @@ IRREPLACEABLE = (
     ("projects", "SELECT count(*) FROM projects"),
     ("project_milestones", "SELECT count(*) FROM project_milestones"),
     ("timetable_adjustments", "SELECT count(*) FROM timetable_adjustments"),
+    # Phase 5b. Where I stopped reading cannot be re-fetched from anywhere.
+    # api_sessions is deliberately NOT here: it is not backed up and its absence
+    # on a restored box is correct rather than a shortfall to notice.
+    ("read_positions", "SELECT count(*) FROM read_positions"),
 )
 
 

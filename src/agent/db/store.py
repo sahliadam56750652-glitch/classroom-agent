@@ -1606,6 +1606,47 @@ def verify_study_item(
 
 
 # --------------------------------------------------------------------------
+# read positions -- where I stopped, anchored by content
+# --------------------------------------------------------------------------
+
+def get_read_position(conn: sqlite3.Connection, drive_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM read_positions WHERE drive_id = ?", (drive_id,)
+    ).fetchone()
+
+
+def set_read_position(
+    conn: sqlite3.Connection,
+    drive_id: str,
+    *,
+    page_index: int,
+    page_hash: str | None,
+    now: str | None = None,
+) -> None:
+    """Remember where I stopped in one document.
+
+    One row per document, replaced rather than appended: this is a cursor and not
+    a history. `page_hash` is the identity and `page_index` is the shortcut, which
+    is why both are stored -- see the note in schema.sql for why the hash is the
+    one that matters.
+    """
+    conn.execute(
+        "INSERT INTO read_positions (drive_id, page_hash, page_index, updated_at) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(drive_id) DO UPDATE SET "
+        "  page_hash = excluded.page_hash, "
+        "  page_index = excluded.page_index, "
+        "  updated_at = excluded.updated_at",
+        (drive_id, page_hash, page_index, now or _utc_now_iso()),
+    )
+
+
+def clear_read_position(conn: sqlite3.Connection, drive_id: str) -> bool:
+    cursor = conn.execute("DELETE FROM read_positions WHERE drive_id = ?", (drive_id,))
+    return cursor.rowcount > 0
+
+
+# --------------------------------------------------------------------------
 # api sessions -- one browser that has presented the token
 # --------------------------------------------------------------------------
 

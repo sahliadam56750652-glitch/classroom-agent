@@ -6,9 +6,10 @@ part of it that can be checked rather than believed.
 
 **What is irreplaceable, and what merely looks it.** Almost everything in this
 database is a mirror: delete `coursework`, run `agent sync`, and it comes back.
-The exceptions were `events.notified_at` and `study_items`, and Phase 6 adds
-every manually entered row -- which, for a subject with no Classroom, is the
-BULK of what that subject knows about itself. There is no API to re-ask.
+The exceptions were `events.notified_at` and `study_items`; Phase 5's
+`timetable_adjustments` and `read_positions` join them, and Phase 6 adds every
+manually entered row -- which, for a subject with no Classroom, is the BULK of
+what that subject knows about itself. There is no API to re-ask for any of it.
 
 **The bytes count too.** A backup of the rows alone restores a library of
 dangling `local_path`s: `extractions` says the file is at
@@ -135,6 +136,19 @@ SPECS: tuple[Spec, ...] = (
     # No course anchor is needed: `course_id` here is a note with no foreign
     # key, so a row restores whether or not the course it mentions exists.
     Spec("timetable_adjustments", "1", ("id",)),
+    # Phase 5b. Where I stopped reading is a fact about ME, not about the
+    # material, so no API can be re-asked for it -- the fourth thing on this
+    # list, after events.notified_at, study_items and timetable_adjustments.
+    #
+    # Every row, not just the manual ones: a position in a Classroom PDF is
+    # exactly as irreplaceable as one in a photographed board, and unlike the
+    # document itself it cannot be re-fetched. No foreign key to extractions, so
+    # a row restores whether or not the file it names is here yet -- which is
+    # also what lets a restore happen before the library copy finishes.
+    Spec("read_positions", "1", ("drive_id",)),
+    # api_sessions is deliberately ABSENT. It is the one table worth losing:
+    # restoring live sessions onto a different box hands out cookies minted for
+    # a machine that is no longer serving, and signing in again costs one paste.
 )
 
 
