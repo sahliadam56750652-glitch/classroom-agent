@@ -350,6 +350,11 @@ settles on:
   join `events.notified_at` and `study_items` on the short list of things a
   fresh sync cannot restore, so they inherit the same backup obligation — and
   CLAUDE.md's "the only two such things" becomes three the day this ships.
+  **Phase 5b makes it four**, with `read_positions`: where I stopped reading in a
+  92-page chapter is a fact about me and not about the material, so no API can be
+  re-asked for it. `api_sessions` is the counter-example and is deliberately left
+  OUT of the backup — restoring live sessions onto a new box is a liability for
+  no benefit.
 - **Recording them as data yields a history the file could never give.** How
   often each session actually moves is a fact about the semester worth having.
   A file edited in place answers that only through `git log`, and
@@ -361,6 +366,34 @@ origin and opens with no browser chrome, the same build works on desktop,
 deadline alerts still arrive by Telegram independently of the web client, and a
 session the professor moved can be recorded in a few taps — changing what the
 gate asks that evening with `timetable.yaml` untouched.
+
+#### The sub-phases, and why 5d is not optional
+
+- **5a — the move to the Oracle box.** Code and units built, not cut over. See
+  the status section above and `deploy/README.md`.
+- **5b — the HTTP API.** FastAPI over the existing store layer, no new business
+  logic, read-only over `study_items`. Spec:
+  `docs/superpowers/specs/2026-09-24-phase-5b-http-api-design.md`.
+- **5c — the PWA and the APK.** The client DESIGN.md is the brief for.
+- **5d — the gate's actions in the client.** Deliver, mark-read, skip and
+  snooze, reached from the web client rather than only from Telegram.
+
+**5d is sequenced immediately after 5c and counted as part of operational, not
+as an extra.** 5b is deliberately read-only over `study_items`, which means the
+client can render DESIGN.md's default screen and not act on it — and DESIGN.md's
+default screen *is* the next single action. A dashboard whose primary action
+cannot be performed fails its own brief on the first screen, so "the API is
+read-only for now" is a decision that has to be paid off rather than lived with.
+
+**In the interim, 5c's primary action deep-links into Telegram**, so it is never
+a dead end. The button opens the conversation where the prompt for that item
+already is; the tap that changes state still happens in `agent bot`. That is one
+extra hop and it is honest about where the writer lives, which a button that
+silently does nothing would not be.
+
+`verified` is out of scope for 5d as much as for 5b. It has exactly one writer
+and is reached by passing a quiz, and the quiz stays where generation is already
+lazy and rate-limited.
 
 ### Phase 6 — manual entries
 
@@ -909,6 +942,46 @@ than behind it.
   a failure that does not look like its cause. Check it before copying the
   token, not after.
 
+- **The API authenticates with a token from `.env` exchanged for a session
+  cookie, and there is no unauthenticated mode.** Not even on localhost. An
+  unset token silently meaning "open" is two states indistinguishable from
+  outside, which the recurring lesson below ranks as a defect in itself, so
+  `agent serve` refuses to start without `WEB_API_TOKEN` rather than quietly
+  serving the library to the network.
+
+  **A cookie rather than a bearer header, and the reason is the PDF reader.** A
+  browser's own viewer issuing range requests from an `iframe`, and any `img`
+  tag, cannot attach an `Authorization` header. A bearer token would force the
+  reader to pull each document whole through JS to attach one, which is the exact
+  failure range requests exist to prevent. The cookie is load-bearing, not a
+  preference.
+
+  Sessions are ROWS (`api_sessions`), not a stateless signed cookie. A table
+  costs nothing here and buys revocation, which costs everything the day the
+  phone is lost.
+
+- **The API never fires the gate, and computing a plan is not firing it.**
+  `GET /api/now` calls `scheduler.plan_for` and writes nothing. It must never
+  reach `create_gate_run`, `replace_gate_plan`, `mark_gate_sent`,
+  `snooze_gate_run` or `close_gate_run` -- because `gate_runs.for_date` would
+  then let opening the dashboard at 06:00 silently swallow that evening's real
+  prompt. That is the same failure that keeps `agent gate` out of `agent run`,
+  arriving through a GET instead of a schedule. Pinned by a route whitelist and
+  by a test asserting `gate_runs` is untouched by a read.
+
+- **Every API route is `def`, never `async def`.** A sync route runs in
+  Starlette's threadpool, where a per-request sync `sqlite3` connection is
+  correct. One `async def` route touching the store blocks the event loop and
+  puts an async framework around a sync store, which is the stated reason
+  `python-telegram-bot` was rejected twice. Pinned by a test that walks
+  `app.routes`.
+
+  FastAPI itself is not that rejection repeated: that one weighed a framework
+  against ~120 sync lines, and this surface is ~30 endpoints with multipart,
+  range requests and conditional GET. Plain `uvicorn`, never
+  `uvicorn[standard]` -- the extras need a C toolchain on ARM, the same rule
+  that chose `python-docx` and `python-pptx`.
+
 ---
 
 ## Recurring lesson — misreporting is its own defect
@@ -976,25 +1049,22 @@ is running — the tracked list is curated by hand and always will be.
   `GEMINI_MODEL`, because a model being retired underneath this project has
   happened once and will happen again.
 
-- **How study packs reach me once the server is the host.** Not whether packs
-  are built — they are — but how one gets from the box to a notebook. The
-  Drive-synced-folder route is gone at 5a (no sync client on the server), so
-  this needs a stated decision rather than a default.
+- ~~**How study packs reach me once the server is the host.**~~ **Answered at
+  Phase 5b: the web app serves them.** `GET /api/packs/{course_id}` locates the
+  built pack through `store.get_pack` and streams it, which costs nothing beyond
+  the file serving 5b already needed for the PDF reader. A pack reaches a
+  notebook by being downloaded on whatever device is in my hand, which is the
+  same manual step the Drive-synced folder was, minus the sync client the server
+  does not have.
 
-  Either **the web app serves packs for download**, which costs nothing beyond
-  the file serving Phase 5b already needs and leaves invariant 6 untouched. Or
-  **the project adds the `drive.file` scope** — a narrow write, limited to
-  files the app itself created, blind to everything else in the Drive — and
-  uploads packs into a dedicated folder, restoring a path to a notebook from
-  any device with no sync client anywhere.
-
-  The second would be **a deliberate second exception to invariant 6, and must
-  be recorded as one if it is taken.** The first exception is not comparable:
-  `classroom.coursework.me` is read-write because Google refuses to register
-  the `.readonly` variant, so the grant is wider than the intent and the
-  restriction is enforced in code. Adding `drive.file` would be the opposite —
-  a write scope requested because the project means to write. That is a
-  decision to take on the record, not a line to add quietly to `auth.SCOPES`.
+  **The `drive.file` alternative is therefore declined, and no second exception
+  to invariant 6 is needed.** That is the part worth recording. Adding
+  `drive.file` would have been the opposite of the first exception rather than
+  another instance of it: `classroom.coursework.me` is read-write because Google
+  refuses to register the `.readonly` variant, so the grant is wider than the
+  intent and the restriction is enforced in code. `drive.file` would have been a
+  write scope requested because the project means to write. Invariant 6 keeps
+  exactly one exception, and it keeps the one it was always going to have.
 
 - **A report on how often each session actually moves.** *Accepted, deferred
   to November.* The Phase 5 note above is the argument for it -- *"how often

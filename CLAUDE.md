@@ -60,7 +60,8 @@ bug even if the tests pass.
 
 ```
 src/agent/
-  config.py  auth.py  cli.py  scope.py  manual.py  backup.py
+  config.py  auth.py  cli.py  scope.py  manual.py  entries.py  backup.py
+  api/         app.py  deps.py  auth.py  files.py  schemas.py  routes/
   classroom/   client.py  models.py
   db/          schema.sql  store.py
   sync/        poller.py  differ.py  deadlines.py
@@ -76,9 +77,9 @@ data/          academic.db  token.json  library/  logs/
 config.yaml    timetable.yaml          (both hand-edited, both gitignored)
 ```
 
-`deploy/` is Phase 5a: the runbook for the move to the Oracle box, the four
+`deploy/` is Phase 5a: the runbook for the move to the Oracle box, the five
 systemd units, and `fingerprint.py`, which prints a comparable summary of a
-`DATA_DIR` -- row counts, the four figures that cannot be rebuilt from the API,
+`DATA_DIR` -- row counts, the figures that cannot be rebuilt from the API,
 and one hash over the whole library -- so that "the data arrived whole" is a
 `diff` rather than a belief. It imports nothing from `agent` on purpose: a
 broken install and a truncated copy must not look alike.
@@ -103,9 +104,13 @@ decision in `PLAN.md`.
 - There is no migration framework, and `_migrate_2_to_3` in `db/store.py` is
   not the start of one -- it is one hand-written step for the one change that
   had to alter an existing table. Adding a table needs nothing. Altering one
-  means bumping `schema_version`, writing the step, and taking a backup first:
-  `events.notified_at` and `study_items` are the only things in this project
-  that cannot be rebuilt from the API.
+  means bumping `schema_version`, writing the step, and taking a backup first.
+  Four things in this project cannot be rebuilt from the API:
+  `events.notified_at`, `study_items`, `timetable_adjustments`, and
+  `read_positions`. Everything entered by hand is irreplaceable by the same
+  argument -- there is no API to re-ask -- which is why `agent backup` covers it
+  and `deploy/fingerprint.py` counts it. `api_sessions` is the one table
+  deliberately left OUT of the backup.
 - Every long-running command takes `--dry-run`.
 - **`agent run`'s `studyitems` stage is strictly in scope**, which is narrower
   than the `agent studyitems` command's `local`. Typed by hand it is a
@@ -179,6 +184,19 @@ decision in `PLAN.md`.
 - A document is delivered under its Drive title, not its Drive id
   (`gate/messages.py:document_filename`). A `file_id` keeps the filename it was
   uploaded with, so changing that rule means `DELETE FROM telegram_files`.
+- **The API adds no business logic.** `agent/api/` returns what a CLI command
+  already computes, so the two cannot disagree; where that computation lived in
+  `cli.py` it moved down into `entries.py` or `gate/adjustments.py` rather than
+  being written twice. `manual.py` keeps identity and minting; `entries.py` owns
+  validation and orchestration of hand-entered records.
+- **Every API route is `def`, never `async def`**, so a per-request sync
+  `sqlite3` connection stays correct and the event loop is never blocked. One
+  place commits -- the `get_db` dependency -- because store writes do not commit
+  and a route that forgets returns 200 for a write that never landed.
+- **The API is read-only over `study_items` and never fires the gate.** It cannot
+  reach `verified`, `advance_study_item` or `quiz`, and it never writes a
+  `gate_runs` row: computing a plan and recording that a prompt was sent are
+  different acts. All three are pinned by tests, not by convention.
 - Every external call has explicit retry with exponential backoff on 429 and
   5xx. Never a bare `except:`.
 - Both SQLite pragmas that matter are connection-scoped, so both are set in
@@ -188,7 +206,8 @@ decision in `PLAN.md`.
   default 5 seconds is short enough for a sync burst to exceed, and the loser
   gets `database is locked`, which for the bot is a tapped button that does
   nothing.
-- Secrets come from `.env` (via `python-dotenv`) and never from source.
+- Secrets come from `.env` (via `python-dotenv`) and never from source:
+  `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, `WEB_API_TOKEN`.
   `.env`, `credentials.json`, `token.json`, `data/` are all gitignored.
 - Log structured lines to `data/logs/` and record each sync in `sync_runs`.
   A failure that produces no visible output is the worst failure mode here.
@@ -203,13 +222,14 @@ them must not inherit another's.
 | 07:30, 19:30 | Task Scheduler | `agent run` | sync → fetch → extract → ocr → studyitems → packs → deadlines → notify |
 | 20:00 | Task Scheduler | `agent gate` | tomorrow's revision prompt, after the 19:30 sync has pulled the day's material |
 | at logon | Startup `.vbs` → `pythonw.exe` | `agent bot` | the long-poll listener; restart-safe, so killing it is harmless |
+| at logon | Startup `.vbs` → `pythonw.exe` | `agent serve` | the HTTP API behind the web client; holds no state a restart could lose |
 
-The bot is the odd one out, and deliberately. A Task Scheduler entry that runs
-without a visible console window needs the S4U logon type, which requires
-administrator rights this account does not have -- so the listener starts from a
+The two listeners are the odd ones out, and deliberately. A Task Scheduler entry
+that runs without a visible console window needs the S4U logon type, which
+requires administrator rights this account does not have -- so each starts from a
 `.vbs` in the Startup folder calling `pythonw.exe`, which is windowless and runs
 as the ordinary user. It is a crude mechanism and it costs nothing, because
-`agent bot` holds no state a restart could lose.
+neither `agent bot` nor `agent serve` holds state a restart could lose.
 
 **That table describes the laptop, and stays true until the Phase 5a cutover.**
 The systemd equivalents are written and sit in `deploy/systemd/`; nothing has
