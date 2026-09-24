@@ -31,6 +31,16 @@ unverified-app interstitial once at consent time and proceed.
 This is the single item on this page that fails late, silently, and for a reason
 that does not look like its cause.
 
+**Mint the web API's token while you are in `.env`.** Phase 5b's `agent serve`
+refuses to start without `WEB_API_TOKEN`, deliberately -- there is no
+unauthenticated mode, on localhost or here, because a server that is open
+because a variable is unset looks exactly like one that is protected.
+
+    python -c "import secrets; print(secrets.token_urlsafe(32))"
+
+Put it in `.env` beside `TELEGRAM_BOT_TOKEN` and `GEMINI_API_KEY`. It travels
+with them in step 2, which means the box needs nothing minted on it.
+
 ## 1. Provision
 
 `VM.Standard.A1.Flex`, 2 OCPU / 12 GB, Ubuntu LTS, **50 GB boot volume**, in the
@@ -110,12 +120,14 @@ at …". Editable keeps `REPO_ROOT` pointing at the checkout.
     diff laptop.txt server.txt          # must be empty
     cd data/library && sha256sum -c ../../laptop-manifest.txt && cd -
 
-    python -m pytest -q                 # 979 passed; all offline
+    python -m pytest -q                 # all offline
     agent whoami                        # right account, all 7 scopes
     agent timetable --check
     agent ocr --status                  # queue head must match the laptop exactly
     agent sync --dry-run                # ZERO events
     agent notify --dry-run              # deadlines in Africa/Tunis, as on the laptop
+    agent subjects --standing           # must match the laptop, subject for subject
+    agent serve --check                 # token, database, cookie flags, write routes
 
 Two of those are load-bearing:
 
@@ -126,6 +138,11 @@ Two of those are load-bearing:
   queue order is a function of the material alone — not the clock, not OCR
   progress, pinned by tests. Any difference means the data moved wrong rather
   than that the box is different.
+- **`agent serve --check` binds nothing.** It builds the app, proves the token is
+  present and long enough, opens the database through the version guard, and
+  prints the cookie flags and every write route the API exposes. If it exits
+  non-zero the service would not have started either, and this says why while you
+  are still at a prompt.
 
 ## 5. Cut over
 
@@ -134,8 +151,10 @@ Two of those are load-bearing:
     sudo systemctl enable --now classroom-agent-run.timer \
                                 classroom-agent-gate.timer \
                                 classroom-agent-keepalive.timer \
-                                classroom-agent-bot.service
+                                classroom-agent-bot.service \
+                                classroom-agent-api.service
     systemctl list-timers 'classroom-agent-*'
+    curl -fsS http://127.0.0.1:8000/api/health     # {"ok":true}
 
 **The bot cutover is a hard switch with no overlap.** Telegram hands each update
 to exactly one `getUpdates` caller, so two `agent bot` processes on one token
@@ -149,6 +168,54 @@ Then, in order: press a button on the phone and watch
 
 **After seven days**, confirm the token still refreshes with no intervention.
 That is step 0 paying off, and it is the last thing that can still go wrong.
+
+**The API cutover is not a hard switch, and that asymmetry is worth knowing.**
+Unlike the bot, two `agent serve` processes do not fight: HTTP has no
+single-consumer queue, sessions are rows both would read, and the loser of a
+write contends for a lock rather than silently doing nothing. So the laptop's
+copy can stay up during the move. It is only the *bot* that must not overlap.
+
+## 5b. Caddy, and the one origin
+
+The API binds `127.0.0.1:8000` and never anything else. Caddy terminates TLS and
+proxies to it, which is why this project ships no TLS code and why going public
+is this stanza rather than a code change.
+
+    # /etc/caddy/Caddyfile
+    classroom.example.org {
+        encode zstd gzip
+        # Phase 5c serves the built client from here. One origin for the API and
+        # the static files, which is the settled decision and the reason CORS
+        # never enters the picture.
+        handle /api/* {
+            reverse_proxy 127.0.0.1:8000
+        }
+        handle {
+            root * /home/ubuntu/classroom-agent/web/dist
+            try_files {path} /index.html
+            file_server
+        }
+    }
+
+Then set the origin so the API can check it, in `config.yaml`:
+
+    api:
+      origin: https://classroom.example.org
+
+That turns on the `Origin` comparison for every request that changes something.
+`SameSite=Lax` already blocks a cross-site form post; this covers what it does
+not, and unset means the check is off -- which is right on a laptop, where there
+is no public origin to compare against.
+
+**Two things to check once, at the browser, before trusting it:**
+
+- Sign in from the phone and confirm the cookie survives a restart of the
+  service. It should: sessions are rows, not signed cookies, which is the whole
+  reason they are rows.
+- Open a long PDF and watch the network panel. The requests should be `206`s of
+  a few hundred KB each, not one `200` of the whole file. If the reader pulls
+  documents whole, the symptom is only "it feels slow" -- which is why the range
+  behaviour is pinned by a test rather than left to be noticed.
 
 ## 6. Afterwards
 
@@ -206,6 +273,15 @@ Task Scheduler entries and the Startup `.vbs`, restore the last pull, run
 everything that changed while the box was gone, no gaps and no duplicates.
 Between reclamation and restore the gate and bot are down; the sync loses
 nothing.
+
+**What a restore brings back, and the one thing it deliberately does not.**
+Five kinds of row cannot be rebuilt from any API — `events.notified_at`,
+`study_items`, `timetable_adjustments`, `read_positions`, and everything entered
+by hand — and `agent backup` carries all of them. `api_sessions` is excluded on
+purpose: restoring live sessions hands out cookies minted for a machine that is
+no longer serving, and signing in again costs one paste of `WEB_API_TOKEN`.
+Expect to sign the phone in once after a restore; that is the design, not a
+fault.
 
 **Do the restore drill once, before trusting it.** Point `DATA_DIR` at a pulled
 snapshot and run `agent sync --dry-run`; expect zero events. A backup that has

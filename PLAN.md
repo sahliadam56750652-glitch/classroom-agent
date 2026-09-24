@@ -90,7 +90,7 @@ CLI-shaped below `cli.py`.
 
 **Phase 5a — planned, code and units built, not yet cut over.** The move to an
 Oracle Always Free ARM instance, so that the backend is up when the laptop is
-not. `deploy/` holds the runbook, the four systemd units and
+not. `deploy/` holds the runbook, the five systemd units and
 `deploy/fingerprint.py`, which prints a comparable summary of a `DATA_DIR` so
 that "the data arrived whole" can be checked by `diff` rather than believed. Two
 small code changes went with it -- `store.BUSY_TIMEOUT_MS` and `auth.OAUTH_PORT`
@@ -104,6 +104,41 @@ A survey of `src/agent/` for platform assumptions found **none**: no
 measured, 0 of 118 `extractions` rows carry a backslash. Invariant 5 turned out
 to be enforced rather than aspirational, which is the whole reason 5a is a
 directory copy.
+
+**Phase 5b — complete.** The HTTP API behind the web client: FastAPI over the
+existing store layer, read-only over `study_items`, no new business logic. Six
+slices, six commits, no `schema_version` bump -- two new tables were enough.
+Spec: `docs/superpowers/specs/2026-09-24-phase-5b-http-api-design.md`.
+
+- **Slice 0 — the lift.** `entries.py` is new and owns validation and
+  orchestration of hand-entered records; `gate/adjustments.py` gained the
+  recording half it should always have had. Every rule the API needs was inside
+  `cli.py`, shaped around an `argparse.Namespace`, `print` and an exit code.
+  No test file changed, which is the only available proof the lift preserved
+  what it moved.
+- **Slice 1 — `agent serve`, auth and the guards.** A token from `.env` traded
+  for an opaque session row. `connect(initialise=False)` for the per-request
+  connection, and one `get_db` dependency that commits.
+- **Slice 2 — the reads.** Seven GETs, `Subject.state` shared with
+  `messages._subject_line`, and `scheduler.standing` shared with
+  `agent subjects --standing`.
+- **Slice 3 — documents.** Ranges, conditional GET, and `read_positions`
+  anchored by content hash.
+- **Slice 4 — the writes.** Eleven routes, all through `entries.py`,
+  `gate/adjustments.py` or `files/upload.py`.
+- **Slice 5 — deployment.** `classroom-agent-api.service`, the Caddy stanza, and
+  the runbook.
+
+Three things are guaranteed by test rather than by convention: no module in
+`agent/api/` uses `verify_study_item`, `advance_study_item` or the quiz; the set
+of non-GET routes equals a declared whitelist exactly; and no route is a
+coroutine, so a per-request `sqlite3` connection stays correct. A fourth is
+behavioural -- every write route is exercised and `verified` is still zero.
+
+The store-layer survey for a long-running process found five things to change,
+all of them assumptions of a single-threaded CLI, and they are listed in the
+spec. The most consequential: `connect()` applied the whole of `schema.sql` on
+every call, which is free once per invocation and a write lock once per request.
 
 **`study_items` is seeded: 67 rows, every one `skipped` with
 `skip_source = 'seed'`.** (An earlier version of this file said the table held

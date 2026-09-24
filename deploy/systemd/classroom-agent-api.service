@@ -1,0 +1,49 @@
+# The HTTP API behind the web client. The fifth unit, added at Phase 5b.
+#
+# Shaped like the bot service rather than like the timers, because it is the
+# same kind of thing: a listener that must be up whenever I might open the app,
+# holding no state a restart could lose. Sessions are rows in SQLite, so a
+# restart signs nobody out.
+#
+# It binds LOOPBACK. Caddy terminates TLS in front of it and proxies to
+# 127.0.0.1:8000, which is why this project ships no TLS code and why going
+# public is a reverse-proxy stanza rather than a code change. See README.md.
+
+[Unit]
+Description=classroom-agent: HTTP API for the web client
+After=network-online.target
+Wants=network-online.target
+# Same reasoning as the bot: the default gives up after 5 restarts in 10s and
+# leaves the unit dead. A dead API is a dashboard that silently stops answering,
+# which is the failure mode this project ranks worst. Let it loop; journald
+# shows why.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/classroom-agent
+# --config is explicit rather than relying on config.py's REPO_ROOT, so the unit
+# does not depend on where the package happens to be installed from.
+ExecStart=/home/ubuntu/classroom-agent/.venv/bin/agent serve \
+    --config /home/ubuntu/classroom-agent/config.yaml \
+    --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+# `agent serve` calls api_token() before it binds a port, so a missing or short
+# WEB_API_TOKEN is a start-up failure with the reason in the journal -- not a
+# server quietly running with no authentication. That is the whole point of
+# there being no unauthenticated mode: `systemctl status` can only report one of
+# two things, up and protected, or down and saying why.
+#
+# The token comes from .env beside config.yaml, which python-dotenv loads. It is
+# NOT an EnvironmentFile here, deliberately: one place for credentials, and the
+# same one the laptop uses.
+
+# Nothing to drain. Requests are short, the store commits per request, and a
+# session is a committed row.
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
