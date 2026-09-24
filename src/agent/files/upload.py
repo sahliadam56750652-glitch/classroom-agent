@@ -40,9 +40,8 @@ from pathlib import Path
 
 from .. import manual
 from ..classroom.models import Material, content_hash, material_id
-from ..config import Config
+from ..config import FILES_SUBDIR, Config
 from ..db import store
-from .drive import FILES_SUBDIR
 
 # What `agent upload` accepts, and why it is exactly this.
 #

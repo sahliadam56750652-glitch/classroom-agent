@@ -42,7 +42,8 @@ import pymupdf
 from ..config import Config
 from ..db import store
 
-TEXT_SUBDIR = "text"
+# Re-exported from config.py, where the library's layout lives.
+from ..config import TEXT_SUBDIR  # noqa: F401
 
 # Page separator in the written .txt. A form feed is what a page break has meant
 # in plain text for fifty years, and it survives a round trip through anything

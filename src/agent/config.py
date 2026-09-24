@@ -25,6 +25,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config.yaml"
 DEFAULT_DATA_DIR = "./data"
 
+# How the library is laid out under data_dir. Here rather than in the stages that
+# write them, because both stages and every READER need them -- and reaching
+# FILES_SUBDIR through files/drive.py would pull the Drive client into the HTTP
+# API, which must be unable to fetch anything. files/drive.py and
+# files/extract.py re-export these, so the names stay where they have always been
+# imported from.
+FILES_SUBDIR = "files"
+TEXT_SUBDIR = "text"
+
 # The bot token is a credential and comes from .env only. A chat id is not a
 # secret -- it identifies a conversation, not an account -- so it lives in
 # config.yaml beside everything else that describes this installation.

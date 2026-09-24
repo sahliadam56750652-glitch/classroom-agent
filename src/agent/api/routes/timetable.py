@@ -16,9 +16,12 @@ me, not a row to tidy away.
 from __future__ import annotations
 
 from datetime import date, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
+from pydantic import BaseModel
 
+from ...db import store
 from ...gate import adjustments as adjust
 from .. import convert, schemas
 from ..deps import Db, Session, Table
@@ -148,4 +151,211 @@ def timetable_file_is_read_only() -> Response:
             "  A permanent change IS a change to the pattern: add a version with "
             "an effective_from, by hand, in the file."
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# adjustments -- one dated fact about one date
+# ---------------------------------------------------------------------------
+
+
+class AdjustmentIn(BaseModel):
+    """A dated change as asked for. The dates and times arrive as strings.
+
+    `kind` is the stored spelling, not the flag: `agent adjust --move` records
+    'moved', and deriving one from the other by string surgery turned into a crash
+    once already.
+    """
+
+    kind: Literal["cancelled", "moved", "extra"]
+    subject: str
+    on: str
+    at: str | None = None
+    to_date: str | None = None
+    to_time: str | None = None
+    end: str | None = None
+    to_kind: str | None = None
+    room: str | None = None
+    teacher: str | None = None
+    reason: str | None = None
+
+
+class RepointIn(BaseModel):
+    subject: str
+
+
+class RecordedOut(BaseModel):
+    """What was recorded, and what it does, as facts rather than as a sentence."""
+
+    id: int | None
+    kind: str
+    subject: str
+    applies_on: str
+    session_start: str
+    joint_subjects: list[str] = []
+    lands_on: str | None = None
+    gate_moves: bool = False
+    gate_evening: str | None = None
+    written: bool = True
+    note: str = ""
+
+
+@router.get("/adjustments", response_model=list[schemas.AdjustmentOut])
+def adjustments(
+    conn: Db,
+    session: Session,
+    include_past: bool = Query(False),
+) -> list[schemas.AdjustmentOut]:
+    rows = store.list_adjustments(conn, include_past=include_past)
+    return [convert.adjustment(row) for row in rows]
+
+
+@router.post("/adjustments", response_model=RecordedOut, status_code=201)
+def record_adjustment(
+    body: AdjustmentIn,
+    conn: Db,
+    table: Table,
+    session: Session,
+    dry_run: bool = Query(False),
+) -> RecordedOut:
+    """Record what a professor did to one session on one date.
+
+    `timetable.yaml` is never written. This records the dated facts the pattern
+    cannot express, and the gate resolves the two together.
+
+    A clash is REFUSED, not merged, and that is a 409 rather than a silent
+    overwrite: which of two adjustments on one session on one date wins is not a
+    question anything here can answer, and guessing discards one of them.
+    """
+    try:
+        plan = adjust.plan(
+            table,
+            adjust.AdjustmentSpec(
+                kind=body.kind,
+                subject=body.subject,
+                on=body.on,
+                at=body.at,
+                to_date=body.to_date,
+                to_time=body.to_time,
+                end=body.end,
+                to_kind=body.to_kind,
+                room=body.room,
+                teacher=body.teacher,
+                reason=body.reason,
+            ),
+        )
+    except adjust.AdjustmentError as err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)
+        ) from err
+
+    shared = (
+        f"this session is {' + '.join(plan.joint_subjects)} -- both are affected. "
+        if plan.joint
+        else ""
+    )
+    if dry_run:
+        return RecordedOut(
+            id=None,
+            kind=plan.kind,
+            subject=plan.subject,
+            applies_on=plan.day.isoformat(),
+            session_start=plan.start,
+            joint_subjects=list(plan.joint_subjects),
+            lands_on=plan.landing.isoformat() if plan.landing else None,
+            gate_moves=plan.gate_moves,
+            gate_evening=plan.gate_evening.isoformat() if plan.gate_evening else None,
+            written=False,
+            note=f"{shared}dry run -- nothing written",
+        )
+
+    adjustment_id = adjust.record(conn, plan)
+    if adjustment_id is None:
+        clash = adjust.find_clash(conn, plan)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"already adjusted: #{clash['id']} {clash['kind']} this session on "
+                f"that date. Remove it first if this replaces it -- which of two "
+                f"wins is not a question anything here can answer, so neither is "
+                f"guessed."
+            ),
+        )
+
+    moved = (
+        f"The prompt for it moves to {plan.gate_evening:%a %d %b} evening. "
+        if plan.gate_moves and plan.gate_evening
+        else ""
+    )
+    return RecordedOut(
+        id=adjustment_id,
+        kind=plan.kind,
+        subject=plan.subject,
+        applies_on=plan.day.isoformat(),
+        session_start=plan.start,
+        joint_subjects=list(plan.joint_subjects),
+        lands_on=plan.landing.isoformat() if plan.landing else None,
+        gate_moves=plan.gate_moves,
+        gate_evening=plan.gate_evening.isoformat() if plan.gate_evening else None,
+        note=f"{shared}{moved}{table.path.name} is unchanged.",
+    )
+
+
+@router.delete("/adjustments/{adjustment_id}", response_model=RecordedOut)
+def remove_adjustment(
+    adjustment_id: int, conn: Db, table: Table, session: Session
+) -> RecordedOut:
+    """Drop one. The pattern reasserts itself -- nothing in the file ever moved."""
+    row = adjust.remove(conn, adjustment_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"no adjustment with id {adjustment_id}.",
+        )
+    return RecordedOut(
+        id=adjustment_id,
+        kind=str(row["kind"]),
+        subject=str(row["subject"]),
+        applies_on=str(row["applies_on"]),
+        session_start=str(row["session_start"]),
+        note="removed. The pattern reasserts itself -- nothing in the file ever moved.",
+    )
+
+
+@router.post("/adjustments/{adjustment_id}/repoint", response_model=RecordedOut)
+def repoint_adjustment(
+    adjustment_id: int,
+    body: RepointIn,
+    conn: Db,
+    table: Table,
+    session: Session,
+) -> RecordedOut:
+    """Move an orphan onto a subject the file still has.
+
+    The only way an orphan ever moves. Matching approximately is what adjusts the
+    wrong session while looking like it worked, so the new name is resolved
+    exactly or refused.
+    """
+    try:
+        moved = adjust.repoint(conn, table, adjustment_id, body.subject)
+    except adjust.AdjustmentError as err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)
+        ) from err
+    if moved is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"no adjustment with id {adjustment_id}.",
+        )
+
+    was, now = moved
+    row = store.get_adjustment(conn, adjustment_id)
+    assert row is not None
+    return RecordedOut(
+        id=adjustment_id,
+        kind=str(row["kind"]),
+        subject=now,
+        applies_on=str(row["applies_on"]),
+        session_start=str(row["session_start"]),
+        note=f"repointed {adjustment_id}: {was!r} -> {now!r}",
     )

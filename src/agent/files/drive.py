@@ -83,7 +83,9 @@ DEFAULT_EXTENSION = ".bin"
 CHUNK_SIZE = 4 * 1024 * 1024
 MAX_DOWNLOAD_ATTEMPTS = 5
 
-FILES_SUBDIR = "files"
+# Re-exported from config.py, where the library's layout lives. See the note
+# there for why it moved.
+from ..config import FILES_SUBDIR  # noqa: F401
 
 
 class DriveError(Exception):

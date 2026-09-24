@@ -17,7 +17,15 @@ from fastapi import FastAPI
 from ..config import Config, api_token
 from ..db import store
 from . import auth as api_auth
-from .routes import deadlines, library, meta, study, subjects, timetable
+from .routes import (
+    deadlines,
+    entries,
+    library,
+    meta,
+    study,
+    subjects,
+    timetable,
+)
 
 log = logging.getLogger("agent.api")
 
@@ -48,6 +56,20 @@ WRITE_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/timetable/file"),
         ("PATCH", "/api/timetable/file"),
         ("DELETE", "/api/timetable/file"),
+        # Dated one-off changes to the pattern. The FILE is still never written.
+        ("POST", "/api/adjustments"),
+        ("DELETE", "/api/adjustments/{adjustment_id}"),
+        ("POST", "/api/adjustments/{adjustment_id}/repoint"),
+        # Everything entered by hand.
+        ("POST", "/api/projects"),
+        ("POST", "/api/projects/{project_id}/milestones"),
+        ("POST", "/api/projects/{project_id}/close"),
+        ("POST", "/api/milestones/{milestone_id}/complete"),
+        ("POST", "/api/tasks"),
+        ("POST", "/api/tasks/{task_id}/complete"),
+        ("POST", "/api/sessions"),
+        ("POST", "/api/subjects/manual"),
+        ("POST", "/api/uploads"),
     }
 )
 
@@ -96,6 +118,7 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(library.router, prefix="/api", tags=["library"])
     app.include_router(deadlines.router, prefix="/api", tags=["deadlines"])
     app.include_router(timetable.router, prefix="/api", tags=["timetable"])
+    app.include_router(entries.router, prefix="/api", tags=["entries"])
     return app
 
 
