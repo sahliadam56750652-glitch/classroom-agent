@@ -77,8 +77,22 @@ def open_db(config: Config) -> sqlite3.Connection:
     return connect(config.db_path)
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
-    """The path-level entry point, so tests can point at a temp file."""
+def connect(db_path: Path, *, initialise: bool = True) -> sqlite3.Connection:
+    """The path-level entry point, so tests can point at a temp file.
+
+    `initialise=False` skips applying schema.sql and the v2 migration, and
+    exists for one caller: a long-running server opening a connection per
+    request. A CLI invocation applies the script once per process, which is
+    free; an HTTP handler would apply it once per REQUEST -- re-reading
+    schema.sql from disk, re-running every CREATE TABLE IF NOT EXISTS, and
+    running an INSERT OR IGNORE against schema_version, which is a write and
+    therefore contends with the sync burst and the bot for a lock that a read
+    has no business taking.
+
+    The version guard below is deliberately NOT skipped. It is one SELECT
+    against a one-row table, and a connection that silently opens a file this
+    build cannot read is precisely what it exists to prevent.
+    """
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -88,16 +102,23 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
 
-    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    conn.commit()
+    if initialise:
+        conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        conn.commit()
 
-    # After the script, because the script is what creates schema_version on a
-    # fresh file, and before the guard below, because migrating is exactly how
-    # a file stops failing it.
-    if schema_version(conn) == 2:
-        _migrate_2_to_3(conn, db_path)
+        # After the script, because the script is what creates schema_version on
+        # a fresh file, and before the guard below, because migrating is exactly
+        # how a file stops failing it.
+        if schema_version(conn) == 2:
+            _migrate_2_to_3(conn, db_path)
 
-    found = schema_version(conn)
+    try:
+        found = schema_version(conn)
+    except sqlite3.OperationalError:
+        # No schema_version table at all, which with initialise=False means the
+        # file is empty or is not one of ours. Reported as version 0 so the
+        # guard below names it, rather than escaping as "no such table".
+        found = 0
     if found != SCHEMA_VERSION:
         conn.close()
         # CREATE TABLE IF NOT EXISTS cannot add a column to a table that already
@@ -1582,6 +1603,72 @@ def verify_study_item(
         (now or _utc_now_iso(), item_id),
     )
     return not already
+
+
+# --------------------------------------------------------------------------
+# api sessions -- one browser that has presented the token
+# --------------------------------------------------------------------------
+
+def create_api_session(
+    conn: sqlite3.Connection,
+    session_id: str,
+    *,
+    expires_at: str,
+    user_agent: str | None = None,
+    now: str | None = None,
+) -> None:
+    """Record a signed-in browser. The id is the cookie value."""
+    stamp = now or _utc_now_iso()
+    conn.execute(
+        "INSERT INTO api_sessions (id, created_at, last_used_at, expires_at, "
+        "user_agent) VALUES (?, ?, ?, ?, ?)",
+        (session_id, stamp, stamp, expires_at, user_agent),
+    )
+
+
+def touch_api_session(
+    conn: sqlite3.Connection,
+    session_id: str,
+    *,
+    expires_at: str,
+    now: str | None = None,
+) -> sqlite3.Row | None:
+    """The live session, sliding its expiry forward. None when it is not live.
+
+    One statement does the lookup and the slide, so an expired row can never be
+    returned by a caller that then forgets to check -- the comparison is in the
+    WHERE clause rather than in the handler.
+    """
+    stamp = now or _utc_now_iso()
+    row = conn.execute(
+        "SELECT * FROM api_sessions WHERE id = ? AND expires_at > ?",
+        (session_id, stamp),
+    ).fetchone()
+    if row is None:
+        return None
+    conn.execute(
+        "UPDATE api_sessions SET last_used_at = ?, expires_at = ? WHERE id = ?",
+        (stamp, expires_at, session_id),
+    )
+    return row
+
+
+def delete_api_session(conn: sqlite3.Connection, session_id: str) -> bool:
+    """Sign one browser out. False when there was nothing to revoke."""
+    cursor = conn.execute("DELETE FROM api_sessions WHERE id = ?", (session_id,))
+    return cursor.rowcount > 0
+
+
+def sweep_api_sessions(conn: sqlite3.Connection, *, now: str | None = None) -> int:
+    """Drop expired rows. Called on use, because there is no timer here."""
+    cursor = conn.execute(
+        "DELETE FROM api_sessions WHERE expires_at <= ?", (now or _utc_now_iso(),)
+    )
+    return cursor.rowcount
+
+
+def count_api_sessions(conn: sqlite3.Connection) -> int:
+    return int(conn.execute("SELECT count(*) AS n FROM api_sessions").fetchone()["n"])
 
 
 def get_bot_state(conn: sqlite3.Connection, key: str) -> str | None:

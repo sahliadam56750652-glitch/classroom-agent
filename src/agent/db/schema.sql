@@ -888,3 +888,32 @@ CREATE INDEX IF NOT EXISTS ix_adjustments_applies ON timetable_adjustments (appl
 -- different question from "what was adjusted on it".
 CREATE INDEX IF NOT EXISTS ix_adjustments_to_date ON timetable_adjustments (to_date)
     WHERE to_date IS NOT NULL;
+
+
+-- ------------------------------------------------- api_sessions
+
+-- One browser that has presented WEB_API_TOKEN, from Phase 5b.
+--
+-- Rows rather than a stateless signed cookie, and the reason is revocation.
+-- A signed cookie cannot be withdrawn: the day the phone is lost, the only
+-- remedy is rotating the token, which signs every other device out too and
+-- means editing .env on the server. A row can be deleted.
+--
+-- The id IS the cookie value -- 32 random bytes, urlsafe -- so nothing about
+-- the token is derivable from what the browser holds, and a stolen cookie
+-- cannot be replayed into the token it came from.
+--
+-- This is the ONE table deliberately excluded from `agent backup`. Restoring
+-- live sessions onto a different box is a liability for no benefit; signing in
+-- again costs one paste.
+CREATE TABLE IF NOT EXISTS api_sessions (
+    id           TEXT PRIMARY KEY,     -- the cookie value, opaque and random
+    created_at   TEXT NOT NULL,
+    last_used_at TEXT NOT NULL,        -- moved forward on use, for the slide
+    expires_at   TEXT NOT NULL,        -- absolute, so a stale row cannot linger
+    user_agent   TEXT                  -- which device this was, for the record
+);
+
+-- Expiry is swept on use rather than by a timer, so the index that matters is
+-- the one the sweep walks.
+CREATE INDEX IF NOT EXISTS ix_api_sessions_expires ON api_sessions (expires_at);

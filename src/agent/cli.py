@@ -636,6 +636,29 @@ def _build_parser() -> argparse.ArgumentParser:
         help="how long each long poll waits (default: 30)",
     )
 
+    serve_parser = sub.add_parser(
+        "serve",
+        parents=[shared],
+        help="the HTTP API behind the web client -- runs until stopped",
+    )
+    serve_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help=(
+            "interface to bind (default: 127.0.0.1). On the server Caddy "
+            "terminates TLS and proxies to loopback, so this stays the default "
+            "there too -- binding publicly is an explicit act"
+        ),
+    )
+    serve_parser.add_argument(
+        "--port", type=int, default=8000, help="port to bind (default: 8000)"
+    )
+    serve_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="build the app, verify the token and the database, and exit",
+    )
+
     notify_parser = sub.add_parser(
         "notify",
         parents=[shared],
@@ -3141,6 +3164,55 @@ def cmd_bot(config: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(config: Config, args: argparse.Namespace) -> int:
+    """Run the HTTP API. Long-running, like `agent bot`, and restart-safe.
+
+    Imported inside the function rather than at module scope so that every other
+    command keeps working on an install without fastapi -- the Phase 5b
+    dependencies are real dependencies, but `agent sync` should not stop because
+    one of them failed to build.
+    """
+    try:
+        import uvicorn
+
+        from .api.app import create_app
+    except ImportError as err:
+        print(
+            f"the API needs fastapi and uvicorn, and one of them is missing: {err}\n"
+            f"  pip install -e .",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Raises ConfigError for a missing or short token, before a port is bound.
+    app = create_app(config)
+
+    if args.check:
+        writes = sorted(f"{method} {path}" for method, path in _api_write_routes(app))
+        print("  token:    set, at least 32 characters")
+        print(f"  database: {config.db_path}")
+        print(f"  cookie:   Secure={config.api_secure_cookie}, SameSite=Lax")
+        print(f"  origin:   {config.api_origin or 'not checked (no api.origin set)'}")
+        print(f"  writes:   {len(writes)}")
+        for line in writes:
+            print(f"    {line}")
+        print()
+        print("  checked -- nothing bound, nothing served")
+        return 0
+
+    print(f"  serving on http://{args.host}:{args.port}/api")
+    print(f"  docs at    http://{args.host}:{args.port}/api/docs")
+    print("  POST the token from .env to /api/session to sign in.")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    return 0
+
+
+def _api_write_routes(app) -> set[tuple[str, str]]:
+    from .api.app import write_routes
+
+    return write_routes(app)
+
+
 def cmd_events(config: Config, args: argparse.Namespace) -> int:
     conn = store.open_db(config)
     try:
@@ -3449,6 +3521,7 @@ COMMANDS = {
     "sections": cmd_sections,
     "flagged": cmd_flagged,
     "bot": cmd_bot,
+    "serve": cmd_serve,
     "events": cmd_events,
     "deadlines": cmd_deadlines,
     "notify": cmd_notify,

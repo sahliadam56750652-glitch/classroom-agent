@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import textwrap
+from datetime import timezone
 from pathlib import Path
 
 import pytest
 
+from agent import config as config_mod
 from agent.config import Config, ConfigError, load_config
 
 COMPLETE = """\
@@ -237,7 +239,111 @@ def test_config_type_is_exported():
         "ocr_run_limit",
         "quiz_pass_threshold",
         "quiz_question_count",
+        "api_secure_cookie",
+        "api_origin",
     }
+
+
+# --------------------------------------------------------------------------
+# the web API's settings
+# --------------------------------------------------------------------------
+
+
+def test_the_cookie_is_secure_unless_told_otherwise(tmp_path):
+    """The default is the safe one, and the escape hatch has to be asked for."""
+    path = tmp_path / "config.yaml"
+    path.write_text(COMPLETE, encoding="utf-8")
+    assert load_config(path).api_secure_cookie is True
+
+
+def test_the_secure_cookie_can_be_turned_off_for_plain_localhost(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(COMPLETE + "api:\n  secure_cookie: false\n", encoding="utf-8")
+    assert load_config(path).api_secure_cookie is False
+
+
+def test_a_non_boolean_secure_cookie_is_refused_by_name(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(COMPLETE + "api:\n  secure_cookie: yes please\n", encoding="utf-8")
+    with pytest.raises(ConfigError) as caught:
+        load_config(path)
+    assert "api.secure_cookie" in str(caught.value)
+
+
+def test_no_origin_means_the_check_is_off(tmp_path):
+    """Which is what a laptop wants: nothing to compare against yet."""
+    path = tmp_path / "config.yaml"
+    path.write_text(COMPLETE, encoding="utf-8")
+    assert load_config(path).api_origin is None
+
+
+def test_an_origin_is_kept_without_its_trailing_slash(tmp_path):
+    """So that comparing it to a browser's Origin header is a string equality."""
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        COMPLETE + "api:\n  origin: https://classroom.example.org/\n", encoding="utf-8"
+    )
+    assert load_config(path).api_origin == "https://classroom.example.org"
+
+
+def test_an_origin_that_is_not_a_scheme_and_host_is_refused(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(COMPLETE + "api:\n  origin: classroom.example.org\n", encoding="utf-8")
+    with pytest.raises(ConfigError) as caught:
+        load_config(path)
+    assert "api.origin" in str(caught.value)
+
+
+def test_the_api_token_is_refused_when_unset(monkeypatch, tmp_path):
+    """There is no unauthenticated mode, and this is where that is enforced."""
+    monkeypatch.delenv(config_mod.API_TOKEN_ENV, raising=False)
+    path = tmp_path / "config.yaml"
+    path.write_text(COMPLETE, encoding="utf-8")
+    loaded = load_config(path)
+
+    with pytest.raises(ConfigError) as caught:
+        config_mod.api_token(loaded)
+    message = str(caught.value)
+    assert config_mod.API_TOKEN_ENV in message
+    # The message has to say how to make one, or the refusal is a dead end.
+    assert "token_urlsafe" in message
+
+
+def test_a_short_api_token_is_refused_with_its_length(monkeypatch, tmp_path):
+    """A short secret behind a rate limiter is still a short secret."""
+    monkeypatch.setenv(config_mod.API_TOKEN_ENV, "a" * 8)
+    path = tmp_path / "config.yaml"
+    path.write_text(COMPLETE, encoding="utf-8")
+    loaded = load_config(path)
+
+    with pytest.raises(ConfigError) as caught:
+        config_mod.api_token(loaded)
+    assert "8 characters" in str(caught.value)
+
+
+def test_a_long_api_token_is_returned_unchanged(monkeypatch, tmp_path):
+    minted = "b" * 48
+    monkeypatch.setenv(config_mod.API_TOKEN_ENV, f"  {minted}  ")
+    path = tmp_path / "config.yaml"
+    path.write_text(COMPLETE, encoding="utf-8")
+
+    assert config_mod.api_token(load_config(path)) == minted
+
+
+def test_display_zone_lives_in_config_and_composer_re_exports_it():
+    """It moved so the API need not import notify/telegram.py to format a date.
+
+    Pinned because the re-export is what keeps every existing import working, and
+    a "tidy-up" that deleted it would break them all at once.
+    """
+    from agent.digest import composer
+
+    assert composer.display_zone is config_mod.display_zone
+    assert str(config_mod.display_zone("Africa/Tunis")) == "Africa/Tunis"
+
+
+def test_display_zone_falls_back_to_utc_rather_than_failing():
+    assert config_mod.display_zone("Not/AZone") == timezone.utc
 
 
 # --------------------------------------------------------------------------

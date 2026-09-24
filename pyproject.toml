@@ -23,10 +23,18 @@ dependencies = [
     # UTC -- a silent one-hour shift that moves a deadline across midnight.
     # Harmless on the Phase 3 Linux VM, which has its own copy.
     "tzdata>=2024.1",
+    # Phase 5b, the HTTP API. Plain `uvicorn`, never `uvicorn[standard]`: the
+    # extras pull httptools and uvloop, which need a C toolchain the ARM box
+    # does not have -- the same rule that chose python-docx and python-pptx.
+    # python-multipart is what FastAPI parses an uploaded file with.
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+# httpx is what starlette.testclient drives the app with.
+dev = ["pytest>=8.0", "httpx>=0.27"]
 
 [project.scripts]
 agent = "agent.cli:main"

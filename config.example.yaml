@@ -113,3 +113,40 @@ quiz:
   # A percentage here (75 instead of 0.75) is refused at load rather than
   # making every quiz silently unpassable.
   pass_threshold: 0.75
+
+
+# ---------------------------------------------------------------------------
+# api -- the HTTP API behind the web client (Phase 5b)
+# ---------------------------------------------------------------------------
+#
+# The secret itself is NOT here. WEB_API_TOKEN lives in .env beside
+# TELEGRAM_BOT_TOKEN and GEMINI_API_KEY, because it is a credential. Mint one
+# with:
+#
+#     python -c "import secrets; print(secrets.token_urlsafe(32))"
+#
+# `agent serve` refuses to start without it. There is deliberately no
+# unauthenticated mode, on localhost as much as anywhere: a server that is open
+# because a variable is unset looks exactly like one that is protected, and a
+# failure that misreports itself is the shape this project ranks worst.
+api:
+  # Whether the session cookie carries the Secure flag.
+  #
+  # Leave it true. Chrome treats http://localhost as a trustworthy origin and
+  # accepts a Secure cookie there, so the default works for `agent serve` on
+  # this laptop as well as behind Caddy on the box. This exists for the browser
+  # that disagrees: a cookie silently not set costs an afternoon to diagnose,
+  # and that is worth one config key.
+  secure_cookie: true
+
+  # The scheme and host the client is served from, compared against the Origin
+  # header on every request that changes something.
+  #
+  # One origin serves the API and the static client -- that is the settled
+  # decision, and it is why CORS never enters the picture -- so a POST arriving
+  # with any other Origin did not come from the app. SameSite=Lax already blocks
+  # the cross-site form post; this covers what it does not.
+  #
+  # Unset means the check is off, which is right on a laptop where there is no
+  # public origin to compare against yet. Set it at the 5a cutover.
+  # origin: https://classroom.example.org

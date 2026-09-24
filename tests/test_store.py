@@ -77,10 +77,117 @@ def test_row_factory_gives_named_access(conn):
 @pytest.mark.parametrize(
     "table",
     ["courses", "coursework", "coursework_materials", "announcements", "submissions",
-     "materials", "study_items", "events", "quiz_attempts", "sync_runs"],
+     "materials", "study_items", "events", "quiz_attempts", "sync_runs",
+     "api_sessions"],
 )
 def test_every_expected_table_exists(conn, table):
     assert store.count_rows(conn, table) == 0
+
+
+# --------------------------------------------------------------------------
+# connect(initialise=False) -- the server's per-request connection
+# --------------------------------------------------------------------------
+
+def test_a_connection_can_skip_applying_the_schema(tmp_path):
+    """What the API opens per request, once the file already exists.
+
+    Applying schema.sql is free once per CLI invocation and wasteful once per
+    HTTP request: it re-reads the file, re-runs every CREATE TABLE IF NOT EXISTS,
+    and runs an INSERT OR IGNORE, which is a write.
+    """
+    path = tmp_path / "academic.db"
+    first = store.connect(path)
+    store.upsert_course(first, a_course())
+    first.commit()
+    first.close()
+
+    quick = store.connect(path, initialise=False)
+    assert store.count_rows(quick, "courses") == 1
+    assert store.schema_version(quick) == store.SCHEMA_VERSION
+    quick.close()
+
+
+def test_skipping_the_schema_still_sets_both_pragmas(tmp_path):
+    """Both are connection-scoped, so skipping the script must not skip them.
+
+    A per-request connection without foreign_keys would accept a row the CLI
+    would refuse, and one without busy_timeout is the `database is locked` this
+    project already went looking for once.
+    """
+    path = tmp_path / "academic.db"
+    store.connect(path).close()
+
+    quick = store.connect(path, initialise=False)
+    assert quick.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    assert quick.execute("PRAGMA busy_timeout").fetchone()[0] == store.BUSY_TIMEOUT_MS
+    quick.close()
+
+
+def test_skipping_the_schema_on_an_empty_file_refuses_rather_than_confusing(tmp_path):
+    """Version 0 is named as such, not reported as "no such table".
+
+    The guard is deliberately NOT skipped along with the script: it is one SELECT
+    against a one-row table, and a connection that silently opens a file this
+    build cannot read is exactly what it exists to prevent.
+    """
+    path = tmp_path / "empty.db"
+    path.write_bytes(b"")
+
+    with pytest.raises(store.StoreError) as caught:
+        store.connect(path, initialise=False)
+    assert "schema version 0" in str(caught.value)
+
+
+def test_initialising_is_still_the_default(tmp_path):
+    """So that no existing caller changed behaviour when the flag was added."""
+    path = tmp_path / "fresh.db"
+    conn = store.connect(path)
+    assert store.schema_version(conn) == store.SCHEMA_VERSION
+    conn.close()
+
+
+# --------------------------------------------------------------------------
+# api sessions
+# --------------------------------------------------------------------------
+
+def test_a_session_is_live_until_it_expires(conn):
+    store.create_api_session(
+        conn, "s1", expires_at="2099-01-01T00:00:00Z", user_agent="Pixel"
+    )
+    row = store.touch_api_session(conn, "s1", expires_at="2099-02-01T00:00:00Z")
+    assert row is not None
+    assert row["user_agent"] == "Pixel"
+
+
+def test_an_expired_session_is_never_returned(conn):
+    """The comparison is in the WHERE clause, so no caller can forget it."""
+    store.create_api_session(conn, "old", expires_at="2020-01-01T00:00:00Z")
+    assert store.touch_api_session(conn, "old", expires_at="2099-01-01T00:00:00Z") is None
+
+
+def test_touching_a_session_slides_its_expiry(conn):
+    store.create_api_session(conn, "s1", expires_at="2099-01-01T00:00:00Z")
+    store.touch_api_session(conn, "s1", expires_at="2099-06-01T00:00:00Z")
+
+    row = conn.execute("SELECT * FROM api_sessions WHERE id = 's1'").fetchone()
+    assert row["expires_at"] == "2099-06-01T00:00:00Z"
+
+
+def test_a_session_can_be_revoked(conn):
+    """The whole reason sessions are rows rather than a signed cookie."""
+    store.create_api_session(conn, "s1", expires_at="2099-01-01T00:00:00Z")
+    assert store.delete_api_session(conn, "s1") is True
+    assert store.count_api_sessions(conn) == 0
+    assert store.delete_api_session(conn, "s1") is False
+
+
+def test_the_sweep_drops_only_expired_sessions(conn):
+    store.create_api_session(conn, "live", expires_at="2099-01-01T00:00:00Z")
+    store.create_api_session(conn, "dead", expires_at="2020-01-01T00:00:00Z")
+
+    assert store.sweep_api_sessions(conn) == 1
+    remaining = [row["id"] for row in conn.execute("SELECT id FROM api_sessions")]
+    assert remaining == ["live"]
 
 
 def test_foreign_keys_are_enforced(conn):

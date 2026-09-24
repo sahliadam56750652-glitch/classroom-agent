@@ -30,6 +30,11 @@ DEFAULT_DATA_DIR = "./data"
 # config.yaml beside everything else that describes this installation.
 BOT_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
 
+# The web API's shared secret. A credential, so .env like the other two, and
+# never config.yaml. See api_token() for why an unset one is a hard stop.
+API_TOKEN_ENV = "WEB_API_TOKEN"
+MIN_API_TOKEN_LENGTH = 32
+
 # Bounds on quiz.question_count. Repeated here rather than imported from
 # gate/quiz.py because that module imports this one, and a personal tool does
 # not need an import cycle to keep two integers in step. A test asserts they
@@ -113,6 +118,22 @@ class Config:
     # say why -- fewer honest questions is a better answer than six invented
     # ones -- and the whole set costs one request whatever its length.
     quiz_question_count: int = 6
+
+    # config.yaml's api.secure_cookie. True everywhere it can be, which is
+    # everywhere the client reaches the API over HTTPS -- and on the box that is
+    # always, because Caddy terminates TLS in front of it. Configurable for one
+    # reason: Chrome treats http://localhost as a trustworthy origin and accepts
+    # a Secure cookie there, and not every browser has always agreed. A cookie
+    # that is silently not set costs an afternoon to diagnose, so the escape
+    # hatch is a config key rather than a code change.
+    api_secure_cookie: bool = True
+
+    # config.yaml's api.origin: the scheme and host the client is served from,
+    # checked on every state-changing request. One origin serves the API and the
+    # static client (no CORS, by the settled decision), so a non-GET arriving
+    # with any other Origin did not come from the app. None disables the check,
+    # which is what a plain `agent serve` on a laptop wants.
+    api_origin: str | None = None
 
     # Derived paths. Everything lives under data_dir so that relocating the
     # project is a directory copy.
@@ -261,6 +282,74 @@ def telegram_settings(config: Config) -> tuple[str, int]:
 
     assert config.telegram_chat_id is not None  # narrowed by the check above
     return token, config.telegram_chat_id
+
+
+def api_token(config: Config) -> str:
+    """The web API's shared secret, or a ConfigError saying how to make one.
+
+    Reads the environment directly, like `telegram_settings` -- load_config()
+    has already pulled .env into it.
+
+    **There is no unauthenticated mode, and that is the point of raising here
+    rather than returning None.** An unset token silently meaning "open" is two
+    states indistinguishable from outside the process, which is the failure this
+    project ranks as a defect in its own right. `agent serve` refuses to start,
+    on localhost as much as anywhere, so "is the API protected" is never a
+    question with two answers.
+
+    The length floor is not decoration: a short secret behind a rate limiter is
+    still a short secret, and 32 characters is what `secrets.token_urlsafe(32)`
+    comfortably exceeds.
+    """
+    token = (os.environ.get(API_TOKEN_ENV) or "").strip()
+    if not token:
+        raise ConfigError(
+            f"{API_TOKEN_ENV} is not set, so there is nothing to authenticate "
+            f"against and the API will not start.\n"
+            f"  Put one in the .env file beside config.yaml:\n"
+            f"      {API_TOKEN_ENV}=<a long random string>\n"
+            f"  Mint one with:\n"
+            f'      python -c "import secrets; print(secrets.token_urlsafe(32))"\n'
+            f"  There is deliberately no unauthenticated mode, including on "
+            f"localhost: a server that is open because a variable is missing "
+            f"looks exactly like one that is protected."
+        )
+    if len(token) < MIN_API_TOKEN_LENGTH:
+        raise ConfigError(
+            f"{API_TOKEN_ENV} is {len(token)} characters; "
+            f"{MIN_API_TOKEN_LENGTH} is the minimum.\n"
+            f'  Mint one with: python -c "import secrets; '
+            f'print(secrets.token_urlsafe(32))"'
+        )
+    return token
+
+
+def _api_secure_cookie(raw: dict[str, Any], config_path: Path) -> bool:
+    section = raw.get("api") or {}
+    if not isinstance(section, dict):
+        raise ConfigError(f"{config_path}: 'api' must be a mapping.")
+    value = section.get("secure_cookie", True)
+    if not isinstance(value, bool):
+        raise ConfigError(
+            f"{config_path}: 'api.secure_cookie' must be true or false, "
+            f"got {value!r}."
+        )
+    return value
+
+
+def _api_origin(raw: dict[str, Any], config_path: Path) -> str | None:
+    section = raw.get("api") or {}
+    if not isinstance(section, dict):
+        raise ConfigError(f"{config_path}: 'api' must be a mapping.")
+    value = section.get("origin")
+    if value is None:
+        return None
+    if not isinstance(value, str) or "//" not in value:
+        raise ConfigError(
+            f"{config_path}: 'api.origin' must be a scheme and host like "
+            f"https://classroom.example.org, got {value!r}."
+        )
+    return value.rstrip("/")
 
 
 def _packs_dir(raw: dict[str, Any], config_path: Path) -> Path | None:
@@ -450,4 +539,6 @@ def load_config(config_path: Path | None = None) -> Config:
         ocr_run_limit=_ocr_run_limit(raw, config_path),
         quiz_pass_threshold=pass_threshold,
         quiz_question_count=question_count,
+        api_secure_cookie=_api_secure_cookie(raw, config_path),
+        api_origin=_api_origin(raw, config_path),
     )
