@@ -16,6 +16,7 @@ from .classroom.models import ISO_FORMAT, parse_course
 from .config import Config, ConfigError, load_config
 from .db import store
 from .digest import composer
+from . import entries
 from .files import drive, extract, ocr, packs, upload as upload_mod
 from .gate import adjustments as gate_adjust
 from .gate import bot as gate_bot
@@ -1659,105 +1660,35 @@ def _session_line(session) -> list[str]:
     return lines
 
 
-def _subject_course(config: Config, name: str) -> tuple[str, str]:
-    """(subject, course id) for a name. Exact, and it says what to do if not.
+# The five below are argparse-facing adapters, and that is all they are. Every
+# rule they used to hold moved into `entries.py` when the HTTP API needed the
+# same validation: `cli.py` translates flags into typed arguments and renders
+# the result, and nothing that decides anything lives here any more.
 
-    Shared by every Phase 6 entry command, so a subject resolves one way
-    everywhere -- through the timetable's `subjects:` map and never a
-    near-match, because a wrong match files work under the wrong subject and
-    looks exactly like the feature working.
-    """
-    table = timetable_mod.load(config.timetable_path)
-    return upload_mod.resolve_subject(table, name)
+
+def _subject_course(config: Config, name: str) -> tuple[str, str]:
+    """(subject, course id) for a name. Loads the file; `entries` does the rest."""
+    return entries.subject_course(timetable_mod.load(config.timetable_path), name)
 
 
 def _due_at(config: Config, value: str) -> str:
-    """A due date as I would say it, stored as UTC like everything else.
-
-    A date with no time means END OF DAY locally, which is what Classroom
-    means by an absent dueTime -- so a sheet due "Friday" is not silently due
-    at Friday midnight, twenty-four hours early.
-    """
-    zone = composer.display_zone(config.timezone)
-    text = value.strip().replace("T", " ")
-    for pattern, complete in (("%Y-%m-%d %H:%M", None), ("%Y-%m-%d", "eod")):
-        try:
-            parsed = datetime.strptime(text, pattern)
-        except ValueError:
-            continue
-        if complete == "eod":
-            parsed = parsed.replace(hour=23, minute=59)
-        local = parsed.replace(tzinfo=zone)
-        return local.astimezone(timezone.utc).strftime(ISO_FORMAT)
-    raise ConfigError(
-        f"--due must be YYYY-MM-DD or 'YYYY-MM-DD HH:MM', got {value!r}."
-    )
+    return entries.parse_due(config, value)
 
 
 def _today(config: Config) -> date:
-    """Today, locally. A session was held on a wall-clock day."""
-    return datetime.now(composer.display_zone(config.timezone)).date()
+    return entries.today(config)
 
 
 def _lines(values: list[str] | None) -> str | None:
-    """Repeated flags as one TEXT column, one per line. Described, never computed."""
-    return "\n".join(values) if values else None
+    return entries.joined(values)
 
 
 def _clock_arg(value: str, flag: str) -> str:
-    """'HH:MM', validated rather than parsed.
-
-    These arrive from argparse rather than from YAML, so the sexagesimal trap
-    that `timetable._clock` exists for cannot fire here -- but a typo still
-    can, and a session stored at a time nobody wrote is exactly as wrong.
-    """
-    text = str(value).strip()
-    hours, _, minutes = text.partition(":")
-    if not (len(text) == 5 and text[2] == ":" and hours.isdigit() and minutes.isdigit()):
-        raise ConfigError(f'{flag} must look like "08:30", got {value!r}.')
-    if not (0 <= int(hours) <= 23 and 0 <= int(minutes) <= 59):
-        raise ConfigError(f"{flag} is not a real time: {value!r}.")
-    return text
+    return entries.parse_clock(value, flag)
 
 
 def _date_arg(value: str, flag: str) -> date:
-    try:
-        return date.fromisoformat(str(value))
-    except ValueError as err:
-        raise ConfigError(
-            f"{flag} must be a date like 2026-09-21, got {value!r}."
-        ) from err
-
-
-def _one_session(table, day: date, subject: str, at: str | None):
-    """Which session on that date, refusing rather than guessing.
-
-    A subject meeting twice on one day is two sessions, and adjusting the wrong
-    one is a failure that looks exactly like success -- the same reason subject
-    names are never matched approximately.
-    """
-    found = gate_adjust.sessions_for_subject(table, day, subject)
-    if at is not None:
-        exact = [session for session in found if session.start == at]
-        if not exact:
-            times = ", ".join(session.start for session in found) or "none"
-            raise ConfigError(
-                f"{table.path.name} has no {subject} session at {at} on "
-                f"{day:%a %d %b %Y}. That day has: {times}"
-            )
-        return exact[0]
-    if not found:
-        raise ConfigError(
-            f"{table.path.name} has no {subject} session on {day:%a %d %b %Y}.\n"
-            f"  For a session the pattern does not contain, use --extra."
-        )
-    if len(found) > 1:
-        times = ", ".join(session.start for session in found)
-        raise ConfigError(
-            f"{subject} meets {len(found)} times on {day:%a %d %b %Y} ({times}). "
-            f"Say which with --at."
-        )
-    return found[0]
+    return entries.parse_date(value, flag)
 
 
 def cmd_adjust(config: Config, args: argparse.Namespace) -> int:
@@ -1794,93 +1725,78 @@ def cmd_adjust(config: Config, args: argparse.Namespace) -> int:
 
     try:
         return _record_adjustment(config, table, args, kind=kinds[chosen[0]])
-    except ConfigError as err:
+    except (ConfigError, gate_adjust.AdjustmentError) as err:
         print(f"error: {err}", file=sys.stderr)
         return 1
 
 
-def _record_adjustment(config: Config, table, args, *, kind: str) -> int:
-    if args.subject is None or args.on is None:
-        raise ConfigError(f"--{kind} needs --subject and --on.")
-    day = _date_arg(args.on, "--on")
+def _adjustment_narration(plan: gate_adjust.AdjustmentPlan, args) -> list[str]:
+    """What a recorded adjustment does, said in lines.
 
-    matches = [name for name in table.subjects
-               if name.casefold() == args.subject.casefold()]
-    if not matches:
-        known = ", ".join(sorted(table.subjects)) or "(none)"
-        raise ConfigError(
-            f"{args.subject!r} is not a subject in {table.path.name}, and names "
-            f"are never matched approximately -- a wrong match adjusts the wrong "
-            f"session and looks exactly like this working.\n"
-            f"  Known subjects: {known}"
-        )
-    subject = matches[0]
-
-    at = _clock_arg(args.at, "--at") if args.at else None
-    to_time = _clock_arg(args.to_time, "--to-time") if args.to_time else None
-    end = _clock_arg(args.end, "--end") if args.end else None
-
-    fields: dict[str, Any] = {
-        "applies_on": day.isoformat(),
-        "kind": kind,
-        "subject": subject,
-        "course_id": table.subjects[subject],
-        "reason": args.reason,
-    }
+    Built from the resolved plan rather than by repeating the resolution, which
+    is the whole reason `plan` carries which session matched and where it lands
+    as facts instead of as sentences.
+    """
     lines: list[str] = []
 
-    if kind == "extra":
-        if to_time is None and at is None:
-            raise ConfigError("--extra needs --to-time (when it starts).")
-        start = to_time or at
-        fields.update(
-            session_start=start, to_date=day.isoformat(), to_start=start,
-            to_end=end, to_kind=args.kind or "LEC", to_room=args.room,
-            to_teacher=args.teacher,
+    if plan.kind == "extra":
+        lines.append(
+            f"  extra:    {plan.subject} on {plan.day:%a %d %b %Y} at {plan.start}"
         )
-        lines.append(f"  extra:    {subject} on {day:%a %d %b %Y} at {start}")
     else:
-        session = _one_session(table, day, subject, at)
-        fields["session_start"] = session.start
-        if session.joint:
+        if plan.joint:
             # Said out loud. "I cancelled Database" reading as "and OS with it"
             # is worth a sentence, and it is one session either way.
-            other = " + ".join(session.subjects)
+            other = " + ".join(plan.joint_subjects)
             lines.append(f"  joint:    this session is {other} -- both are affected")
 
-        if kind == "cancelled":
+        if plan.kind == "cancelled":
             lines.append(
-                f"  cancel:   {subject} {session.start} {session.kind} "
-                f"on {day:%a %d %b %Y}"
+                f"  cancel:   {plan.subject} {plan.start} {plan.session_kind} "
+                f"on {plan.day:%a %d %b %Y}"
             )
         else:
-            if to_time is None and args.to_date is None:
-                raise ConfigError(
-                    "--move needs --to (a new date) or --to-time (a new time)."
-                )
-            landing = _date_arg(args.to_date, "--to") if args.to_date else day
-            fields.update(
-                to_date=landing.isoformat(), to_start=to_time, to_end=end,
-                to_kind=args.kind, to_room=args.room,
+            landing = plan.landing or plan.day
+            lines.append(
+                f"  move:     {plan.subject} {plan.start} {plan.session_kind} "
+                f"on {plan.day:%a %d %b %Y}"
             )
             lines.append(
-                f"  move:     {subject} {session.start} {session.kind} "
-                f"on {day:%a %d %b %Y}"
+                f"  to:       {landing:%a %d %b %Y} at "
+                f"{plan.fields.get('to_start') or plan.start}"
             )
-            lines.append(
-                f"  to:       {landing:%a %d %b %Y} at {to_time or session.start}"
-            )
-            if landing != day:
+            if plan.gate_moves:
                 lines.append(
                     f"  gate:     the prompt for it moves to "
-                    f"{landing - timedelta(days=1):%a %d %b} evening"
+                    f"{plan.gate_evening:%a %d %b} evening"
                 )
+
     if args.room:
         lines.append(f"  room:     {args.room}")
     if args.reason:
         lines.append(f"  reason:   {args.reason}")
+    return lines
 
-    for line in lines:
+
+def _record_adjustment(config: Config, table, args, *, kind: str) -> int:
+    plan = gate_adjust.plan(
+        table,
+        gate_adjust.AdjustmentSpec(
+            kind=kind,
+            subject=args.subject,
+            on=args.on,
+            at=args.at,
+            to_date=args.to_date,
+            to_time=args.to_time,
+            end=args.end,
+            to_kind=args.kind,
+            room=args.room,
+            teacher=args.teacher,
+            reason=args.reason,
+        ),
+    )
+
+    for line in _adjustment_narration(plan, args):
         print(line)
 
     if args.dry_run:
@@ -1890,13 +1806,10 @@ def _record_adjustment(config: Config, table, args, *, kind: str) -> int:
 
     conn = store.open_db(config)
     try:
-        adjustment_id = store.add_adjustment(conn, **fields)
+        adjustment_id = gate_adjust.record(conn, plan)
         clash = None
         if adjustment_id is None:
-            clash = store.find_adjustment(
-                conn, applies_on=fields["applies_on"], subject=subject,
-                session_start=fields["session_start"],
-            )
+            clash = gate_adjust.find_clash(conn, plan)
         else:
             conn.commit()
     finally:
@@ -2003,11 +1916,10 @@ def _print_orphans(stranded, table) -> None:
 def _remove_adjustment(config: Config, adjustment_id: int) -> int:
     conn = store.open_db(config)
     try:
-        row = store.get_adjustment(conn, adjustment_id)
+        row = gate_adjust.remove(conn, adjustment_id)
         if row is None:
             print(f"no adjustment with id {adjustment_id}.", file=sys.stderr)
             return 1
-        store.delete_adjustment(conn, adjustment_id)
         conn.commit()
     finally:
         conn.close()
@@ -2021,28 +1933,21 @@ def _repoint_adjustment(config: Config, table, args) -> int:
         print("--repoint needs --subject: what the subject is called now.",
               file=sys.stderr)
         return 1
-    matches = [name for name in table.subjects
-               if name.casefold() == args.subject.casefold()]
-    if not matches:
-        known = ", ".join(sorted(table.subjects)) or "(none)"
-        print(f"{args.subject!r} is not a subject in {table.path.name}.\n"
-              f"  Known subjects: {known}", file=sys.stderr)
-        return 1
-    subject = matches[0]
 
     conn = store.open_db(config)
     try:
-        row = store.get_adjustment(conn, args.repoint)
-        if row is None:
+        moved = gate_adjust.repoint(conn, table, args.repoint, args.subject)
+        if moved is None:
             print(f"no adjustment with id {args.repoint}.", file=sys.stderr)
             return 1
-        store.repoint_adjustment(
-            conn, args.repoint, subject=subject, course_id=table.subjects[subject],
-        )
         conn.commit()
+    except gate_adjust.AdjustmentError as err:
+        print(err, file=sys.stderr)
+        return 1
     finally:
         conn.close()
-    print(f"  repointed {args.repoint}: {row['subject']!r} -> {subject!r}")
+    was, now = moved
+    print(f"  repointed {args.repoint}: {was!r} -> {now!r}")
     return 0
 
 
@@ -2182,26 +2087,37 @@ def _add_project(config: Config, args: argparse.Namespace) -> int:
         print("--add needs --subject and --title.", file=sys.stderr)
         return 1
     try:
-        subject, course_id = _subject_course(config, args.subject)
-        deadline_at = _due_at(config, args.deadline) if args.deadline else None
+        plan = entries.plan_project(
+            config,
+            timetable_mod.load(config.timetable_path),
+            entries.ProjectSpec(
+                subject=args.subject,
+                title=args.title,
+                deadline=args.deadline,
+                deliverables=args.deliverables or [],
+                team=args.team or [],
+                milestones=args.milestones or [],
+                brief=args.brief,
+                coursework=args.coursework,
+            ),
+        )
     except (upload_mod.UploadError, timetable_mod.TimetableError, ConfigError) as err:
         print(f"error: {err}", file=sys.stderr)
         return 1
 
     zone = composer.display_zone(config.timezone)
-    milestones = args.milestones or []
-    print(f"  subject:  {subject}")
-    print(f"  title:    {args.title}")
-    print(f"  deadline: {_local_stamp(deadline_at, zone) or 'no date'}")
-    for name in args.deliverables or []:
+    print(f"  subject:  {plan.subject}")
+    print(f"  title:    {plan.title}")
+    print(f"  deadline: {_local_stamp(plan.deadline_at, zone) or 'no date'}")
+    for name in plan.deliverables:
         print(f"  deliver:  {name}")
-    for name in milestones:
+    for name in plan.milestones:
         print(f"  step:     {name}")
-    if args.team:
-        print(f"  team:     {', '.join(args.team)}")
-    if args.coursework:
-        print(f"  linked:   coursework {args.coursework} -- one deadline, not two")
-    if not deadline_at:
+    if plan.team:
+        print(f"  team:     {', '.join(plan.team)}")
+    if plan.coursework:
+        print(f"  linked:   coursework {plan.coursework} -- one deadline, not two")
+    if not plan.deadline_at:
         print()
         print("  no --deadline, so the scanner will never alert on this.")
 
@@ -2212,24 +2128,18 @@ def _add_project(config: Config, args: argparse.Namespace) -> int:
 
     conn = store.open_db(config)
     try:
-        project_id = store.add_project(
-            conn, course_id=course_id, title=args.title, deadline_at=deadline_at,
-            deliverables=_lines(args.deliverables), team=_lines(args.team),
-            brief_source=args.brief, coursework_id=args.coursework,
-        )
-        if project_id is not None:
-            for name in milestones:
-                store.add_milestone(conn, project_id, name)
+        project_id = entries.create_project(conn, plan)
         conn.commit()
     finally:
         conn.close()
 
     print()
     if project_id is None:
-        print(f"  {subject} already has a project called {args.title!r}. "
+        print(f"  {plan.subject} already has a project called {plan.title!r}. "
               f"Nothing written.")
         return 0
-    print(f"  recorded as project {project_id} with {len(milestones)} milestone(s).")
+    print(f"  recorded as project {project_id} with "
+          f"{len(plan.milestones)} milestone(s).")
     return 0
 
 
@@ -2279,37 +2189,38 @@ def _show_project(config: Config, project_id: int) -> int:
 def _complete_milestone(config: Config, milestone_id: int) -> int:
     conn = store.open_db(config)
     try:
-        row = store.get_milestone(conn, milestone_id)
-        if row is None:
+        outcome = entries.complete_milestone(conn, milestone_id)
+        if outcome.status == "missing":
             print(f"no milestone with id {milestone_id}. "
                   f"`agent projects --show <id>` lists them.", file=sys.stderr)
             return 1
-        if row["done_at"]:
-            print(f"  milestone {milestone_id} was already done ({row['done_at']}).")
+        if outcome.status == "already":
+            print(f"  milestone {milestone_id} was already done "
+                  f"({outcome.row['done_at']}).")
             return 0
-        store.complete_milestone(conn, milestone_id)
         conn.commit()
     finally:
         conn.close()
-    print(f"  done: {row['title']}  ({row['project_title']})")
+    print(f"  done: {outcome.row['title']}  ({outcome.row['project_title']})")
     return 0
 
 
 def _close_project(config: Config, project_id: int) -> int:
     conn = store.open_db(config)
     try:
-        row = store.get_project(conn, project_id)
-        if row is None:
+        outcome = entries.close_project(conn, project_id)
+        if outcome.status == "missing":
             print(f"no project with id {project_id}.", file=sys.stderr)
             return 1
-        if row["closed_at"]:
-            print(f"  project {project_id} was already closed ({row['closed_at']}).")
+        if outcome.status == "already":
+            print(f"  project {project_id} was already closed "
+                  f"({outcome.row['closed_at']}).")
             return 0
-        store.close_project(conn, project_id)
         conn.commit()
     finally:
         conn.close()
-    print(f"  closed: {row['title']}. It is no longer chased for a deadline.")
+    print(f"  closed: {outcome.row['title']}. "
+          f"It is no longer chased for a deadline.")
     return 0
 
 
@@ -2359,24 +2270,26 @@ def cmd_sessions(config: Config, args: argparse.Namespace) -> int:
 
 def _log_session(config: Config, args: argparse.Namespace) -> int:
     try:
-        subject, course_id = _subject_course(config, args.subject)
+        plan = entries.plan_session(
+            config,
+            timetable_mod.load(config.timetable_path),
+            entries.SessionSpec(
+                subject=args.subject,
+                kind=args.kind,
+                on=args.on,
+                covered=args.covered,
+            ),
+        )
     except (upload_mod.UploadError, timetable_mod.TimetableError) as err:
         print(f"error: {err}", file=sys.stderr)
         return 1
+    except ConfigError as err:
+        print(err, file=sys.stderr)
+        return 1
 
-    if args.on is None:
-        held_on = _today(config).isoformat()
-    else:
-        try:
-            held_on = date.fromisoformat(args.on).isoformat()
-        except ValueError:
-            print(f"--on must be a date like 2026-09-21, got {args.on!r}",
-                  file=sys.stderr)
-            return 1
-
-    print(f"  subject: {subject}")
-    print(f"  held:    {held_on}  {args.kind}")
-    print(f"  covered: {args.covered or '(not recorded)'}")
+    print(f"  subject: {plan.subject}")
+    print(f"  held:    {plan.held_on}  {plan.kind}")
+    print(f"  covered: {plan.covered or '(not recorded)'}")
 
     if args.dry_run:
         print()
@@ -2385,10 +2298,7 @@ def _log_session(config: Config, args: argparse.Namespace) -> int:
 
     conn = store.open_db(config)
     try:
-        session_id = store.log_manual_session(
-            conn, course_id=course_id, held_on=held_on,
-            kind=args.kind, covered=args.covered,
-        )
+        session_id = entries.log_session(conn, plan)
         conn.commit()
     finally:
         conn.close()
@@ -2462,20 +2372,31 @@ def _local_stamp(value: str | None, zone) -> str:
 
 def _add_task(config: Config, args: argparse.Namespace) -> int:
     try:
-        subject, course_id = _subject_course(config, args.subject)
-        due_at = _due_at(config, args.due) if args.due else None
+        plan = entries.plan_task(
+            config,
+            timetable_mod.load(config.timetable_path),
+            entries.TaskSpec(
+                subject=args.subject,
+                title=args.title,
+                kind=args.kind,
+                due=args.due,
+                notes=args.notes,
+                source=args.source,
+            ),
+        )
     except (upload_mod.UploadError, timetable_mod.TimetableError, ConfigError) as err:
         print(f"error: {err}", file=sys.stderr)
         return 1
 
     zone = composer.display_zone(config.timezone)
-    print(f"  subject: {subject}")
-    print(f"  title:   {args.title}")
-    print(f"  kind:    {args.kind.replace('_', ' ')}")
+    due_at = plan.due_at
+    print(f"  subject: {plan.subject}")
+    print(f"  title:   {plan.title}")
+    print(f"  kind:    {plan.kind.replace('_', ' ')}")
     print(f"  due:     {_local_stamp(due_at, zone) or 'no date'}"
           f"{f'  ({due_at})' if due_at else ''}")
 
-    if not due_at:
+    if plan.unscanned:
         # Said out loud: an undated task is recorded, and it is also invisible
         # to the only thing that would have chased it.
         print()
@@ -2488,10 +2409,7 @@ def _add_task(config: Config, args: argparse.Namespace) -> int:
 
     conn = store.open_db(config)
     try:
-        task_id = store.add_manual_task(
-            conn, course_id=course_id, title=args.title, kind=args.kind,
-            due_at=due_at, notes=args.notes, source=args.source,
-        )
+        task_id = entries.create_task(conn, plan)
         conn.commit()
     finally:
         conn.close()
@@ -2509,19 +2427,18 @@ def _add_task(config: Config, args: argparse.Namespace) -> int:
 def _complete_task(config: Config, task_id: int) -> int:
     conn = store.open_db(config)
     try:
-        row = store.get_manual_task(conn, task_id)
-        if row is None:
+        outcome = entries.complete_task(conn, task_id)
+        if outcome.status == "missing":
             print(f"no task with id {task_id}.", file=sys.stderr)
             return 1
-        if row["done_at"]:
+        if outcome.status == "already":
             # A distinct outcome from "marked it done", and worth saying so.
-            print(f"  task {task_id} was already done ({row['done_at']}).")
+            print(f"  task {task_id} was already done ({outcome.row['done_at']}).")
             return 0
-        store.complete_manual_task(conn, task_id)
         conn.commit()
     finally:
         conn.close()
-    print(f"  done: {row['title']}")
+    print(f"  done: {outcome.row['title']}")
     return 0
 
 
@@ -3577,6 +3494,7 @@ def main(argv: list[str] | None = None) -> int:
         upload_mod.UploadError,
         backup.BackupError,
         llm_provider.LLMError,
+        gate_adjust.AdjustmentError,
     ) as err:
         print(f"error: {err}", file=sys.stderr)
         return 1

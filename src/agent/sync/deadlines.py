@@ -243,8 +243,14 @@ def _merge_linked_projects(
     return list(merged.values()) + standalone
 
 
-def _candidates(db: sqlite3.Connection, course_ids: list[str]) -> list[Candidate]:
-    """Everything that is due, from every source that has due dates."""
+def candidates(db: sqlite3.Connection, course_ids: list[str]) -> list[Candidate]:
+    """Everything that is due, from every source that has due dates.
+
+    Public, because the deadlines SCREEN wants this list and must not want
+    `scan`. `scan` decides which thresholds are owed an event, which is a
+    question only something about to write one should be asking; this is the
+    reading half and it writes nothing.
+    """
     return (
         _merge_linked_projects(
             _coursework_candidates(db, course_ids), _project_candidates(db)
@@ -266,7 +272,7 @@ def scan(
     moment = now or datetime.now(timezone.utc)
     result = DeadlineScan(events=[])
 
-    for row in _candidates(db, course_ids):
+    for row in candidates(db, course_ids):
         result.considered += 1
 
         # No due date is the common case, not an anomaly: only 46% of measured

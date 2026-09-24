@@ -21,9 +21,10 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 from ..classroom.models import ISO_FORMAT
+from ..config import display_zone as _display_zone
 from ..notify.telegram import escape, link
 
 # Urgency, most urgent first. Every event type the differ and the deadline
@@ -117,17 +118,11 @@ def _local(value: str | None, tz: ZoneInfo | timezone) -> str:
     return moment.astimezone(tz).strftime("%a %d %b %H:%M")
 
 
-def display_zone(name: str) -> ZoneInfo | timezone:
-    """The configured zone, or UTC if the platform cannot resolve it.
-
-    Windows ships no IANA database. The tzdata package is a dependency for
-    exactly that reason, but if it is somehow missing, the briefing goes out
-    with UTC times rather than not going out at all.
-    """
-    try:
-        return ZoneInfo(name)
-    except (ZoneInfoNotFoundError, ValueError):
-        return timezone.utc
+# Re-exported, not defined. It moved to config.py when the HTTP API needed it:
+# every layer that displays a timestamp does, and this module imports
+# notify/telegram.py, which the API must not. Imported from here for years, so
+# the name stays.
+display_zone = _display_zone
 
 
 # --------------------------------------------------------------------------

@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 from dotenv import load_dotenv
@@ -34,6 +36,25 @@ BOT_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
 # match.
 MIN_QUESTIONS = 3
 MAX_QUESTIONS = 10
+
+
+def display_zone(name: str) -> ZoneInfo | timezone:
+    """The configured zone, or UTC if the platform cannot resolve it.
+
+    Windows ships no IANA database. The tzdata package is a dependency for
+    exactly that reason, but if it is somehow missing, the briefing goes out
+    with UTC times rather than not going out at all.
+
+    Lives here rather than in `digest/composer.py`, where it used to, because
+    every layer that displays a timestamp needs it and composer imports
+    `notify/telegram.py` -- which would drag the Telegram client into the HTTP
+    API for the sake of ten lines about time zones. `composer.display_zone`
+    re-exports this one, so nothing that already imported it from there moved.
+    """
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return timezone.utc
 
 
 class ConfigError(Exception):
