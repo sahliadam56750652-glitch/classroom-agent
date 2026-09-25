@@ -1,0 +1,179 @@
+/*
+  The tokens DESIGN.md section 6 specifies, and nothing else yet. Screen styles
+  land with their screens.
+
+  Three of these are rules rather than taste, and each has a reason in the brief:
+
+  Dark is the DEFAULT, not a toggle. And not pure white on pure black -- an
+  off-white on a near-black ground, because maximum contrast haloes text at 23:00
+  and makes a 40-page sitting physically tiring.
+
+  17px is a FLOOR. This text is read tired, on a phone, at night.
+
+  No weight below 400, and nothing over 150ms.
+*/
+
+:root {
+  --ground: #0e0f11;
+  --raised: #171a1d;
+  --ink: #e8e6e3;
+  --ink-quiet: #a8a39c;
+  --ink-faint: #6f6b66;
+  --line: #262a2e;
+  --accent: #7fa8c9;
+
+  /* The only red in this app is a deadline that has already passed. Not
+     unreviewed material -- that is the resting state of most material most of
+     the time, and colouring the normal case as an alarm teaches me to ignore
+     the colour. */
+  --passed: #c9776b;
+
+  --pad: 16px;
+  --radius: 10px;
+  --quick: 150ms;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--ground);
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  font-size: 17px;
+  line-height: 1.55;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* No animation over 150ms, anywhere. Enforced here rather than remembered at
+   each call site. */
+* ,
+*::before,
+*::after {
+  animation-duration: var(--quick) !important;
+  transition-duration: var(--quick) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.pad {
+  padding: var(--pad);
+  max-width: 44rem;
+  margin: 0 auto;
+}
+
+h1 {
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin: 0 0 0.35em;
+  letter-spacing: -0.01em;
+}
+
+p {
+  margin: 0 0 0.9em;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  color: var(--ink-quiet);
+}
+
+.quiet {
+  color: var(--ink-quiet);
+}
+
+.faint {
+  color: var(--ink-faint);
+}
+
+.booting {
+  color: var(--ink-faint);
+  padding: var(--pad);
+  margin: 0;
+}
+
+/* Stated plainly, never in red. A problem is information, not an alarm -- the
+   red in this app is reserved for a deadline that has already gone. */
+.problem {
+  color: var(--ink);
+  background: var(--raised);
+  border-left: 3px solid var(--ink-faint);
+  padding: 0.7em 0.9em;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+input,
+button {
+  font: inherit;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+}
+
+input {
+  background: var(--raised);
+  color: var(--ink);
+  padding: 0.65em 0.8em;
+  width: 100%;
+  /* 17px minimum on an input too: iOS zooms the viewport on focus below 16px,
+     and Android keyboards render smaller text worse. */
+  font-size: 17px;
+}
+
+input:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button {
+  background: var(--raised);
+  color: var(--ink);
+  padding: 0.65em 1.1em;
+  margin-top: 0.7em;
+  /* 44px is the smallest target that is reliably hittable with a thumb. */
+  min-height: 44px;
+  cursor: pointer;
+}
+
+button:disabled {
+  color: var(--ink-faint);
+  cursor: default;
+}
+
+button.plain {
+  background: none;
+  border-color: transparent;
+  color: var(--ink-quiet);
+  padding-left: 0;
+}
+
+.checks {
+  list-style: none;
+  padding: 0;
+  margin: 1.2em 0;
+  border-top: 1px solid var(--line);
+}
+
+.checks li {
+  padding: 0.6em 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-quiet);
+  font-size: 0.95rem;
+}

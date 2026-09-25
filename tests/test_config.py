@@ -241,6 +241,7 @@ def test_config_type_is_exported():
         "quiz_question_count",
         "api_secure_cookie",
         "api_origin",
+        "telegram_bot_username",
     }
 
 

@@ -13,6 +13,7 @@ from . import auth
 from . import backup
 from .classroom.client import ClassroomClient
 from .classroom.models import ISO_FORMAT, parse_course
+from . import config as config_mod
 from .config import Config, ConfigError, load_config
 from .db import store
 from .digest import composer
@@ -31,6 +32,12 @@ from . import manual
 from . import scope as scope_mod
 from .notify import telegram as telegram_api
 from .sync import deadlines, poller
+
+# The web client. Source rather than data, so it sits beside config.yaml in the
+# checkout rather than under DATA_DIR -- the same reasoning as timetable.yaml.
+# `config.REPO_ROOT` is what `pip install -e .` keeps pointing at the checkout;
+# see deploy/README.md on why editable is not a preference.
+WEB_DIR = config_mod.REPO_ROOT / "web"
 
 # Archived courses are excluded unless asked for, and 7 of 25 measured courses
 # are archived -- last year's material is exactly what this tool is for.
@@ -665,6 +672,20 @@ def _build_parser() -> argparse.ArgumentParser:
         "--check",
         action="store_true",
         help="build the app, verify the token and the database, and exit",
+    )
+    serve_parser.add_argument(
+        "--no-client",
+        action="store_true",
+        help=(
+            "serve the API only, without mounting web/. What the Vite-style "
+            "inner loop wants when a dev server is proxying /api"
+        ),
+    )
+
+    sub.add_parser(
+        "webcontract",
+        parents=[shared],
+        help="regenerate web/contract.js from the API's own OpenAPI schema",
     )
 
     notify_parser = sub.add_parser(
@@ -3247,6 +3268,10 @@ def cmd_serve(config: Config, args: argparse.Namespace) -> int:
     # Raises ConfigError for a missing or short token, before a port is bound.
     app = create_app(config)
 
+    serving_client = not args.no_client and (WEB_DIR / "index.html").is_file()
+    if serving_client:
+        _mount_client(app)
+
     if args.check:
         writes = sorted(f"{method} {path}" for method, path in _api_write_routes(app))
         print("  token:    set, at least 32 characters")
@@ -3260,10 +3285,64 @@ def cmd_serve(config: Config, args: argparse.Namespace) -> int:
         print("  checked -- nothing bound, nothing served")
         return 0
 
-    print(f"  serving on http://{args.host}:{args.port}/api")
-    print(f"  docs at    http://{args.host}:{args.port}/api/docs")
-    print("  POST the token from .env to /api/session to sign in.")
+    where = f"http://{args.host}:{args.port}"
+    if serving_client:
+        print(f"  app at     {where}/")
+    else:
+        print("  client:    not mounted (--no-client, or web/index.html is absent)")
+    print(f"  serving on {where}/api")
+    print(f"  docs at    {where}/api/docs")
+    print("  Sign in with the token from .env.")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    return 0
+
+
+def _mount_client(app) -> None:
+    """Serve web/ from the API, which is what Caddy will do on the box.
+
+    Mounted here and not in `create_app` deliberately: `create_app` is what every
+    test builds, and a test asserting the API's route surface should not have to
+    know that a directory of static files exists. `agent serve` is the only caller
+    that serves a browser.
+
+    Every unknown path falls through to index.html, because the client routes on
+    `location.pathname` and a deep link to /read/abc must not 404. `/api/*` is
+    matched first by virtue of being a real route, so nothing here can shadow it.
+    """
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    index = WEB_DIR / "index.html"
+
+    class ClientFiles(StaticFiles):
+        """StaticFiles, but a miss is the app rather than a 404."""
+
+        async def get_response(self, path, scope):
+            response = await super().get_response(path, scope)
+            if response.status_code == 404:
+                return FileResponse(index)
+            return response
+
+    app.mount("/", ClientFiles(directory=str(WEB_DIR), html=True), name="client")
+
+
+def cmd_webcontract(config: Config, args: argparse.Namespace) -> int:
+    """Regenerate web/contract.js. No server needs to be running.
+
+    The app is built in-process and its schema read from it, so the generated file
+    cannot be a stale copy of a schema that has since moved.
+    """
+    try:
+        from .api import contract
+    except ImportError as err:
+        print(f"the API needs fastapi, and it is missing: {err}", file=sys.stderr)
+        return 1
+
+    destination = WEB_DIR / "contract.js"
+    path, changed = contract.write(config, destination)
+    print(f"  {'written' if changed else 'unchanged'}: {path}")
+    if not changed:
+        print("  (the schema has not moved since it was last generated)")
     return 0
 
 
@@ -3582,6 +3661,7 @@ COMMANDS = {
     "flagged": cmd_flagged,
     "bot": cmd_bot,
     "serve": cmd_serve,
+    "webcontract": cmd_webcontract,
     "events": cmd_events,
     "deadlines": cmd_deadlines,
     "notify": cmd_notify,

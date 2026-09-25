@@ -25,7 +25,15 @@ class TokenIn(BaseModel):
     token: str = Field(min_length=1)
 
 
-class SessionOut(BaseModel):
+class SignInOut(BaseModel):
+    """The result of presenting the token. NOT a timetable session.
+
+    Named for what it is because `schemas.SessionOut` is a scheduled class, and
+    two different things called SessionOut made FastAPI mangle both into
+    `agent__api__routes__meta__SessionOut` in the schema -- which is how the
+    generated client contract ended up with a name nobody could read.
+    """
+
     signed_in: bool
     expires_at: str
 
@@ -36,6 +44,11 @@ class HealthOut(BaseModel):
 
 class StatusOut(BaseModel):
     schema_version: int
+    # What the client needs to build a t.me deep link for the primary action.
+    # Null means hide the button: 5b is read-only over study_items, so without
+    # somewhere to send me the action has nothing to do, and a button that goes
+    # nowhere is the one thing DESIGN.md says it must never be.
+    telegram_bot_username: str | None = None
     study_items: dict[str, int]
     extractions: dict[str, int]
     ocr_pages: dict[str, int]
@@ -46,10 +59,10 @@ class StatusOut(BaseModel):
     ocr_errors: list[dict[str, object]]
 
 
-@router.post("/session", response_model=SessionOut)
+@router.post("/session", response_model=SignInOut)
 def sign_in(
     body: TokenIn, request: Request, response: Response, config: Conf, conn: Db
-) -> SessionOut:
+) -> SignInOut:
     """Trade the token for a cookie. The only unauthenticated route that works.
 
     The refusal is deliberately incurious: a wrong token gets 401 and a sentence,
@@ -84,15 +97,15 @@ def sign_in(
         conn, session_id, expires_at=api_auth._expiry_iso()
     )
     assert row is not None  # just created
-    return SessionOut(signed_in=True, expires_at=str(row["expires_at"]))
+    return SignInOut(signed_in=True, expires_at=str(row["expires_at"]))
 
 
-@router.delete("/session", response_model=SessionOut)
-def sign_out(request: Request, response: Response, config: Conf, conn: Db) -> SessionOut:
+@router.delete("/session", response_model=SignInOut)
+def sign_out(request: Request, response: Response, config: Conf, conn: Db) -> SignInOut:
     """Revoke this browser's row. The reason sessions are rows at all."""
     api_auth.revoke(conn, request.cookies.get(api_auth.COOKIE_NAME))
     response.delete_cookie(key=api_auth.COOKIE_NAME, path="/")
-    return SessionOut(signed_in=False, expires_at="")
+    return SignInOut(signed_in=False, expires_at="")
 
 
 @router.get("/health", response_model=HealthOut)
@@ -102,7 +115,7 @@ def health() -> HealthOut:
 
 
 @router.get("/status", response_model=StatusOut)
-def status_report(conn: Db, session: Session) -> StatusOut:
+def status_report(conn: Db, config: Conf, session: Session) -> StatusOut:
     """Every figure `agent run` prints, for the screen that audits the rest.
 
     Here because DESIGN.md forbids "a state the app counts but will not show me".
@@ -111,6 +124,7 @@ def status_report(conn: Db, session: Session) -> StatusOut:
     runs = store.recent_sync_runs(conn, limit=1)
     return StatusOut(
         schema_version=store.schema_version(conn),
+        telegram_bot_username=config.telegram_bot_username,
         study_items=store.count_study_items_by_state(conn),
         extractions=store.count_extractions_by_status(conn),
         ocr_pages=store.count_ocr_pages_by_status(conn),

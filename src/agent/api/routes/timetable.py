@@ -127,8 +127,32 @@ def timetable_file(table: Table, session: Session) -> Response:
     return Response(content=body, media_type="text/yaml; charset=utf-8")
 
 
-@router.api_route("/timetable/file", methods=["PUT", "POST", "PATCH", "DELETE"])
-def timetable_file_is_read_only() -> Response:
+# Four registrations rather than one `api_route(methods=[...])`, which is not
+# verbosity for its own sake: FastAPI gives a multi-method route ONE operation id
+# and then writes it once per method, so the schema came out with four duplicate
+# operationIds and a warning on every build. Each method gets its own name here,
+# which also means the generated client contract lists all four.
+@router.put("/timetable/file")
+def timetable_file_put() -> Response:
+    return _timetable_file_is_read_only()
+
+
+@router.post("/timetable/file")
+def timetable_file_post() -> Response:
+    return _timetable_file_is_read_only()
+
+
+@router.patch("/timetable/file")
+def timetable_file_patch() -> Response:
+    return _timetable_file_is_read_only()
+
+
+@router.delete("/timetable/file")
+def timetable_file_delete() -> Response:
+    return _timetable_file_is_read_only()
+
+
+def _timetable_file_is_read_only() -> Response:
     """405, with the reason and the alternative.
 
     Deliberately not a 404. The file holds the weekly PATTERN and keeps exactly

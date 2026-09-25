@@ -27,6 +27,7 @@ from ...db import store
 from ...filenames import document_filename
 from ...gate import sections
 from .. import files, schemas
+from ..convert import window as convert_window
 from ..deps import Conf, Db, MaybeTable, Session
 
 router = APIRouter()
@@ -148,9 +149,53 @@ def _text_totals(
     return {"pages": int(row["pages"] or 0), "unread": int(row["unread"] or 0)}
 
 
+def _document_windows(
+    conn: sqlite3.Connection, config, drive_id: str, budget: int
+) -> tuple[list[schemas.WindowOut], int]:
+    """This document's evening-sized windows, and how many pages it holds.
+
+    **These windows are READ-ONLY CONTEXT and are about a different thing from
+    the item's readiness figure.** A window says which pages an evening covers;
+    `Item.ready` and `Item.blocked_reason` are still about the WHOLE post, because
+    3d stage 2 -- window-scoped readiness, the cursor, and a per-window `verified`
+    rule -- is deliberately not built. So a client shows `pages 21-42 of 92`
+    beside `12 pages not yet transcribed` and those two numbers are not in
+    conversation with each other: the second is about the document.
+
+    Rendering a window as though readiness were scoped to it would be a quiet lie
+    -- it would imply a quiz on pages 21-42 is possible when the blocker is on
+    page 88. When 3d stage 2 lands, THIS is the comment it invalidates, and
+    `Window.ready` (which already exists and is already correct per window) is
+    what it starts using.
+    """
+    row = store.document_source(conn, drive_id)
+    if row is None:
+        return [], 0
+    document = sections.read_document(
+        row,
+        config.library_dir,
+        store.ocr_pages_for(conn, drive_id),
+        budget=budget,
+    )
+    if document is None:
+        return [], 0
+    return [convert_window(value) for value in document.windows], document.pages
+
+
 @router.get("/documents/{drive_id}", response_model=schemas.DocumentOut)
-def document(drive_id: str, conn: Db, session: Session) -> schemas.DocumentOut:
-    """What is known about one attachment, readable or not."""
+def document(
+    drive_id: str,
+    conn: Db,
+    config: Conf,
+    session: Session,
+    pages: int = Query(sections.DEFAULT_BUDGET, ge=1, le=500),
+) -> schemas.DocumentOut:
+    """What is known about one attachment, readable or not, cut into windows.
+
+    The reader opens a document by its Drive id and needs the window boundaries
+    to say `34 / 42` against. See `_document_windows` for why those boundaries and
+    the readiness figure are about different things.
+    """
     row = store.get_extraction(conn, drive_id)
     if row is None:
         raise HTTPException(
@@ -162,6 +207,7 @@ def document(drive_id: str, conn: Db, session: Session) -> schemas.DocumentOut:
     ).fetchone()
     title = str((material["title"] if material else None) or drive_id)
     local = row["local_path"]
+    windows, _ = _document_windows(conn, config, drive_id, pages)
     return schemas.DocumentOut(
         drive_id=drive_id,
         title=title,
@@ -174,6 +220,7 @@ def document(drive_id: str, conn: Db, session: Session) -> schemas.DocumentOut:
             document_filename(title, str(local)) if local else None
         ),
         readable=bool(local) and str(row["status"] or "") == "ok",
+        windows=windows,
     )
 
 
@@ -310,25 +357,73 @@ def read_position(
 
 @router.put("/documents/{drive_id}/position", response_model=schemas.PositionOut)
 def set_read_position(
-    drive_id: str, body: PositionIn, conn: Db, session: Session
+    drive_id: str, body: PositionIn, conn: Db, config: Conf, session: Session
 ) -> schemas.PositionOut:
-    """Remember where I stopped. One row per document -- a cursor, not a history."""
+    """Remember where I stopped. One row per document -- a cursor, not a history.
+
+    **The SERVER derives the anchor from the page index, and that is the only way
+    this works.** A browser cannot compute it: `sections.anchor` hashes the stored
+    extraction text -- PyMuPDF's output, whitespace-normalised, with an OCR
+    transcription folded in below 40 characters -- and PDF.js's `getTextContent`
+    produces materially different text for the same page. A client-computed hash
+    would essentially never match, and the position would silently degrade to a
+    bare index, which is the case that cannot survive a re-fetch.
+
+    A caller may still supply `page_hash`, and one that does is trusted: the CLI
+    or a test may already hold the right value. But nothing has to.
+    """
     if store.get_extraction(conn, drive_id) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"nothing is held for {drive_id}, so there is no place in it.",
         )
+
+    page_hash = body.page_hash
+    if page_hash is None:
+        page_hash = _anchor_at(conn, config, drive_id, body.page_index)
+
     store.set_read_position(
-        conn, drive_id, page_index=body.page_index, page_hash=body.page_hash
+        conn, drive_id, page_index=body.page_index, page_hash=page_hash
     )
     stored = store.get_read_position(conn, drive_id)
     assert stored is not None  # just written
     return schemas.PositionOut(
         drive_id=drive_id,
         page=body.page_index + 1,
-        page_hash=body.page_hash,
+        page_hash=page_hash,
         updated_at=str(stored["updated_at"]),
+        # Said at the moment it is stored, not discovered later on a GET: a page
+        # with too little text to identify cannot be found again if the document
+        # changes, and that is worth knowing while I am still looking at it.
+        note=(
+            ""
+            if page_hash
+            else (
+                "that page carries too little text to identify by content, so this "
+                "position is an index and will not survive the document changing."
+            )
+        ),
     )
+
+
+def _anchor_at(
+    conn: sqlite3.Connection, config, drive_id: str, page_index: int
+) -> str | None:
+    """The content hash of one page, as `sections.read_document` computes it.
+
+    `Document.anchors` is already the per-page tuple, so this is a lookup rather
+    than a second implementation of the hashing -- which matters, because a hash
+    computed two ways is a cursor that works until the two disagree.
+    """
+    row = store.document_source(conn, drive_id)
+    if row is None:
+        return None
+    document = sections.read_document(
+        row, config.library_dir, store.ocr_pages_for(conn, drive_id)
+    )
+    if document is None or not 0 <= page_index < len(document.anchors):
+        return None
+    return document.anchors[page_index]
 
 
 def _index_of_anchor(

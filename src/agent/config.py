@@ -144,6 +144,17 @@ class Config:
     # which is what a plain `agent serve` on a laptop wants.
     api_origin: str | None = None
 
+    # config.yaml's telegram.bot_username, without the @. Not a credential -- it
+    # is the public handle anyone can see -- so it belongs here beside chat_id
+    # rather than in .env.
+    #
+    # The web client needs it because 5b is read-only over study_items: the
+    # primary action deep-links to `t.me/<username>` until 5d makes it work
+    # in-app, and a chat id cannot build that URL. Unset means the client hides
+    # the button rather than rendering one that goes nowhere -- a dead end is the
+    # one thing that action must never be.
+    telegram_bot_username: str | None = None
+
     # Derived paths. Everything lives under data_dir so that relocating the
     # project is a directory copy.
 
@@ -361,6 +372,36 @@ def _api_origin(raw: dict[str, Any], config_path: Path) -> str | None:
     return value.rstrip("/")
 
 
+def _telegram_bot_username(raw: dict[str, Any], config_path: Path) -> str | None:
+    """The bot's public handle, for building a t.me link. None when unset.
+
+    A leading @ is accepted and stripped, because that is how BotFather prints it
+    and how I would paste it.
+    """
+    section = raw.get("telegram")
+    if not isinstance(section, dict):
+        return None
+    value = section.get("bot_username")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ConfigError(
+            f"{config_path}: 'telegram.bot_username' must be text like "
+            f"my_study_bot, got {type(value).__name__}."
+        )
+    name = value.strip().lstrip("@")
+    if not name:
+        return None
+    # Telegram's own rule, checked here so a typo is a load error rather than a
+    # t.me link that 404s on the phone.
+    if not all(char.isalnum() or char == "_" for char in name):
+        raise ConfigError(
+            f"{config_path}: 'telegram.bot_username' may only contain letters, "
+            f"digits and underscores, got {value!r}."
+        )
+    return name
+
+
 def _packs_dir(raw: dict[str, Any], config_path: Path) -> Path | None:
     """An explicit packs directory, resolved like every other configured path.
 
@@ -550,4 +591,5 @@ def load_config(config_path: Path | None = None) -> Config:
         quiz_question_count=question_count,
         api_secure_cookie=_api_secure_cookie(raw, config_path),
         api_origin=_api_origin(raw, config_path),
+        telegram_bot_username=_telegram_bot_username(raw, config_path),
     )

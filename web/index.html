@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  No `user-scalable=no` and no `maximum-scale`. DESIGN.md section 6 calls
+  disabling zoom "the single most common way a reader becomes unusable on a
+  phone", and it is one attribute away from happening by accident -- so
+  tests/test_web_assets.py asserts this tag stays exactly this shape.
+-->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>classroom-agent</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0e0f11">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<!--
+  Load-bearing. `preact-hooks.module.js` imports "preact" as a bare specifier,
+  which a browser cannot resolve on its own; without this the app fails at parse
+  time with a module resolution error and nothing renders. See web/VENDOR.md.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "preact": "/vendor/preact.module.js",
+    "preact/hooks": "/vendor/preact-hooks.module.js",
+    "htm": "/vendor/htm.module.js"
+  }
+}
+</script>
+</head>
+<body>
+<!--
+  The app replaces this. It is not a spinner: at 23:00 on mobile data the gap
+  between paint and hydrate is real, and a spinner in it would be the app
+  performing busyness before it knows anything -- which is what section 4 says
+  trains me to stop reading it. One line, no motion.
+-->
+<div id="app"><p class="booting">…</p></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

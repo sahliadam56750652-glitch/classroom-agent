@@ -397,16 +397,100 @@ def test_a_lost_anchor_is_said_out_loud_rather_than_becoming_page_one(
     assert "changed since it was last read" in body["note"]
 
 
-def test_a_page_too_thin_to_hash_is_honoured_and_flagged(config, monkeypatch):
-    """One page in the 1094 measured was genuinely blank. It still gets a position."""
+def test_the_server_derives_the_anchor_from_the_page_index(config, monkeypatch):
+    """A browser cannot compute it, so the server must.
+
+    `sections.anchor` hashes the stored extraction text -- PyMuPDF's output,
+    whitespace-normalised -- and PDF.js produces materially different text for the
+    same page. A client-computed hash would never match, so a position sent with
+    only an index has to come back anchored anyway.
+    """
     add_document(config)
     session = client(config, monkeypatch)
-    session.put("/api/documents/d1/position", json={"page_index": 2})
+    written = session.put("/api/documents/d1/position", json={"page_index": 1}).json()
+
+    assert written["page_hash"] == sections.anchor(PAGE_TWO)
+    assert written["note"] == ""
+
+    conn = store.connect(config.db_path)
+    assert store.get_read_position(conn, "d1")["page_hash"] == sections.anchor(PAGE_TWO)
+    conn.close()
+
+
+def test_a_derived_anchor_survives_pages_moving(config, monkeypatch):
+    """The end-to-end point of deriving it: an index-only PUT still survives."""
+    add_document(config)
+    session = client(config, monkeypatch)
+    session.put("/api/documents/d1/position", json={"page_index": 1})
+
+    add_document(config, pages=("A new opening slide with plenty of words on it.",
+                                PAGE_ONE, PAGE_TWO, PAGE_THREE))
 
     body = session.get("/api/documents/d1/position").json()
     assert body["page"] == 3
+    assert "moved from 2 to 3" in body["note"]
+
+
+def test_a_supplied_hash_is_still_honoured(config, monkeypatch):
+    """A caller that already holds the right value is trusted. Nothing has to."""
+    add_document(config)
+    session = client(config, monkeypatch)
+    written = session.put(
+        "/api/documents/d1/position",
+        json={"page_index": 1, "page_hash": "a-hash-i-brought-myself"},
+    ).json()
+
+    assert written["page_hash"] == "a-hash-i-brought-myself"
+
+
+def test_a_page_too_thin_to_hash_is_honoured_and_flagged(config, monkeypatch):
+    """One page in the 1094 measured was genuinely blank. It still gets a position.
+
+    Said at the moment it is stored rather than discovered later on a GET: a page
+    that cannot be identified by content will not survive the document changing,
+    and that is worth knowing while I am still looking at it.
+    """
+    # Under MIN_ANCHOR_CHARS (40) even after normalising, so `anchor` returns None.
+    add_document(config, pages=(PAGE_ONE, "  \n ", PAGE_THREE))
+    session = client(config, monkeypatch)
+    written = session.put("/api/documents/d1/position", json={"page_index": 1}).json()
+
+    assert written["page_hash"] is None
+    assert "will not survive the document changing" in written["note"]
+
+    body = session.get("/api/documents/d1/position").json()
+    assert body["page"] == 2
     assert body["changed"] is False
     assert "will not survive the document changing" in body["note"]
+
+
+def test_a_document_carries_its_window_boundaries(config, monkeypatch):
+    """What the reader says `34 / 42` against."""
+    add_document(config)
+    session = client(config, monkeypatch)
+    body = session.get("/api/documents/d1", params={"pages": 2}).json()
+
+    assert [w["label"] for w in body["windows"]] == ["pages 1-2", "page 3"]
+    assert body["windows"][0]["pages"] == 2
+
+
+def test_windows_and_readiness_are_about_different_things(config, monkeypatch):
+    """Pinned so 3d stage 2 knows exactly what it changes.
+
+    A window's own `ready` is per window and already correct. The ITEM's readiness
+    is whole-post, because window-scoped readiness is not built. A client showing
+    a window as though readiness were scoped to it would imply a quiz on pages
+    21-42 is possible when the blocker is on page 88.
+    """
+    add_document(config)
+    session = client(config, monkeypatch)
+    body = session.get("/api/documents/d1", params={"pages": 1}).json()
+
+    assert len(body["windows"]) == 3
+    # Every window is ready here (no scan pages at all), and the document is
+    # whole -- the two figures simply do not reference each other.
+    assert all(w["ready"] for w in body["windows"])
+    assert body["pages"] == 3
 
 
 def test_a_position_for_an_unheld_document_is_refused(config, monkeypatch):

@@ -184,14 +184,17 @@ is this stanza rather than a code change.
     # /etc/caddy/Caddyfile
     classroom.example.org {
         encode zstd gzip
-        # Phase 5c serves the built client from here. One origin for the API and
-        # the static files, which is the settled decision and the reason CORS
-        # never enters the picture.
+        # One origin for the API and the client, which is the settled decision
+        # and the reason CORS never enters the picture.
         handle /api/* {
             reverse_proxy 127.0.0.1:8000
         }
         handle {
-            root * /home/ubuntu/classroom-agent/web/dist
+            # web/ itself, not a build output. The client has no build step --
+            # plain ES modules with vendored dependencies, committed -- which is
+            # why the box needs Python and nothing else, and why a screen can be
+            # fixed here with an editor. See web/VENDOR.md.
+            root * /home/ubuntu/classroom-agent/web
             try_files {path} /index.html
             file_server
         }

@@ -873,6 +873,32 @@ def study_item_sources(
     ).fetchall()
 
 
+def document_source(conn: sqlite3.Connection, drive_id: str) -> sqlite3.Row | None:
+    """One attachment in the column shape `study_item_sources` returns.
+
+    Same columns, one file, no parent. `study_item_sources` answers "what text
+    does this POST hold", which is what the quiz and the gate ask; the reader
+    opens one document by its Drive id and needs the same row to cut it into
+    windows with. Sharing the shape means `sections.read_document` takes either
+    without knowing which it got.
+
+    `MIN(m.title)` because one Drive file can be attached to several posts and
+    the titles can differ; the file is one file either way, and picking
+    deterministically beats returning it twice.
+    """
+    return conn.execute(
+        "SELECT e.drive_id, MIN(m.title) AS file_title, MIN(m.url) AS file_url, "
+        "       e.text_path, e.method, e.pages, e.scan_pages, e.ocr_pages, "
+        "       e.chars, e.extracted_at, e.mime_type, e.local_path "
+        "  FROM extractions e "
+        "  LEFT JOIN materials m "
+        "    ON m.drive_id = e.drive_id AND m.deleted_at IS NULL "
+        " WHERE e.drive_id = ? AND e.status = 'ok' AND e.text_path IS NOT NULL "
+        " GROUP BY e.drive_id",
+        (drive_id,),
+    ).fetchone()
+
+
 def get_pack(conn: sqlite3.Connection, course_id: str) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM packs WHERE course_id = ?", (course_id,)).fetchone()
 

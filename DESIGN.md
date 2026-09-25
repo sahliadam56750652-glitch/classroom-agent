@@ -229,9 +229,31 @@ product; everything else is navigation.
   because the document was re-uploaded, the app says the document changed rather
   than silently starting from page one — the same rule as the 3d cursor, and the
   same instinct as the recurring lesson: a silent fallback is a misreport.
-- **What has been delivered is readable offline.** The library is already local
-  by invariant 5. The reader must not be the one thing that needs a round-trip at
-  23:00.
+- **What has been delivered is readable offline**, and "delivered" is doing real
+  work in that sentence. The reader must not be the one thing that needs a
+  round-trip at 23:00.
+
+  **The original justification was "the library is already local by invariant 5",
+  and Phase 5a retired it.** That was true while the backend was this laptop. On
+  the Oracle box the library is local to the *server*; the phone is a client over
+  mobile data, and 116 MB is not going to live on it. The rule stands, so it needs
+  an honest mechanism instead of a premise that no longer holds:
+
+  - **Tonight's gate item, automatically.** When online, the app fetches the
+    document `/` is asking for and keeps it. It is one file, a few MB, and it is
+    precisely the one I will want with the radio off.
+  - **Anything I explicitly keep.** A per-document action, because a 40 MB deck
+    must not be cached just because I scrolled past it.
+  - **Nothing else.** Everything outside those two needs a connection, and says so
+    rather than failing blankly.
+
+  Two consequences worth stating, because both would otherwise look like bugs. A
+  document kept offline is fetched **whole** — the range requests that make a
+  92-page deck open instantly return `206`, and a `206` cannot be stored in a
+  browser cache, so reading online and keeping offline are deliberately two
+  different requests. And an API screen opened offline shows the last thing it
+  knew **with the time it knew it visible**; stale data presented as current would
+  be the app inventing a state, which §7 forbids.
 
 ---
 

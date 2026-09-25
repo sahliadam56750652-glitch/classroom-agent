@@ -164,6 +164,10 @@ class DocumentOut(BaseModel):
     # delivery uses, so a document has one name everywhere.
     filename: str | None = None
     readable: bool = False
+    # Read-only context, and about a DIFFERENT thing from `ItemOut.ready`: a
+    # window says which pages an evening covers, while readiness is still about
+    # the whole post until 3d stage 2 lands. See routes/library.py.
+    windows: list[WindowOut] = Field(default_factory=list)
 
 
 class DeadlineOut(BaseModel):

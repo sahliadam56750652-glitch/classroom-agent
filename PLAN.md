@@ -1001,6 +1001,30 @@ than behind it.
   a failure that does not look like its cause. Check it before copying the
   token, not after.
 
+- **The web client has no build step. Plain ES modules, vendored dependencies,
+  committed.** Decided at 5c slice 0, against the approved plan's Vite + Preact +
+  TypeScript, for a reason the plan did not have: this machine has no Node, and
+  more importantly `web/dist` would become a build artifact. That leaves two
+  options and both are worse than no bundler -- commit minified bundles, which is
+  noise in every diff, or grow a Node dependency on the ARM box, which currently
+  needs only Python.
+
+  So `web/` is what Caddy serves. Preact, hooks, htm and PDF.js are pinned and
+  committed in `web/vendor/` (16 KB plus a 1.4 MB PDF.js worker that only the
+  reader loads). No CDN at runtime, because offline-first cannot depend on a third
+  party being reachable and a remote import does not travel in a directory copy.
+
+  **What this costs, and what replaces it.** No TypeScript, so no compile-time
+  check that the client and the API agree -- replaced by `agent webcontract`,
+  which reads `app.openapi()` in-process and emits `web/contract.js`: the paths,
+  the per-model field names, and a dev-mode `expect()` that logs a named
+  complaint when a response is missing a field. Weaker than a type system,
+  stronger than nothing, and it needs no toolchain. A test fails when the file is
+  stale. No HMR either; a hard refresh is about 200 ms.
+
+  The inner loop stays two paths on purpose: `agent serve` mounts `web/` (what
+  Caddy will do), and `--no-client` leaves it off for anything proxying `/api`.
+
 - **The API's import guard has two tiers, and they are different properties.**
   Answered 2026-09-25, having come up while 5b was being built. The spec listed
   the modules `agent/api/` may not import as one flat set; building it showed the
