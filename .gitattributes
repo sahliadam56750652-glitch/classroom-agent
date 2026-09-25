@@ -1,0 +1,12 @@
+# The vendored dependencies are byte-exact on purpose.
+#
+# core.autocrlf is on for this repo, which is right for source I edit and wrong
+# for these: a checkout that rewrote their line endings would change their SIZE,
+# and web/VENDOR.md records byte counts that tests/test_web_assets.py checks
+# against the disk. A fresh clone would then fail a test for a reason that has
+# nothing to do with the code -- and on the Oracle box the files would differ
+# from this machine's for the same non-reason.
+#
+# `-text` means "never convert". The bytes that were fetched are the bytes that
+# are served, on every platform.
+web/vendor/** -text
