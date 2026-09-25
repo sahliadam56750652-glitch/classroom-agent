@@ -140,21 +140,45 @@ all of them assumptions of a single-threaded CLI, and they are listed in the
 spec. The most consequential: `connect()` applied the whole of `schema.sql` on
 every call, which is free once per invocation and a write lock once per request.
 
-**`study_items` is seeded: 67 rows, every one `skipped` with
-`skip_source = 'seed'`.** (An earlier version of this file said the table held
-zero rows. It was stale.) All five tracked courses are a finished academic
-year, so creating them as `pending` would have opened the gate believing I am
-~90 lectures behind and made Phase 4's coverage figure meaningless from its
-first day.
+**The term is running, and the gate has a real backlog. Measured 2026-09-25**,
+against the live database rather than estimated:
 
-The consequence for 3b and 3c is that **there are no `pending` items at all**,
-so the gate has nothing to serve and cannot be exercised against a real backlog
-until September's courses land. `agent studyitems --reopen <id>` is the only
-way out of `skipped` and exists mainly so the gate can be tested before then.
+| | |
+|---|---|
+| courses | **35** — 23 ACTIVE, 8 ARCHIVED, 4 manual |
+| study items | **33 pending · 1 reviewed · 66 skipped** |
+| of which seeded | 66 `skipped` with `skip_source = 'seed'`; the other 34 are this term's |
+| events | 173 total, 0 pending |
+| extractions | 126 ok · 45 missing · 1 unsupported |
+| ocr_pages | 123 ok · 224 pending |
+| quiz attempts | 2 |
+| adjustments, tasks, projects | 0, 0, 0 — built, not yet used in anger |
+| last sync | 2026-09-25T12:35:07Z |
 
-`quiz_attempts` is in use from 3c, alongside `quiz_questions` (the cache) and
-`quiz_flags` (what I marked as a bad question). The `timetable` table is gone;
-see the settled decision below.
+**This section has now been stale twice, in both directions, so read the date
+before the numbers.** An earlier version said the table held zero rows; the
+version before this one said 67, all skipped, and that the gate therefore had
+nothing to serve. Both were true when written. The figures move on every sync --
+the pending count rose by ten between a morning reading and this one -- so a
+number here is a measurement with a date on it and never a standing fact.
+
+The seeding decision still reads correctly and is worth keeping: the 66 seeded
+skips are last year's archived courses, and creating them as `pending` would have
+opened the gate believing I was ~90 lectures behind and made Phase 4's coverage
+figure meaningless from its first day. What has changed is that **the 33 pending
+items are this term's, so 3b, 3c and 5b are all exercisable against real
+material** rather than only against `agent studyitems --reopen`.
+
+`quiz_attempts` is in use from 3c (2 attempts), alongside `quiz_questions` (the
+cache) and `quiz_flags` (what I marked as a bad question). The `timetable` table
+is gone; see the settled decision below.
+
+**224 of 347 OCR pages are still pending**, which at `ocr.run_limit = 6` twice a
+day is about three weeks of draining. That is the arithmetic working as designed
+rather than a backlog to fix, and it is why the queue ORDER matters: in-scope
+material first, newest first within that. Expect most items to be deliverable and
+not yet quizzable for a while, and expect that to read as correct rather than
+broken.
 
 ---
 
@@ -977,6 +1001,42 @@ than behind it.
   a failure that does not look like its cause. Check it before copying the
   token, not after.
 
+- **The API's import guard has two tiers, and they are different properties.**
+  Answered 2026-09-25, having come up while 5b was being built. The spec listed
+  the modules `agent/api/` may not import as one flat set; building it showed the
+  set is two.
+
+  **Tier one -- must not LOAD at all**, transitively or otherwise:
+  `llm/provider.py`, `notify/telegram.py`, `notify/dispatch.py`,
+  `files/drive.py`, `files/ocr.py`, `sync/poller.py`, `gate/quiz.py`,
+  `classroom/client.py`. Everything that talks to the outside world or spends
+  quota. A subprocess test imports the app in a clean interpreter and asserts
+  none of them is in `sys.modules` -- far stronger than a grep, because a module
+  never imported cannot be called by a route that forgot the rule.
+
+  **Tier two -- loaded for a pure helper, and never called.** Three arrive
+  transitively and are inert at import: `gate/scheduler.py` imports
+  `files/packs.py` for `packs.label`, `gate/sections.py` imports
+  `files/extract.py` for `PAGE_BREAK`, and `sync/deadlines.py` imports
+  `sync/differ.py` for the `Event` dataclass. `agent gate` loads all three too.
+  The guard against USING them is the AST identifier scan plus the route
+  whitelist.
+
+  **Collapsing the two would go wrong in both directions**, which is why they
+  stay separate. Enforcing tier one everywhere would forbid three harmless
+  imports and force pure helpers to be moved or duplicated -- and duplicating
+  `document_filename` would break CLAUDE.md's rule that a document is delivered
+  under its Drive title, which is only true while one function decides it.
+  Relaxing tier two to tier one's standard would permit a model client into a
+  process that must not make model calls. Different properties, different tests.
+
+  Three functions moved to make tier one true rather than approximately true, each
+  re-exported from where it was: `display_zone` to `config.py`,
+  `document_filename` and `safe_filename` to the new `agent/filenames.py`, and
+  `FILES_SUBDIR` / `TEXT_SUBDIR` to `config.py`. Each was reachable only through a
+  module that talks to the network, and the transitive test is what made that
+  visible three separate times rather than noticed later.
+
 - **The API authenticates with a token from `.env` exchanged for a session
   cookie, and there is no unauthenticated mode.** Not even on localhost. An
   unset token silently meaning "open" is two states indistinguishable from
@@ -1057,20 +1117,27 @@ produces *misleading* output is the second worst, and it is harder to notice.
 
 ## Current data situation
 
-All 25 courses belong to a finished academic year and are being archived. No
-live courses are expected until roughly mid-September 2026.
+**The term started. Measured 2026-09-25.** 35 courses: 23 ACTIVE, 8 ARCHIVED
+from last year, 4 manual. The status section above has the full breakdown; this
+section is about what that means for the sync.
 
 Archiving does not break the sync. The poller fetches by tracked course ID, and
 archived courses stay fully readable — `courses.list` is called with
 `courseStates` of both `ACTIVE` and `ARCHIVED`, and `courseState` is stored as
-metadata that drives nothing. Expect silence from the bot until new courses
-appear; silence means nothing changed, which is the intended behaviour and not a
-fault to debug.
+metadata that drives nothing.
 
-When the new term starts: re-run `agent courses`, curate `courses.tracked` in
-`config.yaml` by hand, and seed the new courses so the first sync does not
-deliver a wall of backlog. `courseState: ACTIVE` still does not mean the course
-is running — the tracked list is curated by hand and always will be.
+**Silence no longer means what it meant.** Through the summer, no events from the
+bot was the intended behaviour and not a fault to debug. Now that material is
+arriving, a run that reports nothing for several days is worth looking at --
+`sync_runs` and `data/logs/` are where to look, and `agent events` shows what was
+reported. This is the one paragraph in this file whose meaning inverted when the
+term began, which is why it is spelled out rather than deleted.
+
+`courseState: ACTIVE` still does not mean the course is running — the tracked
+list is curated by hand and always will be. The 8 archived courses stay tracked
+deliberately: their material is still in the library and still worth reading, and
+`scope.local` is the union that keeps them readable without putting them in this
+semester's scope.
 
 ---
 
@@ -1100,41 +1167,6 @@ is running — the tracked list is curated by hand and always will be.
   intent and the restriction is enforced in code. `drive.file` would have been a
   write scope requested because the project means to write. Invariant 6 keeps
   exactly one exception, and it keeps the one it was always going to have.
-
-- **How strictly "the API imports no pipeline stage" should be read.**
-  *Decided during 5b with a recommendation; overrule it if you disagree.*
-
-  The 5b spec listed modules `agent/api/` may not import as one flat set. Building
-  it showed the set has two tiers, and conflating them would have meant moving
-  pure helpers around for no change in what a route can do.
-
-  **Tier one: must not LOAD at all**, transitively or otherwise --
-  `llm/provider.py`, `notify/telegram.py`, `notify/dispatch.py`, `files/drive.py`,
-  `files/ocr.py`, `sync/poller.py`, `gate/quiz.py`, `classroom/client.py`.
-  Everything that talks to the outside world or spends quota. A subprocess test
-  imports the app in a clean interpreter and asserts none of them is in
-  `sys.modules`, which is a far stronger guarantee than a grep: a module never
-  imported cannot be called by a route that forgot the rule.
-
-  **Tier two: loaded, for a pure helper, and never called.** Three arrive
-  transitively and are inert at import -- `gate/scheduler.py` imports
-  `files/packs.py` for `packs.label`, `gate/sections.py` imports
-  `files/extract.py` for `PAGE_BREAK`, and `sync/deadlines.py` imports
-  `sync/differ.py` for the `Event` dataclass. `agent gate` loads all three too.
-  The guard against *using* them is the AST identifier scan plus the route
-  whitelist.
-
-  Two functions moved to make tier one true rather than approximately true:
-  `display_zone` from `digest/composer.py` and `document_filename` /
-  `safe_filename` into the new `agent/filenames.py`, both re-exported from where
-  they were. Reaching `document_filename` through `gate/messages.py` would have
-  pulled `gate/quiz.py`, and through it a model client and the pack builder, into
-  a process that must be unable to call either.
-
-  **Recommendation: keep the two tiers.** The alternative is a second
-  implementation of the naming rule, and CLAUDE.md is explicit that there is one
-  -- "a document is delivered under its Drive title" is only true while one
-  function decides it.
 
 - **A report on how often each session actually moves.** *Accepted, deferred
   to November.* The Phase 5 note above is the argument for it -- *"how often
@@ -1296,7 +1328,13 @@ many pages a session actually covers, is a guess until a real session happens.
 `gate.window_pages` is therefore an argument everywhere and a constant nowhere,
 and 20 is a starting value rather than a measured one.
 
-There are also no `pending` study items to exercise a gate against: all 67 are
-`skipped` with `skip_source = 'seed'`. Nothing here should touch `study_items`,
-`quiz.settle` or `verify_study_item` -- those are the honesty guarantees, and
-they must not move for a problem whose parameters are still guessed.
+**As of 2026-09-25 there ARE pending study items -- 33 of them -- so the
+precondition this paragraph used to name is gone.** It previously said all 67
+were `skipped` with `skip_source = 'seed'` and that the gate therefore could not
+be exercised; that was true until the term started. The parameter the design
+turns on, how many pages a session actually covers, is now measurable rather than
+guessed, which is what 3d stage 2 was waiting for.
+
+What does not change: nothing here should touch `study_items`, `quiz.settle` or
+`verify_study_item`. Those are the honesty guarantees, and a real backlog is a
+reason to be more careful with them rather than less.
