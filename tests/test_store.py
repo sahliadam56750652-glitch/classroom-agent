@@ -138,6 +138,69 @@ def test_skipping_the_schema_on_an_empty_file_refuses_rather_than_confusing(tmp_
     assert "schema version 0" in str(caught.value)
 
 
+def test_a_connection_can_be_handed_between_threads_when_asked(tmp_path):
+    """What the API needs, and what 1,415 green tests did not catch.
+
+    FastAPI runs a sync `yield` dependency's setup and teardown as two separate
+    threadpool calls, so one request opens its connection in one worker thread,
+    runs the route in a second and closes it in a third. Sequentially -- never at
+    once -- but `check_same_thread=True` refuses all of it.
+
+    Starlette's TestClient runs a whole request inside one portal thread, which is
+    why every API test passed while a real uvicorn failed on every request. This
+    reproduces the hand-off directly instead.
+    """
+    path = tmp_path / "academic.db"
+    store.connect(path).close()
+
+    conn = store.connect(path, initialise=False, check_same_thread=False)
+    failures = []
+
+    def elsewhere(work):
+        def run():
+            try:
+                work()
+            except Exception as err:  # noqa: BLE001 - recorded, then asserted on
+                failures.append(err)
+
+        thread = threading.Thread(target=run)
+        thread.start()
+        thread.join()
+
+    # Opened here, written there, read in a third, closed in a fourth.
+    elsewhere(lambda: store.upsert_course(conn, a_course()))
+    elsewhere(conn.commit)
+    elsewhere(lambda: store.count_rows(conn, "courses"))
+    elsewhere(conn.close)
+
+    assert not failures, failures
+
+
+def test_the_default_connection_still_refuses_another_thread(tmp_path):
+    """Control: without the flag this is an error, so the test above proves something.
+
+    Also the reason the flag is not simply on everywhere -- the CLI is
+    single-threaded and the check is worth keeping there.
+    """
+    path = tmp_path / "academic.db"
+    conn = store.connect(path)
+    failures = []
+
+    def run():
+        try:
+            store.count_rows(conn, "courses")
+        except Exception as err:  # noqa: BLE001
+            failures.append(err)
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    thread.join()
+    conn.close()
+
+    assert failures, "the default connection allowed a cross-thread read"
+    assert "same thread" in str(failures[0])
+
+
 def test_initialising_is_still_the_default(tmp_path):
     """So that no existing caller changed behaviour when the flag was added."""
     path = tmp_path / "fresh.db"

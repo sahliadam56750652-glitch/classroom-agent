@@ -113,7 +113,16 @@ def gate_plan(plan: gate_scheduler.GatePlan) -> schemas.GateOut:
     )
 
 
-def window(value: sections.Window) -> schemas.WindowOut:
+def window(
+    value: sections.Window, *, unread_located: bool = True
+) -> schemas.WindowOut:
+    """One window. `unread_located` is the caller's, because only it knows.
+
+    `sections.Window` carries no notion of whether its own `unread` is
+    trustworthy -- that is a property of the DOCUMENT (`untracked_scans`), and the
+    window is computed before anyone asks. So the caller that read the document
+    passes it down, rather than the window guessing.
+    """
     return schemas.WindowOut(
         index=value.index,
         first=value.first,
@@ -126,6 +135,7 @@ def window(value: sections.Window) -> schemas.WindowOut:
         continues=value.continues,
         unread=value.unread,
         ready=value.ready,
+        unread_located=unread_located,
     )
 
 

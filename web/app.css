@@ -25,8 +25,12 @@
   /* The only red in this app is a deadline that has already passed. Not
      unreviewed material -- that is the resting state of most material most of
      the time, and colouring the normal case as an alarm teaches me to ignore
-     the colour. */
-  --passed: #c9776b;
+     the colour.
+
+     A muted red rather than the warm clay that #c9776b was drifting towards: it
+     is the single warm value in the palette and it appears almost never, which
+     is what makes it mean something when it does. */
+  --passed: #c05f56;
 
   --pad: 16px;
   --radius: 10px;
@@ -176,4 +180,136 @@ button.plain {
   border-bottom: 1px solid var(--line);
   color: var(--ink-quiet);
   font-size: 0.95rem;
+}
+
+/* ------------------------------------------------------------------ now
+   The default screen. One item, read tired, on a phone.
+
+   The hero is the lecture title, because that is the most characteristic thing
+   in this subject's world and because section 2 fixes the deficit as one
+   subordinate line ABOVE it -- which leaves the title as the largest thing on
+   the screen by construction rather than by decision.
+
+   Nothing here escalates. No alarm colour, no countdown, no change in tone at
+   23:00: the app has no information then that it lacked at 19:00. */
+
+.now {
+  /* Under 80 characters at 17px, per the line-length rule. A reading app that
+     sets its own chrome in long measures has misunderstood itself. */
+  max-width: 34rem;
+}
+
+.clear-line {
+  font-size: 1.35rem;
+  font-weight: 500;
+  margin-bottom: 0.25em;
+}
+
+/* The deficit. Smaller than the thing it is about, which is the whole point:
+   it is information attached to an action, not a headline. */
+.deficit {
+  color: var(--ink-quiet);
+  font-size: 0.95rem;
+  margin-bottom: 0.5em;
+  letter-spacing: 0.01em;
+}
+
+.item-title {
+  font-size: 1.6rem;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin: 0 0 0.35em;
+  /* Long Classroom titles are normal -- "TP3 : Graphes et arbres couvrants" --
+     and breaking them is better than a horizontal scrollbar on a phone. */
+  overflow-wrap: break-word;
+}
+
+.scope {
+  color: var(--ink-quiet);
+  font-size: 0.95rem;
+  margin-bottom: 0.9em;
+}
+
+.scope .sep {
+  margin: 0 0.4em;
+  color: var(--ink-faint);
+}
+
+/* The one graphic in the app: the shape of the document, with tonight's range
+   marked. NOT a progress bar -- nothing records which windows have been read,
+   so a filled bar would claim windows 1 and 2 were done. See screens/now.js. */
+.ruler {
+  display: flex;
+  gap: 3px;
+  height: 6px;
+  margin: 0 0 1.4em;
+}
+
+.tick {
+  background: var(--line);
+  border-radius: 3px;
+  min-width: 4px;
+}
+
+/* Where an evening would start. Marked, not filled. */
+.tick-now {
+  background: var(--accent);
+}
+
+/* Pages nothing has read. Hollow, because it is a fact about the material --
+   and deliberately not red: unreviewed is the resting state of most material
+   most of the time. */
+.tick-unread {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.tick-now.tick-unread {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* Stated before any button, every time. */
+.not-read {
+  color: var(--ink-quiet);
+  font-size: 0.95rem;
+  background: var(--raised);
+  border-left: 3px solid var(--line);
+  padding: 0.7em 0.9em;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  margin-bottom: 1.2em;
+}
+
+.actions {
+  margin-top: 1.5em;
+}
+
+/* An anchor styled as the primary action. 44px minimum, full width on a phone:
+   this is tapped with a thumb at 23:00. */
+.primary {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  background: var(--raised);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.8em 1.1em;
+  min-height: 44px;
+  font-weight: 500;
+}
+
+.primary:active {
+  background: var(--line);
+}
+
+.primary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.actions-note {
+  font-size: 0.88rem;
+  margin: 0.7em 0 0;
 }

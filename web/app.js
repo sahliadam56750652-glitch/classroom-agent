@@ -1,15 +1,23 @@
 // The entry point: work out whether there is a session, then render.
 //
-// Slice 0 renders a scaffold check rather than a blank page, because a scaffold
-// that renders nothing cannot be told apart from a broken one. Slice 1 replaces
-// `Scaffold` with the default screen.
+// "Is there a session" is only answerable by asking for something that needs one.
+// The cookie is HttpOnly, which is the point -- there is nothing here to inspect,
+// so a 401 is the answer and the sign-in screen is the response.
 
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
-import { GENERATED_AT, ROUTES, SUBJECT_STATES } from "/contract.js";
 import { api, haveSession, Offline, signIn, signOut } from "/api.js";
+import { Now } from "/screens/now.js";
 
+/**
+ * The token, once every 90 days.
+ *
+ * `spellcheck=${false}` rather than `spellcheck="false"`: Preact sets a boolean
+ * attribute from truthiness and the STRING "false" is truthy, so the quoted form
+ * turns spellcheck ON -- which then underlines a random 43-character secret. Found
+ * by rendering the page, not by reading it.
+ */
 function SignIn({ onDone }) {
   const [token, setToken] = useState("");
   const [problem, setProblem] = useState("");
@@ -45,7 +53,7 @@ function SignIn({ onDone }) {
           type="password"
           value=${token}
           autocomplete="current-password"
-          spellcheck="false"
+          spellcheck=${false}
           placeholder="token"
           onInput=${(e) => setToken(e.target.value)}
         />
@@ -54,51 +62,6 @@ function SignIn({ onDone }) {
         </button>
       </form>
       ${problem && html`<p class="problem">${problem}</p>`}
-    </main>
-  `;
-}
-
-function Scaffold({ onSignOut }) {
-  const [status, setStatus] = useState(null);
-  const [problem, setProblem] = useState("");
-
-  useEffect(() => {
-    api
-      .get("/api/status")
-      .then(setStatus)
-      .catch((err) => setProblem(err.message));
-  }, []);
-
-  return html`
-    <main class="pad">
-      <h1>scaffold</h1>
-      <p class="quiet">
-        Slice 0. The default screen lands in slice 1; this exists so a working
-        scaffold can be told apart from a broken one.
-      </p>
-      <ul class="checks">
-        <li>modules resolved — Preact, hooks and htm loaded</li>
-        <li>contract loaded — ${Object.keys(ROUTES).length} routes,
-          ${SUBJECT_STATES.length} subject states</li>
-        <li>generated ${GENERATED_AT}</li>
-        <li>
-          session live —
-          ${status
-            ? `schema v${status.schema_version}, ${
-                status.sessions_live
-              } session(s)`
-            : problem || "…"}
-        </li>
-        <li>
-          telegram deep link —
-          ${status
-            ? status.telegram_bot_username
-              ? `t.me/${status.telegram_bot_username}`
-              : "not configured; the primary action will be hidden"
-            : "…"}
-        </li>
-      </ul>
-      <button class="plain" onClick=${onSignOut}>Sign out</button>
     </main>
   `;
 }
@@ -128,7 +91,7 @@ function App() {
       <${SignIn} onDone=${() => setSignedIn(true)} />
     `;
   }
-  return html`<${Scaffold}
+  return html`<${Shell}
     onSignOut=${async () => {
       await signOut();
       setSignedIn(false);
@@ -136,4 +99,33 @@ function App() {
   />`;
 }
 
-render(html`<${App} />`, document.getElementById("app"));
+
+/**
+ * Everything behind a live session.
+ *
+ * `/api/status` is fetched once here rather than per screen, because the one
+ * thing the default screen needs from it -- the bot username, for the primary
+ * action -- does not change between navigations, and asking again on every render
+ * would be a request per screen for a value that is configuration.
+ */
+function Shell({ onSignOut }) {
+  const [status, setStatus] = useState(null);
+
+  useEffect(() => {
+    api.get("/api/status").then(setStatus).catch(() => setStatus({}));
+  }, []);
+
+  return html`
+    <${Now} status=${status} />
+    <footer class="pad">
+      <button class="plain" onClick=${onSignOut}>Sign out</button>
+    </footer>
+  `;
+}
+
+const root = document.getElementById("app");
+// Cleared first. Preact's `render` APPENDS into a container holding children it
+// did not create, so the loading line stayed on screen above the app -- visible
+// only in a rendered DOM, which is why this was found by rendering it.
+root.textContent = "";
+render(html`<${App} />`, root);

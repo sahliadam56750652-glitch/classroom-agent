@@ -179,7 +179,13 @@ def _document_windows(
     )
     if document is None:
         return [], 0
-    return [convert_window(value) for value in document.windows], document.pages
+    # `untracked_scans` means OCR has never touched this file, so the per-window
+    # unread figures are incomplete and must not be read as "this window is ready".
+    located = not document.untracked_scans
+    return (
+        [convert_window(value, unread_located=located) for value in document.windows],
+        document.pages,
+    )
 
 
 @router.get("/documents/{drive_id}", response_model=schemas.DocumentOut)

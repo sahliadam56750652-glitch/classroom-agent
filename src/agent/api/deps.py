@@ -4,11 +4,22 @@ The connection is the important one. Three facts about `db/store.py` decide its
 shape, and all three are assumptions of a single-threaded CLI process that this
 package is the first thing to violate:
 
-**`sqlite3.connect` defaults to `check_same_thread=True`.** A connection opened
-once and reused would raise `ProgrammingError` the first time Starlette's
-threadpool ran a route on a second thread. So: one connection per request. Not
-`check_same_thread=False` with a shared connection, which trades a loud error for
-interleaved transactions on one connection -- worse, and much harder to see.
+**`sqlite3.connect` defaults to `check_same_thread=True`, and one connection per
+request is not enough on its own.** FastAPI runs a sync `yield` dependency's
+setup and teardown as two SEPARATE threadpool calls, so anyio can open the
+connection in one worker thread, run the route in a second, and close it in a
+third. Every request then dies on `SQLite objects created in a thread can only be
+used in that same thread`, and the connections that die in teardown hold their
+write locks, so everything after reports `database is locked`.
+
+So: one connection per request AND `check_same_thread=False`. That combination is
+not the dangerous one -- the danger is SHARING a connection between concurrent
+requests, and this one is owned by a single request that merely moves between
+threads sequentially.
+
+This was found by pointing a browser at a real uvicorn. A suite of 1,415 tests
+was green throughout, because Starlette's TestClient runs each request inside one
+portal thread and never reproduces the hand-off.
 
 **`store.connect` applies the whole schema on every call.** Free once per CLI
 invocation, once per REQUEST here. `initialise=False` skips it; the app calls
@@ -61,7 +72,9 @@ def get_db(request: Request) -> Iterator[sqlite3.Connection]:
     so.
     """
     config: Config = request.app.state.config
-    conn = store.connect(config.db_path, initialise=False)
+    conn = store.connect(
+        config.db_path, initialise=False, check_same_thread=False
+    )
     try:
         yield conn
         conn.commit()

@@ -1192,6 +1192,30 @@ semester's scope.
   write scope requested because the project means to write. Invariant 6 keeps
   exactly one exception, and it keeps the one it was always going to have.
 
+- **The default screen has ONE button, not two.** *Decided at 5c slice 1 with a
+  recommendation; overrule it if the reading is wrong.*
+
+  DESIGN.md section 4 wants Read and Skip side by side at equal weight, with Skip
+  stating what it records and no confirmation. Neither is performable in 5c: the
+  API is read-only over `study_items`, so both taps live in Telegram until 5d.
+
+  Two buttons that both open the same conversation would be two doors that are
+  one door -- a lie of a different kind, and one that would read as a bug the
+  first time both were tried. So there is one, `Open in Telegram`, and the line
+  under it names both actions and says where they are and why.
+
+  **The invariant section 4 is actually protecting survives intact**, which is the
+  reason for the choice rather than a consolation for it: the rule is that the
+  honest path must never cost more than the flattering one. Here they cost exactly
+  the same single tap, because they are the same tap. What is lost is the
+  side-by-side presentation, and that returns at 5d.
+
+  **Recommendation: keep one button until 5d, then restore both.** The alternative
+  worth considering is a Skip that deep-links with a `?start=skip_<id>` payload so
+  Telegram opens on the right action -- which would be two real doors, and is
+  worth doing IF the bot learns to handle a start payload. That is 5d work either
+  way.
+
 - **A report on how often each session actually moves.** *Accepted, deferred
   to November.* The Phase 5 note above is the argument for it -- *"how often
   each session actually moves is a fact about the semester worth having"* --

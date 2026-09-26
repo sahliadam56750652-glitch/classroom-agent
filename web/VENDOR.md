@@ -45,3 +45,32 @@ actually on disk, so a refresh that forgets the table is a failing test rather
 than a document that has quietly stopped being true.
 
 Pin exact versions. A range would reintroduce the thing vendoring exists to avoid.
+
+## Traps this client has already hit
+
+Four of these cost real time in slice 1, and none of them is visible without
+rendering the page. They are listed here because a no-build client has no
+compiler to catch any of them, and `tests/test_web_render.py` exists because of
+them.
+
+**A comment inside an `html` template cannot contain `${`.** It is not a comment
+to JavaScript -- the template literal sees live interpolation syntax, and `${}`
+with nothing in it is a SyntaxError that takes the module down and leaves a blank
+page. Put the explanation above the function instead.
+
+**htm drops the whitespace between adjacent `${}` on separate lines.** It
+produced "12 pagesare not transcribed" and "Sep 2908:30". Build a sentence as one
+string rather than as several interpolations.
+
+**`attr="false"` is TRUE.** Preact sets a boolean attribute from truthiness and
+the string `"false"` is truthy, so `spellcheck="false"` turns spellcheck on. Use
+`spellcheck=${false}`.
+
+**`render()` appends.** Preact renders INTO a container rather than replacing its
+contents, so anything already in `#app` stays on screen above the app. The
+container is cleared first.
+
+And one that is not htm's fault: **a separator styled with CSS margins has no
+space in the text**. `<span class="sep">·</span>` looked correct and read as
+"92 pagesan evening" to anything consuming `innerText`, including a screen
+reader. The spaces are in the markup now.

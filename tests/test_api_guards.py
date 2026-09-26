@@ -351,6 +351,41 @@ def test_the_route_whitelist_would_notice_a_new_write(tmp_path, monkeypatch):
     assert ("POST", "/api/smuggled") in app_mod.write_routes(app)
 
 
+def test_the_request_connection_can_cross_threads(tmp_path, monkeypatch):
+    """The dependency must ask for it, not merely be safe if it did.
+
+    Asserted by capturing the kwargs rather than by reading the source, so moving
+    the call still fails if the flag is dropped. The property itself -- that such
+    a connection survives a thread hand-off -- is pinned in test_store.py.
+    """
+    import sqlite3
+
+    from agent.api import deps
+    from agent.db import store as store_mod
+
+    config = make_config(tmp_path)
+    seed(config)
+    app = build(config, monkeypatch)
+
+    captured = {}
+    real = store_mod.connect
+
+    def spy(path, **kwargs):
+        captured.update(kwargs)
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(store_mod, "connect", spy)
+
+    from starlette.testclient import TestClient
+
+    client = TestClient(app)
+    client.get("/api/health")
+    client.post("/api/session", json={"token": "x" * 40})
+
+    assert captured.get("check_same_thread") is False, captured
+    assert captured.get("initialise") is False, captured
+
+
 def test_head_and_options_are_not_counted_as_writes(tmp_path, monkeypatch):
     """Starlette adds HEAD beside GET, and neither changes anything."""
     config = make_config(tmp_path)

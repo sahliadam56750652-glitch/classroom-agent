@@ -83,7 +83,11 @@ def _windows_for(
         )
         if document is None:
             continue
-        found.extend(convert.window(value) for value in document.windows)
+        located = not document.untracked_scans
+        found.extend(
+            convert.window(value, unread_located=located)
+            for value in document.windows
+        )
     return found
 
 
@@ -94,6 +98,7 @@ def now(
     table: Table,
     session: Session,
     pages: int = Query(DEFAULT_WINDOW_PAGES, ge=1, le=500),
+    date_: str | None = Query(None, alias="date"),
 ) -> schemas.NextOut:
     """The next single action, or the honest absence of one.
 
@@ -102,8 +107,15 @@ def now(
     returning None expressed over HTTP, and the reason is the same: an interface
     that performs busyness when there is nothing to say trains me to stop reading
     it, and then the screen that mattered goes with it.
+
+    `date` defaults to tomorrow, which is the only value that matters in use. It
+    is overridable because DESIGN.md's own test of whether this screen works is
+    "answerable by looking" -- and the empty state cannot be looked at on a day
+    that has material. Pointing the screen at a quiet date is how the state the
+    app is in least often becomes inspectable. It is a read either way: no
+    `gate_runs` row is written for any date.
     """
-    for_date = _tomorrow(config)
+    for_date = _parse_date(date_, config)
     plan = gate_scheduler.plan_for(
         conn, scope_mod.local(config, table), table, for_date
     )

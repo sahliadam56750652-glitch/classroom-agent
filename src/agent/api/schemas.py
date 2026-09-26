@@ -79,6 +79,15 @@ class WindowOut(BaseModel):
     continues: bool = False
     unread: int = 0
     ready: bool = False
+    # Whether this window's `unread` figure means anything.
+    #
+    # False when OCR has never run over the file at all: then which pages are
+    # images is known only in aggregate, so every window reports 0 unread and
+    # `ready` true while the document as a whole has untranscribed pages. Those
+    # are two different states -- "nothing unread here" and "we do not know where
+    # the unread pages are" -- and a client that cannot tell them apart will show
+    # the second as the first. Which is the recurring lesson exactly.
+    unread_located: bool = True
 
 
 class SubjectOut(BaseModel):

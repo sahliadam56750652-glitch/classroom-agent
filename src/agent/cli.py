@@ -3285,6 +3285,8 @@ def cmd_serve(config: Config, args: argparse.Namespace) -> int:
         print("  checked -- nothing bound, nothing served")
         return 0
 
+    _warn_if_the_cookie_will_be_dropped(config, args.host)
+
     where = f"http://{args.host}:{args.port}"
     if serving_client:
         print(f"  app at     {where}/")
@@ -3293,8 +3295,46 @@ def cmd_serve(config: Config, args: argparse.Namespace) -> int:
     print(f"  serving on {where}/api")
     print(f"  docs at    {where}/api/docs")
     print("  Sign in with the token from .env.")
+    # Flushed before handing control to uvicorn, which never returns. stdout is
+    # block-buffered whenever it is a pipe -- which it is under systemd, where the
+    # pipe goes to journald -- so without this every line above is written into a
+    # buffer that is discarded when the process is eventually killed. The startup
+    # banner and the cookie warning would simply never appear, which for a warning
+    # about a silent failure would be its own joke.
+    sys.stdout.flush()
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     return 0
+
+
+def _warn_if_the_cookie_will_be_dropped(config: Config, host: str) -> None:
+    """Say it now, because the symptom says nothing.
+
+    A `Secure` cookie is accepted over plain http ONLY for localhost, which
+    browsers treat as a trustworthy origin. Bind to 0.0.0.0 to reach this from a
+    phone on the same network and the browser silently discards the cookie: the
+    sign-in POST returns 200, the next request is a 401, and the app shows the
+    sign-in screen again with nothing whatsoever to indicate why.
+
+    That is the failure `api.secure_cookie` exists for, and the reason this warns
+    rather than fixing it silently: turning Secure off automatically because a
+    host looks like a LAN address would be the server deciding to weaken its own
+    cookie, which is not a decision it should make on my behalf.
+    """
+    loopback = ("127.0.0.1", "localhost", "::1", "")
+    if host in loopback or not config.api_secure_cookie:
+        return
+    print()
+    print(f"  ! Binding {host} with api.secure_cookie on.")
+    print("    A Secure cookie over plain http is only accepted for localhost, so")
+    print("    a browser on another device will discard it -- sign-in will appear")
+    print("    to work and every request after it will be a 401, with nothing said.")
+    print("    For a phone on this network, put this in config.yaml:")
+    print()
+    print("        api:")
+    print("          secure_cookie: false")
+    print()
+    print("    Turn it back on before anything is served over HTTPS.")
+    print()
 
 
 def _mount_client(app) -> None:
@@ -3309,19 +3349,41 @@ def _mount_client(app) -> None:
     `location.pathname` and a deep link to /read/abc must not 404. `/api/*` is
     matched first by virtue of being a real route, so nothing here can shadow it.
     """
-    from fastapi.responses import FileResponse
-    from fastapi.staticfiles import StaticFiles
+    # starlette's, NOT fastapi's. `fastapi.HTTPException` is a SUBCLASS of this
+    # one, and StaticFiles raises the parent -- so catching the FastAPI spelling
+    # compiles, runs, and never fires. That is the second time this same function
+    # failed by looking correct: first by inspecting a status code that was never
+    # returned, then by catching a subclass of what was actually raised. Both left
+    # every deep link 404ing while appearing to be handled.
+    from starlette.exceptions import HTTPException
+    from starlette.responses import FileResponse
+    from starlette.staticfiles import StaticFiles
 
     index = WEB_DIR / "index.html"
 
     class ClientFiles(StaticFiles):
-        """StaticFiles, but a miss is the app rather than a 404."""
+        """StaticFiles, but a miss is the app rather than a 404.
+
+        `StaticFiles.get_response` RAISES `HTTPException(404)` for a missing file
+        rather than returning a 404 response, so this has to catch rather than
+        inspect a status code -- and it has to catch starlette's exception rather
+        than FastAPI's subclass of it. See the import note above.
+
+        Only a 404 falls through. A 405 on a POST to a static path stays a 405,
+        because answering it with the app would hide a client that is posting
+        somewhere it should not.
+
+        Pinned by a test that asks for a deep link and asserts it gets index.html,
+        because both of this function's failures were silent.
+        """
 
         async def get_response(self, path, scope):
-            response = await super().get_response(path, scope)
-            if response.status_code == 404:
+            try:
+                return await super().get_response(path, scope)
+            except HTTPException as err:
+                if err.status_code != 404:
+                    raise
                 return FileResponse(index)
-            return response
 
     app.mount("/", ClientFiles(directory=str(WEB_DIR), html=True), name="client")
 

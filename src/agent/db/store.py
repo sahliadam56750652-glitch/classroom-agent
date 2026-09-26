@@ -77,7 +77,12 @@ def open_db(config: Config) -> sqlite3.Connection:
     return connect(config.db_path)
 
 
-def connect(db_path: Path, *, initialise: bool = True) -> sqlite3.Connection:
+def connect(
+    db_path: Path,
+    *,
+    initialise: bool = True,
+    check_same_thread: bool = True,
+) -> sqlite3.Connection:
     """The path-level entry point, so tests can point at a temp file.
 
     `initialise=False` skips applying schema.sql and the v2 migration, and
@@ -92,9 +97,25 @@ def connect(db_path: Path, *, initialise: bool = True) -> sqlite3.Connection:
     The version guard below is deliberately NOT skipped. It is one SELECT
     against a one-row table, and a connection that silently opens a file this
     build cannot read is precisely what it exists to prevent.
+
+    `check_same_thread=False` is for the API, and it is NOT the dangerous version
+    of that flag. The danger is SHARING one connection between concurrent
+    requests, where two transactions interleave on one handle. This is the other
+    case: one connection owned by exactly one request, which FastAPI nonetheless
+    spreads across several threads -- it runs a sync `yield` dependency's setup
+    and its teardown as SEPARATE `run_sync` calls, and anyio is free to schedule
+    each on a different worker. So the connection is opened in one thread, used by
+    the route in a second, and closed in a third, sequentially and never at once.
+
+    Measured against a real uvicorn rather than reasoned about: every request
+    raised `SQLite objects created in a thread can only be used in that same
+    thread`, and the connections that died in teardown kept their write locks,
+    which surfaced as `database is locked` on everything after. Starlette's
+    TestClient runs a whole request in one portal thread, which is why a suite of
+    1,415 tests was perfectly green while nothing worked.
     """
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
 
     # Both are connection-scoped and a no-op inside a transaction, so they have
