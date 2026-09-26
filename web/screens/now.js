@@ -16,6 +16,7 @@ import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { api, Offline } from "/api.js";
 import { plural, relativeDay, sessionName } from "/format.js";
+import { linkProps } from "/router.js";
 
 /**
  * The shape of the document, with tonight's range marked.
@@ -151,43 +152,65 @@ function Waiting({ body, botUsername }) {
 
       ${item.unread ? html`<p class="not-read">${notRead(item, windows)}</p>` : null}
 
-      <${Actions} item=${item} botUsername=${botUsername} />
+      <${Actions}
+        item=${item}
+        files=${body.files}
+        windows=${windows}
+        botUsername=${botUsername}
+      />
     </main>
   `;
 }
 
 /**
- * One door, and it says what is behind it.
+ * Two doors that do two different things.
  *
- * DESIGN.md section 4 wants Read and Skip side by side at equal weight, with Skip
- * stating what it records. Neither is possible here: 5b is read-only over
- * study_items, so the taps that change state live in Telegram until 5d.
+ * The primary one is READING, and that is the change the reader makes to this
+ * screen: opening the material is something the app can actually do, so it is
+ * the thing to offer first. Before slice 2 there was nothing here but a link out.
  *
- * Two buttons that both open the same conversation would be a lie of a different
- * kind -- two doors that are one door. So there is one, and the line under it
- * names both actions and where they are. The honesty invariant survives intact
- * for the reason that matters: the honest path and the flattering one cost
- * exactly the same single tap, which is the property section 4 is protecting.
+ * The second is Telegram, because DESIGN.md section 4's Read and Skip are writes
+ * to `study_items` and the API is read-only over them until 5d. It sits below
+ * and at lower weight -- it is where the state changes live, not the thing to do
+ * first. Still ONE link rather than two: two buttons opening the same
+ * conversation would be two doors that are one door, and the invariant section 4
+ * protects is that the honest tap never costs more than the flattering one,
+ * which holds when they are the same tap.
+ *
+ * `files` comes from `/api/now` rather than a second request, because this is
+ * the screen where a round trip is felt.
  */
-function Actions({ item, botUsername }) {
-  if (!botUsername) {
-    return html`
-      <p class="problem">
-        Set <code>telegram.bot_username</code> in <code>config.yaml</code> to
-        reach Read and Skip from here. Until then they are in the Telegram
-        conversation.
-      </p>
-    `;
-  }
+function Actions({ item, files, windows, botUsername }) {
+  const readable = (files || []).find((file) => file.readable);
+  const window = windows && windows.length ? windows[0] : null;
+
   return html`
     <div class="actions">
-      <a class="primary" href=${`https://t.me/${botUsername}`} rel="noopener">
-        Open in Telegram
-      </a>
-      <p class="quiet actions-note">
-        Read and Skip are both there, at the same weight. They move back here
-        when the app can write them itself.
-      </p>
+      ${readable
+        ? html`<a
+            class="primary"
+            ...${linkProps(`/read/${encodeURIComponent(readable.drive_id)}`)}
+          >
+            ${window ? `Read ${window.label}` : "Read it"}
+          </a>`
+        : html`<p class="problem">
+            Nothing readable is held for this post yet. ${" "}
+            <code>agent fetch</code> and <code>agent extract</code> bring it
+            here.
+          </p>`}
+      ${botUsername
+        ? html`<a
+            class="secondary"
+            href=${`https://t.me/${botUsername}`}
+            rel="noopener"
+          >
+            Read and Skip are in Telegram
+          </a>`
+        : html`<p class="quiet actions-note">
+            Read and Skip are in the Telegram conversation. Set
+            <code>telegram.bot_username</code> in <code>config.yaml</code> to
+            link to it from here.
+          </p>`}
     </div>
   `;
 }

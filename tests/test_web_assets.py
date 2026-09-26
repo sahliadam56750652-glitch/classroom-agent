@@ -69,9 +69,15 @@ def test_pinch_zoom_is_not_disabled():
 
 
 def test_no_stylesheet_blocks_touch_zoom():
-    """`touch-action: none` on a scroll container disables pinch just as well."""
+    """`touch-action: none` on a scroll container disables pinch just as well.
+
+    Comments are stripped first. The reader's stylesheet says in words that it is
+    NOT setting this, and a textual scan flagged the explanation -- which would
+    have left a real rule and a note about it indistinguishable, and eventually
+    got the note deleted to make the test pass.
+    """
     for sheet in WEB.rglob("*.css"):
-        body = sheet.read_text(encoding="utf-8")
+        body = re.sub(r"/\*.*?\*/", "", sheet.read_text(encoding="utf-8"), flags=re.S)
         assert "touch-action: none" not in body, sheet.name
         assert "touch-action:none" not in body, sheet.name
 

@@ -3355,9 +3355,23 @@ def _mount_client(app) -> None:
     # failed by looking correct: first by inspecting a status code that was never
     # returned, then by catching a subclass of what was actually raised. Both left
     # every deep link 404ing while appearing to be handled.
+    import mimetypes
+
     from starlette.exceptions import HTTPException
     from starlette.responses import FileResponse
     from starlette.staticfiles import StaticFiles
+
+    # Python does not know `.mjs`, and on this machine it guessed text/plain --
+    # which a browser REFUSES to execute as a module, so PDF.js failed to load
+    # with "Failed to fetch dynamically imported module" and the reader showed an
+    # error instead of a document. Registered here rather than relied upon,
+    # because the guess comes partly from the Windows registry and is therefore
+    # different on the laptop and on the box. `.js` is registered too, for the
+    # same reason: it is correct here and it is a registry lookup, not a
+    # guarantee, and every module in this client would fail the same way.
+    mimetypes.add_type("text/javascript", ".mjs")
+    mimetypes.add_type("text/javascript", ".js")
+    mimetypes.add_type("application/manifest+json", ".webmanifest")
 
     index = WEB_DIR / "index.html"
 

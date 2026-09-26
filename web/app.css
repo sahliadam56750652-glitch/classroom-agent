@@ -313,3 +313,137 @@ button.plain {
   font-size: 0.88rem;
   margin: 0.7em 0 0;
 }
+
+/* --------------------------------------------------------------- reader
+   Section 6: "the reader is the product; everything else is navigation."
+
+   The app's chrome is dark. The PAGE is not touched -- no invert, no filter,
+   no blend mode. Inverting a slide deck destroys diagrams, code screenshots
+   and photographed boards, which is exactly the content the vision OCR was
+   paid for. */
+
+.reader {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--ground);
+}
+
+.reader-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.9em;
+  padding: 0.6em var(--pad);
+  background: var(--ground);
+  border-bottom: 1px solid var(--line);
+  transform: translateY(0);
+  transition: transform var(--quick) ease-out;
+}
+
+/* On scroll, the chrome goes. */
+.reader-bar.gone {
+  transform: translateY(-100%);
+}
+
+.reader-title {
+  color: var(--ink-quiet);
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.reader-note {
+  margin: 0;
+  padding: 0.6em var(--pad);
+  font-size: 0.9rem;
+  color: var(--ink-quiet);
+  background: var(--raised);
+  border-bottom: 1px solid var(--line);
+}
+
+.pages {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  /* NOT `touch-action: none`. Pinch-zoom is never disabled -- a 92-page deck
+     has diagrams that only work zoomed, and disabling it is the single most
+     common way a reader becomes unusable on a phone. */
+  padding: 8px;
+}
+
+.page {
+  margin: 0 auto 10px;
+  display: flex;
+  justify-content: center;
+  /* A page that has not rendered yet still occupies its slot, so the scrollbar
+     does not jump as canvases mount and unmount. */
+  min-height: 40vh;
+}
+
+.page canvas {
+  display: block;
+  /* The only treatment applied to the page: a hairline so a white slide has an
+     edge against the dark ground. Nothing that alters what is inside it. */
+  box-shadow: 0 0 0 1px var(--line);
+  background: #fff;
+}
+
+.page canvas.blank {
+  min-height: 40vh;
+}
+
+.page.spacer {
+  background: var(--raised);
+  border-radius: 4px;
+  opacity: 0.35;
+}
+
+/* Where I am. The one element that persists when the chrome goes. */
+.position {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 0.25em 0.6em;
+  border-radius: 999px;
+  background: rgba(14, 15, 17, 0.85);
+  border: 1px solid var(--line);
+  color: var(--ink-quiet);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.plain-link {
+  color: var(--ink-quiet);
+  text-decoration: none;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.plain-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A second action, below the primary one and at lower weight -- it is where
+   Read and Skip live until 5d, not the thing to do first. */
+.secondary {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  color: var(--ink-quiet);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 0.7em 1.1em;
+  min-height: 44px;
+  margin-top: 0.5em;
+}
+
+.secondary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

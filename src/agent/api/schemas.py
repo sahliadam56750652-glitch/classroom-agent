@@ -131,6 +131,9 @@ class NextOut(BaseModel):
     subject: SubjectOut | None = None
     item: ItemOut | None = None
     windows: list[WindowOut] = Field(default_factory=list)
+    # The item's attachments, so the default screen can open the reader without
+    # a second request. This is the one screen where a round trip is felt.
+    files: list[DocumentOut] = Field(default_factory=list)
     # Where to perform the action until 5d lands. 5b is read-only over
     # study_items, so the client sends me to the conversation that can write.
     act_in_telegram: bool = True
@@ -349,5 +352,6 @@ class LibraryPostOut(BaseModel):
     study_item_state: str | None = None
 
 
-# StudyItemOut references DocumentOut before it is defined.
+# NextOut and StudyItemOut both reference DocumentOut before it is defined.
+NextOut.model_rebuild()
 StudyItemOut.model_rebuild()

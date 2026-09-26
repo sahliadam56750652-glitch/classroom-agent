@@ -148,6 +148,12 @@ def now(
         subject=convert.subject(subject),
         item=convert.item(item),
         windows=_windows_for(conn, config, item, pages),
+        files=[
+            convert.document(found)
+            for found in store.study_item_files(
+                conn, item.entity_type, item.entity_id
+            )
+        ],
     )
 
 

@@ -122,24 +122,31 @@ def served(tmp_path_factory):
 
     port = free_port()
     environment = {**os.environ, "DATA_DIR": str(data)}
+
+    # A FILE, not a pipe. uvicorn logs a line per request, and an unread
+    # subprocess.PIPE holds about 64 KB before the writer BLOCKS -- so the server
+    # answered the first several dozen requests and then froze mid-suite, with
+    # every later test timing out on a socket read. Nothing was wrong with the
+    # server; the test harness had stopped listening to it. A file has no such
+    # limit, and it is still readable when something fails.
+    log = root / "serve.log"
+    handle = log.open("w", encoding="utf-8")
     process = subprocess.Popen(
         [
             sys.executable, "-m", "agent.cli", "serve",
             "--config", str(root / "config.yaml"),
             "--host", "127.0.0.1", "--port", str(port),
         ],
-        stdout=subprocess.PIPE,
+        stdout=handle,
         stderr=subprocess.STDOUT,
         env=environment,
         cwd=str(REPO_ROOT),
-        encoding="utf-8",
-        errors="replace",
     )
 
     base = f"http://127.0.0.1:{port}"
     for _ in range(120):
         if process.poll() is not None:
-            pytest.fail(f"serve exited: {process.stdout.read()[-2000:]}")
+            pytest.fail(f"serve exited: {log.read_text(errors='replace')[-2000:]}")
         try:
             import urllib.request
 
@@ -150,12 +157,14 @@ def served(tmp_path_factory):
             time.sleep(0.25)
     else:
         process.kill()
-        pytest.fail("serve never became healthy")
+        tail = log.read_text(errors="replace")[-2000:]
+        pytest.fail(f"serve never became healthy:\n{tail}")
 
     yield base, process
 
     process.kill()
     process.wait(timeout=10)
+    handle.close()
 
 
 def _seed(data: Path) -> None:
@@ -182,7 +191,19 @@ def _seed(data: Path) -> None:
         "coursework_material", "p-render", "842149328479", [attachment]))
     (data / "library" / "text" / "d-render.txt").write_text(
         sections.PAGE_BREAK.join(pages), encoding="utf-8")
-    (data / "library" / "files" / "d-render.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    # A REAL 92-page PDF, built with the pymupdf this project already depends on.
+    # A stub of "%PDF-1.4 %%EOF" is not a document PDF.js can open, so the reader
+    # would fail to parse it and every assertion about the reader would be about
+    # the stub rather than about the reader.
+    import pymupdf
+
+    document = pymupdf.open()
+    for number in range(1, 93):
+        page = document.new_page(width=420, height=560)
+        page.insert_text((40, 80), f"Page {number}", fontsize=18)
+        page.insert_text((40, 120), "Joins and null semantics.", fontsize=11)
+    document.save(data / "library" / "files" / "d-render.pdf")
+    document.close()
     store.upsert_extraction(
         conn, "d-render", status="ok", local_path="files/d-render.pdf",
         text_path="text/d-render.txt", mime_type="application/pdf",
@@ -200,7 +221,9 @@ def _seed(data: Path) -> None:
     conn.close()
 
 
-def render(base: str, tmp_path: Path, date: str | None = None) -> dict:
+def render(
+    base: str, tmp_path: Path, date: str | None = None, path: str | None = None
+) -> dict:
     """Load the app in a real browser and return its text, console and size."""
     probe = REPO_ROOT / "web" / "__render_probe.html"
     probe.write_text(
@@ -212,7 +235,7 @@ def render(base: str, tmp_path: Path, date: str | None = None) -> dict:
         "credentials:'same-origin',headers:{'Content-Type':'application/json'},"
         "body:JSON.stringify({token:q.get('t')})});\n"
         "const f=document.getElementById('f');\n"
-        "f.src=q.get('d')?'/?date='+q.get('d'):'/';\n"
+        "f.src=q.get('p')||(q.get('d')?'/?date='+q.get('d'):'/');\n"
         "f.onload=()=>setTimeout(()=>{const d=f.contentDocument;\n"
         "document.getElementById('o').textContent=JSON.stringify({"
         "text:d.body.innerText,html:d.getElementById('app').innerHTML,"
@@ -225,7 +248,9 @@ def render(base: str, tmp_path: Path, date: str | None = None) -> dict:
         url = f"{base}/__render_probe.html?t={TOKEN}"
         if date:
             url += f"&d={date}"
-        profile = tmp_path / f"chrome-{date or 'now'}"
+        if path:
+            url += f"&p={path}"
+        profile = tmp_path / "chrome"
         result = subprocess.run(
             [
                 find_chrome(), "--headless=new", "--disable-gpu", "--no-first-run",
@@ -309,7 +334,12 @@ def test_the_waiting_state_says_what_design_md_asks_for(busy):
     assert "92 pages" in text
     assert "an evening is about pages 1-20" in text
     assert "This counts as read, not verified." in text
-    assert "Open in Telegram" in text
+
+    # Two doors that do two different things. Reading is something the app CAN
+    # do, so it is offered first; Read and Skip are writes to study_items and
+    # live in Telegram until 5d, below and at lower weight.
+    assert "Read pages 1-20" in text
+    assert "Read and Skip are in Telegram" in text
 
 
 @chrome_only
@@ -356,6 +386,136 @@ def test_no_percentage_reaches_the_screen(busy, clear):
     """The server cannot send one; this checks the client did not invent one."""
     for found in (busy, clear):
         assert "%" not in found["text"], found["text"]
+
+
+def _sign_in(base: str) -> str:
+    import urllib.request
+
+    request = urllib.request.Request(
+        f"{base}/api/session",
+        data=json.dumps({"token": TOKEN}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return response.headers.get("set-cookie", "").split(";")[0]
+
+
+# The reader's PDF RENDERING is deliberately not driven headlessly, and the
+# reason is a property of the harness rather than of the reader.
+#
+# `--virtual-time-budget` fast-forwards TIMERS, which is what makes the screen
+# tests above take four seconds instead of thirty. It does not fast-forward the
+# network, and it starves a Web Worker: PDF.js loaded, `getDocument` created its
+# task, and `task.promise` then never settled and never requested a single byte,
+# inside a budget that virtual time had already exhausted. Nothing was wrong.
+#
+# Measured in a REAL Chrome against the same server, the same code reports
+# `OPENED-pages-92-width-595` and the whole loop appears in the access log:
+#
+#     GET  /read/d-chap4                     200   deep link -> the app
+#     GET  /api/documents/d-chap4            200   metadata and windows
+#     GET  /api/documents/d-chap4/position   200   restore
+#     GET  /api/documents/d-chap4/file       304   conditional GET hit
+#     PUT  /api/documents/d-chap4/position   200   the settle timer saved it
+#
+# So the split is deliberate: everything AROUND the reader is tested here at the
+# HTTP level, where it is fast and certain -- the ranges, the position round
+# trip, the deep link, the conditional GET. Whether 92 pages actually paint is
+# checked by looking, which is what DESIGN.md asks for anyway.
+#
+# What this does NOT cover, said plainly rather than left implied: that pages
+# paint, that the chrome hides on scroll, and that pinch-zoom works on a real
+# phone. Those are eye checks.
+
+@chrome_only
+def test_the_reader_records_where_i_stopped(served):
+    """And the SERVER derives the anchor, because a browser cannot.
+
+    The reader sends only `page_index`; `sections.anchor` hashes PyMuPDF's
+    extraction text and PDF.js produces materially different text for the same
+    page, so a client-computed hash would never match.
+    """
+    import urllib.request
+
+    base, _ = served
+    cookie = _sign_in(base)
+
+    request = urllib.request.Request(
+        f"{base}/api/documents/d-render/position",
+        data=json.dumps({"page_index": 40}).encode(),
+        headers={"Content-Type": "application/json", "Cookie": cookie},
+        method="PUT",
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        written = json.load(response)
+    assert written["page"] == 41
+    assert written["page_hash"], "the server did not derive an anchor"
+
+    read = urllib.request.Request(
+        f"{base}/api/documents/d-render/position", headers={"Cookie": cookie}
+    )
+    with urllib.request.urlopen(read, timeout=30) as response:
+        assert json.load(response)["page"] == 41
+
+
+@chrome_only
+def test_the_reader_can_open_page_one_without_pulling_the_file(served):
+    """The property the whole reader rests on, checked against a real server.
+
+    PDF.js asks for the tail (the cross-reference table), then the pages it needs.
+    What matters is that each of those is a 206 of a few KB rather than a 200 of
+    the whole document -- if it ever silently becomes a 200, the only symptom is
+    that a 92-page deck "feels slow" on mobile data.
+    """
+    import urllib.request
+
+    base, _ = served
+    cookie = _sign_in(base)
+    url = f"{base}/api/documents/d-render/file"
+
+    whole = urllib.request.Request(url, headers={"Cookie": cookie})
+    with urllib.request.urlopen(whole, timeout=30) as response:
+        size = int(response.headers["content-length"])
+        assert response.headers.get("accept-ranges") == "bytes"
+        # Drained deliberately. Abandoning a streaming response leaves the
+        # server writing into a socket nobody is reading, and the next request
+        # queues behind it -- which is how this test wedged the two after it.
+        response.read()
+    assert size > 20_000, "the seeded PDF is too small to prove anything"
+
+    # The tail, which is the first thing PDF.js asks for.
+    tail = urllib.request.Request(
+        url, headers={"Cookie": cookie, "Range": f"bytes={size - 2048}-"}
+    )
+    with urllib.request.urlopen(tail, timeout=30) as response:
+        assert response.status == 206
+        body = response.read()
+    assert len(body) == 2048, len(body)
+
+    # And an arbitrary chunk from the middle.
+    middle = urllib.request.Request(
+        url, headers={"Cookie": cookie, "Range": "bytes=4096-8191"}
+    )
+    with urllib.request.urlopen(middle, timeout=30) as response:
+        assert response.status == 206
+        assert response.headers["content-range"] == f"bytes 4096-8191/{size}"
+        assert len(response.read()) == 4096
+
+
+@chrome_only
+def test_a_deep_link_into_the_reader_serves_the_app(served):
+    """`/read/abc` is not a file. It must return index.html, not a 404.
+
+    Two bugs in that mount both looked correct and never fired: StaticFiles
+    RAISES its 404 rather than returning one, and it raises starlette's
+    exception, not FastAPI's subclass.
+    """
+    import urllib.request
+
+    base, _ = served
+    with urllib.request.urlopen(f"{base}/read/anything", timeout=30) as response:
+        assert response.status == 200
+        assert b"<title>classroom-agent</title>" in response.read()
 
 
 @chrome_only

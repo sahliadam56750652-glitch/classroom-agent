@@ -74,3 +74,31 @@ And one that is not htm's fault: **a separator styled with CSS margins has no
 space in the text**. `<span class="sep">·</span>` looked correct and read as
 "92 pagesan evening" to anything consuming `innerText`, including a screen
 reader. The spaces are in the markup now.
+
+## Verifying the reader
+
+`tests/test_web_render.py` drives the screens with headless Chrome and
+`--virtual-time-budget`, which is what makes it take four seconds. **That flag
+cannot be used on the reader.** It fast-forwards timers but not the network, and
+it starves a Web Worker: PDF.js loads, `getDocument` creates its task, and the
+promise then never settles and never requests a byte. Nothing is broken; the
+harness has simply run out of virtual time before the worker got any real time.
+
+So the reader is checked by looking, and the quickest honest way to do that is to
+let the page report through the access log:
+
+    agent serve --config <config> --port 8231
+    # then open /read/<drive_id> in a real browser and watch the log
+
+A working reader produces exactly this, and the last line is the one worth
+waiting for -- it means the settle timer fired and the position was saved:
+
+    GET  /read/<id>                     200
+    GET  /api/documents/<id>            200
+    GET  /api/documents/<id>/position   200
+    GET  /api/documents/<id>/file       206 or 304
+    PUT  /api/documents/<id>/position   200
+
+A `200` rather than a `206` or `304` on the file means ranges have stopped
+working and the whole document is being pulled -- which looks like nothing at
+all except a reader that feels slow.

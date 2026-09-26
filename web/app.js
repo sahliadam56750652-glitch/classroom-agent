@@ -9,6 +9,8 @@ import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { api, haveSession, Offline, signIn, signOut } from "/api.js";
 import { Now } from "/screens/now.js";
+import { Reader } from "/reader/reader.js";
+import { match, useRoute } from "/router.js";
 
 /**
  * The token, once every 90 days.
@@ -114,6 +116,13 @@ function Shell({ onSignOut }) {
   useEffect(() => {
     api.get("/api/status").then(setStatus).catch(() => setStatus({}));
   }, []);
+
+  const route = useRoute();
+  const reading = match("/read/", route.path);
+
+  // The reader is full-screen and owns the viewport, so it renders alone --
+  // no footer, no chrome but its own. Section 6: everything else is navigation.
+  if (reading) return html`<${Reader} driveId=${reading} />`;
 
   return html`
     <${Now} status=${status} />
