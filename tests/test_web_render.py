@@ -550,3 +550,50 @@ def test_real_requests_survive_the_threadpool(served, tmp_path):
         )
         with urllib.request.urlopen(read, timeout=30) as response:
             assert response.status == 200
+
+
+@pytest.fixture(scope="module")
+def subjects(served, tmp_path_factory):
+    base, _ = served
+    return render(base, tmp_path_factory.mktemp("subjects"), path="/subjects")
+
+
+@chrome_only
+def test_the_subjects_screen_shows_four_distinguishable_states(subjects):
+    """DESIGN.md section 3: never collapsed into a number.
+
+    The seeded timetable has Database (behind) and OS (a tracked course with no
+    material here), so two of the states are on screen at once and the third --
+    a subject awaiting an id -- is what `no Classroom course yet` would say.
+    """
+    text = subjects["text"]
+    assert "Database" in text
+    assert "OS" in text
+    # Behind is COUNTED, never described as a share.
+    assert "1 unreviewed" in text
+
+
+@chrome_only
+def test_no_percentage_on_the_subjects_screen(subjects):
+    """The server cannot send one. This checks the client did not compute one."""
+    assert "%" not in subjects["text"], subjects["text"]
+
+
+@chrome_only
+def test_no_progress_bar_for_a_subject(subjects):
+    """Section 3 allows a bar for ONE ITEM and nothing larger.
+
+    A bar for a subject is a progress indicator for something that never
+    completes, which is a mood ring.
+    """
+    assert "<progress" not in subjects["html"]
+    assert "ruler" not in subjects["html"]
+
+
+@chrome_only
+def test_the_whole_picture_is_one_tap_away(busy):
+    """Section 2: reachable, and never the front door."""
+    assert "Subjects" in busy["text"]
+    assert "Counted" in busy["text"]
+    # The nav is at the END of the content, not pinned over it.
+    assert busy["html"].index("nav") > busy["html"].index("deficit")

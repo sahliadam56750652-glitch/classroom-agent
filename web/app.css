@@ -461,3 +461,106 @@ button.plain {
   margin: 0 var(--pad) 0.8em;
   border-radius: 0 var(--radius) var(--radius) 0;
 }
+
+/* --------------------------------------------------------------- nav
+   At the END of the content, not pinned over it. Section 2: the default screen
+   is one item and the whole picture is one tap away -- a fixed bar would put
+   three other destinations in front of the thing I opened the app to do. */
+.nav {
+  display: flex;
+  gap: 1.4em;
+  border-top: 1px solid var(--line);
+  padding-top: 0.9em;
+  margin-top: 1.5em;
+}
+
+.nav a {
+  color: var(--ink-quiet);
+  text-decoration: none;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.95rem;
+}
+
+.nav a.nav-here {
+  color: var(--ink);
+}
+
+.nav a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------------- subjects
+   Counts and a state. No percentage, and no bar for a subject -- a progress
+   indicator for something that never completes is a mood ring. */
+.subjects {
+  list-style: none;
+  padding: 0;
+  margin: 1.2em 0;
+}
+
+.subject {
+  padding: 0.8em 0;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15em;
+}
+
+.subject-name {
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 500;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.subject-name:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.subject-said {
+  color: var(--ink-quiet);
+  font-size: 0.93rem;
+}
+
+.subject-age,
+.subject-next {
+  color: var(--ink-faint);
+  font-size: 0.88rem;
+}
+
+/* A plain list of figures. Deliberately not cards: identical rounded boxes
+   with the same shadow under each are decoration, and these are numbers I
+   came here to read. */
+.facts {
+  list-style: none;
+  padding: 0;
+  margin: 0.8em 0 1.4em;
+}
+
+.facts li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1em;
+  padding: 0.45em 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-quiet);
+  font-size: 0.95rem;
+}
+
+.facts b {
+  color: var(--ink);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1.6em 0 0;
+}

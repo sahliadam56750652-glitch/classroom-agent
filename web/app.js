@@ -10,7 +10,9 @@ import { html } from "/html.js";
 import { api, haveSession, Offline, signIn, signOut } from "/api.js";
 import { Now } from "/screens/now.js";
 import { Reader } from "/reader/reader.js";
-import { match, useRoute } from "/router.js";
+import { Subject, Subjects } from "/screens/subjects.js";
+import { Status } from "/screens/status.js";
+import { linkProps, match, useRoute } from "/router.js";
 import { flushWhenOnline } from "/queue.js";
 
 /**
@@ -122,14 +124,56 @@ function Shell({ onSignOut }) {
   const reading = match("/read/", route.path);
 
   // The reader is full-screen and owns the viewport, so it renders alone --
-  // no footer, no chrome but its own. Section 6: everything else is navigation.
+  // no nav, no chrome but its own. Section 6: everything else is navigation.
   if (reading) return html`<${Reader} driveId=${reading} />`;
 
   return html`
-    <${Now} status=${status} />
+    <${Screen} route=${route} status=${status} />
+    <${Nav} here=${route.path} />
     <footer class="pad">
       <button class="plain" onClick=${onSignOut}>Sign out</button>
     </footer>
+  `;
+}
+
+/** Which screen this path is. */
+function Screen({ route, status }) {
+  const path = route.path;
+  const subject = match("/subjects/", path);
+  if (subject) return html`<${Subject} name=${subject} />`;
+  if (path === "/subjects") return html`<${Subjects} />`;
+  if (path === "/status") return html`<${Status} />`;
+  return html`<${Now} status=${status} />`;
+}
+
+/**
+ * The whole picture, one tap away and never the front door.
+ *
+ * A row at the END of the content rather than a fixed tab bar. Section 2 is
+ * explicit that the default screen is one item and that everything else is
+ * behind it -- a bar pinned over the bottom of the screen would put four other
+ * destinations in front of the one thing I opened the app to do.
+ */
+function Nav({ here }) {
+  const places = [
+    ["/", "Now"],
+    ["/subjects", "Subjects"],
+    ["/status", "Counted"],
+  ];
+  return html`
+    <nav class="nav pad">
+      ${places.map(
+        ([to, label]) =>
+          html`<a
+            key=${to}
+            class=${here === to ? "nav-here" : ""}
+            aria-current=${here === to ? "page" : null}
+            ...${linkProps(to)}
+          >
+            ${label}
+          </a>`
+      )}
+    </nav>
   `;
 }
 
