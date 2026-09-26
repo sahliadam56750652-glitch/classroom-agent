@@ -283,3 +283,79 @@ def test_no_badge_api_and_no_push_anywhere():
         assert "setAppBadge" not in body, path.name
         assert "showNotification" not in body, path.name
         assert "pushManager" not in body, path.name
+
+
+# ---------------------------------------------------------------------------
+# the service worker
+# ---------------------------------------------------------------------------
+
+
+def test_every_precached_path_exists():
+    """A typo here is an app that is silently never available offline.
+
+    `sw.js` adds shell files individually and swallows each failure, which is
+    deliberate -- `cache.addAll` fails the whole batch on one bad path and would
+    leave NOTHING precached. The cost of that choice is that a wrong path is a
+    console warning nobody reads, so it is checked here instead.
+    """
+    body = (WEB / "sw.js").read_text(encoding="utf-8")
+    listed = re.search(r"const SHELL_FILES = \[(.*?)\];", body, re.S)
+    assert listed, "no SHELL_FILES array in sw.js"
+
+    paths = re.findall(r'"([^"]+)"', listed.group(1))
+    assert len(paths) >= 10, paths
+
+    missing = [
+        path
+        for path in paths
+        # "/" is the app, served as index.html rather than a file of its own.
+        if path != "/" and not (WEB / path.lstrip("/")).is_file()
+    ]
+    assert not missing, f"sw.js precaches paths that do not exist: {missing}"
+
+
+def test_the_pdf_worker_is_not_precached():
+    """1.4 MB that only the reader needs.
+
+    Precaching it would make every first load pay for a screen most opens never
+    reach, on the mobile connection the whole design is about.
+    """
+    body = (WEB / "sw.js").read_text(encoding="utf-8")
+    listed = re.search(r"const SHELL_FILES = \[(.*?)\];", body, re.S).group(1)
+    assert "pdf.worker" not in listed
+    assert "pdf.min.mjs" not in listed
+
+
+def test_the_worker_sits_at_the_root():
+    """A service worker only controls its own directory and below.
+
+    At /web/sw.js it would control nothing; it has to be /sw.js to see the app's
+    requests at all, and that is a property of where the file IS.
+    """
+    assert (WEB / "sw.js").is_file()
+    assert not list(WEB.glob("*/sw.js")), "a second worker below the root"
+
+
+def test_documents_are_never_cached_as_a_side_effect():
+    """A 40 MB deck must not be kept because I scrolled past it.
+
+    The document handler reads from the cache and falls back to the network; it
+    must never write. Only the explicit `keep` message stores one.
+    """
+    body = (WEB / "sw.js").read_text(encoding="utf-8")
+    handler = body[body.index("async function document_("):]
+    handler = handler[: handler.index("\n}\n")]
+    assert ".put(" not in handler, "the document handler writes to a cache"
+    assert "cache.add" not in handler
+
+
+def test_only_positions_are_queued_offline():
+    """Everything else fails visibly.
+
+    A task that looks recorded and is not is the silent-success failure this
+    project ranks worst, so the queue is deliberately narrow.
+    """
+    body = (WEB / "queue.js").read_text(encoding="utf-8")
+    assert "position" in body.lower()
+    for forbidden in ("/api/tasks", "/api/projects", "/api/uploads", "/api/adjustments"):
+        assert forbidden not in body, forbidden

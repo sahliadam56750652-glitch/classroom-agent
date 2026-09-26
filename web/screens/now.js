@@ -184,6 +184,17 @@ function Actions({ item, files, windows, botUsername }) {
   const readable = (files || []).find((file) => file.readable);
   const window = windows && windows.length ? windows[0] : null;
 
+  // Tonight's document, kept for the radio being off. One file, a few MB, and
+  // precisely the one I will want at 23:00 -- which is what DESIGN.md section 6
+  // means by "what has been delivered". Nothing else is cached automatically.
+  useEffect(() => {
+    if (!readable || !navigator.serviceWorker?.controller) return;
+    navigator.serviceWorker.controller.postMessage({
+      type: "keep",
+      url: `/api/documents/${encodeURIComponent(readable.drive_id)}/file`,
+    });
+  }, [readable && readable.drive_id]);
+
   return html`
     <div class="actions">
       ${readable
@@ -253,10 +264,22 @@ export function Now({ status }) {
     return html`<main class="pad"><p class="faint">…</p></main>`;
   }
 
-  return body.waiting
-    ? html`<${Waiting}
-        body=${body}
-        botUsername=${status && status.telegram_bot_username}
-      />`
-    : html`<${Clear} body=${body} />`;
+  const asOf = body.__cachedAt;
+
+  return html`
+    ${asOf
+      ? html`<p class="pad stale">
+          ${`No connection. This is as of ${new Date(asOf).toLocaleTimeString(
+            undefined,
+            { hour: "2-digit", minute: "2-digit" }
+          )}.`}
+        </p>`
+      : null}
+    ${body.waiting
+      ? html`<${Waiting}
+          body=${body}
+          botUsername=${status && status.telegram_bot_username}
+        />`
+      : html`<${Clear} body=${body} />`}
+  `;
 }

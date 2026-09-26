@@ -447,3 +447,17 @@ button.plain {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* Said, never implied. An offline screen shows the last thing it knew WITH the
+   time it knew it -- presenting stale figures as current would be the app
+   inventing a state, which section 7 forbids. Not an alarm colour: being
+   offline is a fact, not a fault. */
+.stale {
+  color: var(--ink-quiet);
+  font-size: 0.9rem;
+  background: var(--raised);
+  border-left: 3px solid var(--line);
+  padding: 0.55em 0.9em;
+  margin: 0 var(--pad) 0.8em;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}

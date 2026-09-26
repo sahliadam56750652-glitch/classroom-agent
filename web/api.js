@@ -65,7 +65,24 @@ async function request(method, path, { body, form, signal } = {}) {
 
   const type = response.headers.get("content-type") || "";
   if (!type.includes("json")) return response;
-  return expect(route, await response.json());
+
+  // `parsed`, not `body` -- this function already has a `body` parameter, and
+  // shadowing it is a SyntaxError that blanks the whole app.
+  const parsed = expect(route, await response.json());
+
+  // The service worker stamps a cached fallback. Carried onto the parsed value
+  // so a screen can say "as of 21:40" rather than presenting old figures as
+  // current -- section 7 forbids the app inventing a state, and stale data shown
+  // as fresh is exactly that. Non-enumerable, so it never reaches a form or a
+  // request built from this object.
+  const cachedAt = response.headers.get("X-Agent-Cached-At");
+  if (cachedAt && parsed && typeof parsed === "object") {
+    Object.defineProperty(parsed, "__cachedAt", {
+      value: cachedAt,
+      enumerable: false,
+    });
+  }
+  return parsed;
 }
 
 async function detailOf(response) {

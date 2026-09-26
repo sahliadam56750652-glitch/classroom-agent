@@ -23,6 +23,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { api, Offline } from "/api.js";
 import { linkProps } from "/router.js";
+import { queuePosition } from "/queue.js";
 
 // Rendered ahead of and behind the visible page. Two is enough that a scroll
 // never waits, and small enough that 92 canvases never exist at once.
@@ -263,9 +264,11 @@ export function Reader({ driveId }) {
           page_index: current - 1,
         })
         .catch(() => {
-          // A position that failed to save is not worth interrupting reading
-          // for. It is re-sent on the next settle, and slice 3 queues it.
+          // Never interrupts reading. Queued instead, and sent when the
+          // connection returns -- losing my place in a 92-page chapter is
+          // exactly the cost worth a few lines of storage.
           lastWritten.current = null;
+          queuePosition(driveId, current - 1);
         });
     }, SETTLE_MS);
     return () => clearTimeout(timer);

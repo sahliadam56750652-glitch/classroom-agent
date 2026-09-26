@@ -11,6 +11,7 @@ import { api, haveSession, Offline, signIn, signOut } from "/api.js";
 import { Now } from "/screens/now.js";
 import { Reader } from "/reader/reader.js";
 import { match, useRoute } from "/router.js";
+import { flushWhenOnline } from "/queue.js";
 
 /**
  * The token, once every 90 days.
@@ -131,6 +132,20 @@ function Shell({ onSignOut }) {
     </footer>
   `;
 }
+
+// The service worker, registered after load so it never competes with the first
+// paint. Failure is not reported: without it the app simply needs a connection,
+// which is a smaller problem than a message about it on the screen that matters.
+if ("serviceWorker" in navigator) {
+  addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("/sw.js")
+      .catch((err) => console.warn("[app] no service worker:", err));
+  });
+}
+
+// Positions saved while offline go out when the connection returns.
+flushWhenOnline(api);
 
 const root = document.getElementById("app");
 // Cleared first. Preact's `render` APPENDS into a container holding children it
