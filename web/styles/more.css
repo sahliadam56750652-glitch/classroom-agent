@@ -1,0 +1,9 @@
+/* More: the destinations the tab bar has no room for. */
+
+.more-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  color: var(--ink-2);
+}

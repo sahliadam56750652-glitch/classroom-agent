@@ -1,48 +1,97 @@
 /*
-  The tokens DESIGN.md section 6 specifies, and nothing else yet. Screen styles
-  land with their screens.
+  The base: tokens, type, the shell, and the components every screen shares.
+  DESIGN.md section 8 is the specification and each value here is one of its
+  rows. tests/test_web_assets.py recomputes the contrast of the colour tokens
+  from THIS file, so a token cannot drift below AA unnoticed.
 
-  Three of these are rules rather than taste, and each has a reason in the brief:
+  Screen-specific styles live in styles/<screen>.css, one per screen, so a
+  screen's redesign can be reverted on its own.
 
-  Dark is the DEFAULT, not a toggle. And not pure white on pure black -- an
-  off-white on a near-black ground, because maximum contrast haloes text at 23:00
-  and makes a 40-page sitting physically tiring.
+  Three rules that come from DESIGN.md rather than from taste:
 
-  17px is a FLOOR. This text is read tired, on a phone, at night.
+    Dark is the DEFAULT, not a toggle. Off-white on near-black -- maximum
+    contrast haloes text at 23:00 and makes a 40-page sitting tiring.
 
-  No weight below 400, and nothing over 150ms.
+    There is ONE warm alarm and it is --passed: a deadline that has already
+    gone. Behind, blocked and not-yet-transcribed are neutral ink, because they
+    are the resting state of most material most of the time.
+
+    Nothing moves on its own. 140ms, only in answer to something I did.
+
+  And one that is about time: nothing here reads the clock. The page at 23:00 is
+  the page at 14:00 -- a night mode would be the app deciding I am in trouble.
 */
 
 :root {
-  --ground: #0e0f11;
-  --raised: #171a1d;
-  --ink: #e8e6e3;
-  --ink-quiet: #a8a39c;
-  --ink-faint: #6f6b66;
-  --line: #262a2e;
-  --accent: #7fa8c9;
+  color-scheme: dark;
 
-  /* The only red in this app is a deadline that has already passed. Not
-     unreviewed material -- that is the resting state of most material most of
-     the time, and colouring the normal case as an alarm teaches me to ignore
-     the colour.
+  /* Surfaces, darkest to lightest. Depth is lightness and a line, never a
+     shadow: a shadow on a near-black ground is invisible. */
+  --ground: #0f1216;
+  --card: #161a20;
+  --raised: #1c2129;
+  --pressed: #232933;
 
-     A muted red rather than the warm clay that #c9776b was drifting towards: it
-     is the single warm value in the palette and it appears almost never, which
-     is what makes it mean something when it does. */
-  --passed: #c05f56;
+  /* Ink. All three clear WCAG AA (4.5:1) on ground, card and raised. */
+  --ink: #e8e5df;
+  --ink-2: #b3aea6;
+  --ink-3: #969189;
 
-  --pad: 16px;
-  --radius: 10px;
-  --quick: 150ms;
+  --accent: #8ab4dc;
+  --accent-hover: #a3c4e4;
+  --accent-ink: #0f1216;
+
+  /* The only red: a deadline that has already passed. */
+  --passed: #e3837a;
+
+  /* A control's border needs 3:1 (WCAG 1.4.11); a divider needs none, because
+     it carries no meaning a person has to find. */
+  --edge: #646e7c;
+  --line: #2a313b;
+
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+  --s8: 64px;
+
+  /* Radius says what a thing is: a control, a card, the one hero. */
+  --r-control: 10px;
+  --r-card: 14px;
+  --r-hero: 20px;
+  --r-pill: 999px;
+
+  --quick: 140ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  --tabbar: 64px;
+  --sidebar: 232px;
+  --measure: 72ch;
+
+  /* The subject a thing belongs to, set per element from subject-color.js.
+     Neutral when there is no subject. */
+  --subject: var(--edge);
+
+  /* Old names, for styles/legacy.css while the screens are rebuilt. They go
+     when that file does. */
+  --ink-quiet: var(--ink-2);
+  --ink-faint: var(--ink-3);
+  --pad: var(--s4);
+  --radius: var(--r-control);
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
 html {
   background: var(--ground);
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -51,6 +100,7 @@ body {
   color: var(--ink);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
+  /* The floor for anything read as prose: this text is read tired. */
   font-size: 17px;
   line-height: 1.55;
   font-weight: 400;
@@ -58,9 +108,8 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* No animation over 150ms, anywhere. Enforced here rather than remembered at
-   each call site. */
-* ,
+/* No animation over 150ms, enforced here rather than remembered per rule. */
+*,
 *::before,
 *::after {
   animation-duration: var(--quick) !important;
@@ -73,696 +122,690 @@ body {
   *::after {
     animation: none !important;
     transition: none !important;
+    scroll-behavior: auto !important;
   }
 }
 
-.pad {
-  padding: var(--pad);
-  max-width: 44rem;
-  margin: 0 auto;
+/* One focus ring, everywhere, and never removed. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
-h1 {
-  font-size: 1.35rem;
+a {
+  color: inherit;
+}
+
+p,
+h1,
+h2,
+h3,
+ul,
+ol,
+dl,
+dd,
+figure {
+  margin: 0;
+}
+
+h1,
+h2,
+h3 {
   font-weight: 600;
-  margin: 0 0 0.35em;
-  letter-spacing: -0.01em;
-}
-
-p {
-  margin: 0 0 0.9em;
 }
 
 code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.9em;
-  color: var(--ink-quiet);
+  font-size: 0.88em;
+  color: var(--ink-2);
+  background: var(--raised);
+  padding: 0.1em 0.35em;
+  border-radius: 6px;
 }
 
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* ------------------------------------------------------------------ type
+   Six sizes and no others. See DESIGN.md section 8. */
+
+.t-hero {
+  font-size: 30px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.t-title {
+  font-size: 24px;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.t-lead {
+  font-size: 19px;
+  line-height: 1.35;
+  font-weight: 500;
+}
+
+.t-body {
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+.t-state {
+  font-size: 17px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+
+.t-meta {
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+
+@media (min-width: 1024px) {
+  .t-hero {
+    font-size: 38px;
+  }
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.prose {
+  max-width: var(--measure);
+}
+
+/* Utility names the screens not yet rebuilt still use. */
 .quiet {
-  color: var(--ink-quiet);
+  color: var(--ink-2);
 }
 
 .faint {
-  color: var(--ink-faint);
+  color: var(--ink-3);
 }
 
 .booting {
-  color: var(--ink-faint);
-  padding: var(--pad);
-  margin: 0;
+  color: var(--ink-3);
+  padding: var(--s4);
 }
 
-/* Stated plainly, never in red. A problem is information, not an alarm -- the
-   red in this app is reserved for a deadline that has already gone. */
-.problem {
+.pad {
+  padding: var(--s4);
+  max-width: 44rem;
+  margin: 0 auto;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ----------------------------------------------------------------- shell
+   Below 1024px: the content, and a tab bar at the bottom within reach of a
+   thumb. At 1024px and above: a sidebar with every destination, and the width
+   used.
+
+   The content comes FIRST in the document and the navigation after it. That
+   is DESIGN.md section 2 in markup: the front door is the next single action,
+   and everything else is one tap behind it. */
+
+.shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.shell-main {
+  padding: var(--s5) var(--s4)
+    calc(var(--tabbar) + var(--s6) + env(safe-area-inset-bottom));
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.shell-main > .notice {
+  margin-bottom: var(--s5);
+}
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s6);
+}
+
+.screen-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.screen-header .t-state {
+  max-width: var(--measure);
+}
+
+/* Five places, icon over label, and no counts -- DESIGN.md section 7 forbids a
+   badge that counts what I have not done. */
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  height: calc(var(--tabbar) + env(safe-area-inset-bottom));
+  padding: 0 var(--s1) env(safe-area-inset-bottom);
+  background: rgba(15, 18, 22, 0.96);
+  border-top: 1px solid var(--line);
+}
+
+.tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 48px;
+  text-decoration: none;
+  color: var(--ink-3);
+  /* Below the 15px meta size on purpose, and only here: a label under an icon
+     is recognised, not read. */
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tab svg {
+  width: 24px;
+  height: 24px;
+}
+
+.tab[aria-current="page"] {
   color: var(--ink);
-  background: var(--raised);
-  border-left: 3px solid var(--ink-faint);
-  padding: 0.7em 0.9em;
-  border-radius: 0 var(--radius) var(--radius) 0;
 }
 
-input,
-button {
-  font: inherit;
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
+.tab[aria-current="page"] svg {
+  color: var(--accent);
 }
 
-input {
-  background: var(--raised);
-  color: var(--ink);
-  padding: 0.65em 0.8em;
+.tab:active {
+  background: var(--card);
+}
+
+.tab:focus-visible {
+  outline-offset: -3px;
+  border-radius: var(--r-control);
+}
+
+.sidebar {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .shell {
+    display: grid;
+    grid-template-columns: var(--sidebar) minmax(0, 1fr);
+    grid-template-areas: "side main";
+  }
+
+  .shell-main {
+    grid-area: main;
+    width: 100%;
+    padding: var(--s7) var(--s7) var(--s8);
+  }
+
+  .tabbar {
+    display: none;
+  }
+
+  .sidebar {
+    grid-area: side;
+    display: flex;
+    flex-direction: column;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    padding: var(--s5) var(--s3);
+    border-right: 1px solid var(--line);
+  }
+}
+
+.sidebar-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-2);
+  padding: var(--s2) var(--s3) var(--s5);
+}
+
+.sidebar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-group + .sidebar-group {
+  margin-top: var(--s4);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--line);
+}
+
+.sidebar-foot {
+  margin-top: auto;
+}
+
+.side-link {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
   width: 100%;
-  /* 17px minimum on an input too: iOS zooms the viewport on focus below 16px,
-     and Android keyboards render smaller text worse. */
-  font-size: 17px;
-}
-
-input:focus-visible,
-button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-button {
-  background: var(--raised);
-  color: var(--ink);
-  padding: 0.65em 1.1em;
-  margin-top: 0.7em;
-  /* 44px is the smallest target that is reliably hittable with a thumb. */
   min-height: 44px;
+  padding: 0 var(--s3);
+  border: 0;
+  border-radius: var(--r-control);
+  background: none;
+  color: var(--ink-2);
+  font-size: 16px;
+  font-weight: 500;
+  text-align: left;
+  text-decoration: none;
   cursor: pointer;
 }
 
-button:disabled {
-  color: var(--ink-faint);
-  cursor: default;
+.side-link svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: var(--ink-3);
 }
 
-button.plain {
-  background: none;
-  border-color: transparent;
-  color: var(--ink-quiet);
-  padding-left: 0;
-}
-
-.checks {
-  list-style: none;
-  padding: 0;
-  margin: 1.2em 0;
-  border-top: 1px solid var(--line);
-}
-
-.checks li {
-  padding: 0.6em 0;
-  border-bottom: 1px solid var(--line);
-  color: var(--ink-quiet);
-  font-size: 0.95rem;
-}
-
-/* ------------------------------------------------------------------ now
-   The default screen. One item, read tired, on a phone.
-
-   The hero is the lecture title, because that is the most characteristic thing
-   in this subject's world and because section 2 fixes the deficit as one
-   subordinate line ABOVE it -- which leaves the title as the largest thing on
-   the screen by construction rather than by decision.
-
-   Nothing here escalates. No alarm colour, no countdown, no change in tone at
-   23:00: the app has no information then that it lacked at 19:00. */
-
-.now {
-  /* Under 80 characters at 17px, per the line-length rule. A reading app that
-     sets its own chrome in long measures has misunderstood itself. */
-  max-width: 34rem;
-}
-
-.clear-line {
-  font-size: 1.35rem;
-  font-weight: 500;
-  margin-bottom: 0.25em;
-}
-
-/* The deficit. Smaller than the thing it is about, which is the whole point:
-   it is information attached to an action, not a headline. */
-.deficit {
-  color: var(--ink-quiet);
-  font-size: 0.95rem;
-  margin-bottom: 0.5em;
-  letter-spacing: 0.01em;
-}
-
-.item-title {
-  font-size: 1.6rem;
-  line-height: 1.25;
-  font-weight: 600;
-  letter-spacing: -0.015em;
-  margin: 0 0 0.35em;
-  /* Long Classroom titles are normal -- "TP3 : Graphes et arbres couvrants" --
-     and breaking them is better than a horizontal scrollbar on a phone. */
-  overflow-wrap: break-word;
-}
-
-.scope {
-  color: var(--ink-quiet);
-  font-size: 0.95rem;
-  margin-bottom: 0.9em;
-}
-
-.scope .sep {
-  margin: 0 0.4em;
-  color: var(--ink-faint);
-}
-
-/* The one graphic in the app: the shape of the document, with tonight's range
-   marked. NOT a progress bar -- nothing records which windows have been read,
-   so a filled bar would claim windows 1 and 2 were done. See screens/now.js. */
-.ruler {
-  display: flex;
-  gap: 3px;
-  height: 6px;
-  margin: 0 0 1.4em;
-}
-
-.tick {
-  background: var(--line);
-  border-radius: 3px;
-  min-width: 4px;
-}
-
-/* Where an evening would start. Marked, not filled. */
-.tick-now {
-  background: var(--accent);
-}
-
-/* Pages nothing has read. Hollow, because it is a fact about the material --
-   and deliberately not red: unreviewed is the resting state of most material
-   most of the time. */
-.tick-unread {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-
-.tick-now.tick-unread {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
-
-/* Stated before any button, every time. */
-.not-read {
-  color: var(--ink-quiet);
-  font-size: 0.95rem;
-  background: var(--raised);
-  border-left: 3px solid var(--line);
-  padding: 0.7em 0.9em;
-  border-radius: 0 var(--radius) var(--radius) 0;
-  margin-bottom: 1.2em;
-}
-
-.actions {
-  margin-top: 1.5em;
-}
-
-/* An anchor styled as the primary action. 44px minimum, full width on a phone:
-   this is tapped with a thumb at 23:00. */
-.primary {
-  display: block;
-  text-align: center;
-  text-decoration: none;
-  background: var(--raised);
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 0.8em 1.1em;
-  min-height: 44px;
-  font-weight: 500;
-}
-
-.primary:active {
-  background: var(--line);
-}
-
-.primary:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.actions-note {
-  font-size: 0.88rem;
-  margin: 0.7em 0 0;
-}
-
-/* --------------------------------------------------------------- reader
-   Section 6: "the reader is the product; everything else is navigation."
-
-   The app's chrome is dark. The PAGE is not touched -- no invert, no filter,
-   no blend mode. Inverting a slide deck destroys diagrams, code screenshots
-   and photographed boards, which is exactly the content the vision OCR was
-   paid for. */
-
-.reader {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--ground);
-}
-
-.reader-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.9em;
-  padding: 0.6em var(--pad);
-  background: var(--ground);
-  border-bottom: 1px solid var(--line);
-  transform: translateY(0);
-  transition: transform var(--quick) ease-out;
-}
-
-/* On scroll, the chrome goes. */
-.reader-bar.gone {
-  transform: translateY(-100%);
-}
-
-.reader-title {
-  color: var(--ink-quiet);
-  font-size: 0.95rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.reader-note {
-  margin: 0;
-  padding: 0.6em var(--pad);
-  font-size: 0.9rem;
-  color: var(--ink-quiet);
-  background: var(--raised);
-  border-bottom: 1px solid var(--line);
-}
-
-.pages {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  /* NOT `touch-action: none`. Pinch-zoom is never disabled -- a 92-page deck
-     has diagrams that only work zoomed, and disabling it is the single most
-     common way a reader becomes unusable on a phone. */
-  padding: 8px;
-}
-
-.page {
-  margin: 0 auto 10px;
-  display: flex;
-  justify-content: center;
-  /* A page that has not rendered yet still occupies its slot, so the scrollbar
-     does not jump as canvases mount and unmount. */
-  min-height: 40vh;
-}
-
-.page canvas {
-  display: block;
-  /* The only treatment applied to the page: a hairline so a white slide has an
-     edge against the dark ground. Nothing that alters what is inside it. */
-  box-shadow: 0 0 0 1px var(--line);
-  background: #fff;
-}
-
-.page canvas.blank {
-  min-height: 40vh;
-}
-
-.page.spacer {
-  background: var(--raised);
-  border-radius: 4px;
-  opacity: 0.35;
-}
-
-/* Where I am. The one element that persists when the chrome goes. */
-.position {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  padding: 0.25em 0.6em;
-  border-radius: 999px;
-  background: rgba(14, 15, 17, 0.85);
-  border: 1px solid var(--line);
-  color: var(--ink-quiet);
-  font-size: 0.85rem;
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
-}
-
-.plain-link {
-  color: var(--ink-quiet);
-  text-decoration: none;
-  min-height: 44px;
-  display: inline-flex;
-  align-items: center;
-}
-
-.plain-link:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-/* A second action, below the primary one and at lower weight -- it is where
-   Read and Skip live until 5d, not the thing to do first. */
-.secondary {
-  display: block;
-  text-align: center;
-  text-decoration: none;
-  color: var(--ink-quiet);
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  padding: 0.7em 1.1em;
-  min-height: 44px;
-  margin-top: 0.5em;
-}
-
-.secondary:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-/* Said, never implied. An offline screen shows the last thing it knew WITH the
-   time it knew it -- presenting stale figures as current would be the app
-   inventing a state, which section 7 forbids. Not an alarm colour: being
-   offline is a fact, not a fault. */
-.stale {
-  color: var(--ink-quiet);
-  font-size: 0.9rem;
-  background: var(--raised);
-  border-left: 3px solid var(--line);
-  padding: 0.55em 0.9em;
-  margin: 0 var(--pad) 0.8em;
-  border-radius: 0 var(--radius) var(--radius) 0;
-}
-
-/* --------------------------------------------------------------- nav
-   At the END of the content, not pinned over it. Section 2: the default screen
-   is one item and the whole picture is one tap away -- a fixed bar would put
-   three other destinations in front of the thing I opened the app to do. */
-.nav {
-  display: flex;
-  gap: 1.4em;
-  border-top: 1px solid var(--line);
-  padding-top: 0.9em;
-  margin-top: 1.5em;
-}
-
-.nav a {
-  color: var(--ink-quiet);
-  text-decoration: none;
-  min-height: 44px;
-  display: inline-flex;
-  align-items: center;
-  font-size: 0.95rem;
-}
-
-.nav a.nav-here {
+.side-link:hover {
+  background: var(--card);
   color: var(--ink);
 }
 
-.nav a:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-/* --------------------------------------------------------- subjects
-   Counts and a state. No percentage, and no bar for a subject -- a progress
-   indicator for something that never completes is a mood ring. */
-.subjects {
-  list-style: none;
-  padding: 0;
-  margin: 1.2em 0;
-}
-
-.subject {
-  padding: 0.8em 0;
-  border-top: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
-  gap: 0.15em;
-}
-
-.subject-name {
-  color: var(--ink);
-  text-decoration: none;
-  font-weight: 500;
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-}
-
-.subject-name:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.subject-said {
-  color: var(--ink-quiet);
-  font-size: 0.93rem;
-}
-
-.subject-age,
-.subject-next {
-  color: var(--ink-faint);
-  font-size: 0.88rem;
-}
-
-/* A plain list of figures. Deliberately not cards: identical rounded boxes
-   with the same shadow under each are decoration, and these are numbers I
-   came here to read. */
-.facts {
-  list-style: none;
-  padding: 0;
-  margin: 0.8em 0 1.4em;
-}
-
-.facts li {
-  display: flex;
-  justify-content: space-between;
-  gap: 1em;
-  padding: 0.45em 0;
-  border-bottom: 1px solid var(--line);
-  color: var(--ink-quiet);
-  font-size: 0.95rem;
-}
-
-.facts b {
-  color: var(--ink);
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-
-h2 {
-  font-size: 1rem;
-  font-weight: 600;
-  margin: 1.6em 0 0;
-}
-
-/* ------------------------------------------------------ timetable + lists */
-.posts,
-.sessions {
-  list-style: none;
-  padding: 0;
-  margin: 1em 0;
-}
-
-.post,
-.session {
-  padding: 0.7em 0;
-  border-top: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
-  gap: 0.15em;
-}
-
-.session {
-  flex-direction: row;
-  align-items: baseline;
-  gap: 0.9em;
-}
-
-.post-title {
+.side-link[aria-current="page"] {
+  background: var(--raised);
   color: var(--ink);
 }
 
-.post-meta {
-  color: var(--ink-quiet);
-  font-size: 0.9rem;
-}
-
-/* The only red in the app, and only once the time has actually gone. */
-.post-meta.passed {
-  color: var(--passed);
-}
-
-.session-when {
-  color: var(--ink-quiet);
-  font-variant-numeric: tabular-nums;
-  min-width: 3.4em;
-}
-
-.session-what {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 0.1em;
-}
-
-.session-note {
+.side-link[aria-current="page"] svg {
   color: var(--accent);
-  font-size: 0.85rem;
 }
 
-.session-do {
+/* Two columns where a screen's content has two parts. */
+.split {
+  display: grid;
+  gap: var(--s6);
+}
+
+@media (min-width: 1024px) {
+  .split {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    align-items: start;
+    gap: var(--s7);
+  }
+}
+
+.grid {
+  display: grid;
+  gap: var(--s3);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 720px) {
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  }
+}
+
+.section {
   display: flex;
-  gap: 0.3em;
+  flex-direction: column;
+  gap: var(--s3);
 }
 
-.session-do .plain {
-  margin-top: 0;
-  font-size: 0.9rem;
-  padding: 0 0.5em;
+.section-title {
+  font-size: 15px;
+  line-height: 1.45;
+  font-weight: 600;
+  color: var(--ink-2);
 }
 
-/* Shown in order to be crossed out. A day that is silently shorter than the
-   printed timetable is indistinguishable from a bug in the resolver. */
-.session.departed .session-what b,
-.session.departed .session-when {
-  text-decoration: line-through;
-  color: var(--ink-faint);
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  list-style: none;
+  padding: 0;
 }
 
-.session.departed .session-note {
-  color: var(--ink-faint);
+/* ------------------------------------------------------------------ card
+   The whole surface is the target -- a small text link inside a big box is a
+   target nobody hits at 23:00 -- and a chevron says it goes somewhere. */
+
+.card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  min-height: 56px;
+  padding: var(--s4);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  color: var(--ink);
   text-decoration: none;
 }
 
-.move-form {
-  background: var(--raised);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 0.9em;
-  margin-bottom: 1em;
+/* A subject's colour as the left edge of anything that belongs to it. */
+.card.has-subject {
+  border-left: 3px solid var(--subject);
+  padding-left: calc(var(--s4) - 2px);
 }
 
-.move-form label {
-  display: block;
-  color: var(--ink-quiet);
-  font-size: 0.92rem;
-  margin-bottom: 0.5em;
-}
-
-.move-form input {
-  margin-top: 0.4em;
-}
-
-/* What was recorded, said back. Not a toast: it stays until the next action,
-   because "which evening gates it now" is the part worth reading twice. */
-.said {
-  color: var(--ink);
-  background: var(--raised);
-  border-left: 3px solid var(--accent);
-  padding: 0.7em 0.9em;
-  border-radius: 0 var(--radius) var(--radius) 0;
-  font-size: 0.93rem;
-}
-
-input[type="search"],
-input[type="time"],
-input[type="date"] {
-  background: var(--raised);
-  color: var(--ink);
-  border: 1px solid var(--line);
-}
-
-/* Six destinations wrap on a phone rather than scrolling sideways. */
-.nav {
-  flex-wrap: wrap;
-  gap: 0.2em 1.1em;
-}
-
-/* ------------------------------------------------------ projects + forms */
-.projects {
-  list-style: none;
-  padding: 0;
-  margin: 1.2em 0;
-}
-
-.project {
-  padding: 0.9em 0;
-  border-top: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
-  gap: 0.3em;
-}
-
-.project-head {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1em;
-}
-
-/* Milestones are TAPPED to complete, so each is a real target. There is no
-   slider and no percent field: a number I can quietly revise upward is what
-   DESIGN.md's closing constraint forbids. */
-.milestones {
-  list-style: none;
-  padding: 0;
-  margin: 0.3em 0 0.5em;
-}
-
-.milestones li {
-  padding: 0.15em 0;
-}
-
-.milestones .plain {
-  margin-top: 0;
-  padding: 0.4em 0;
-  min-height: 44px;
+a.card,
+button.card {
+  width: 100%;
   text-align: left;
+  cursor: pointer;
+  transition: background var(--quick) var(--ease);
+  -webkit-tap-highlight-color: transparent;
 }
 
-.milestones .done {
-  color: var(--ink-faint);
+a.card:hover,
+button.card:hover {
+  background: var(--raised);
+}
+
+a.card:active,
+button.card:active {
+  background: var(--pressed);
+}
+
+a.card:focus-visible,
+button.card:focus-visible {
+  border-radius: var(--r-card);
+}
+
+.card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+.card-body .t-lead {
+  overflow-wrap: anywhere;
+}
+
+.chevron {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  color: var(--ink-3);
+}
+
+/* A subject's colour beside its name. Never on its own: twelve swatches for
+   any number of subjects means two can share one, so the name is what
+   identifies and the colour only helps the eye find it again. */
+.pip {
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--subject);
+  margin-right: var(--s2);
+}
+
+.named {
   display: inline-flex;
   align-items: center;
-  min-height: 44px;
+  min-width: 0;
 }
 
-form label {
-  display: block;
-  color: var(--ink-quiet);
-  font-size: 0.93rem;
-  margin: 0.9em 0 0;
-}
+/* ------------------------------------------------------------------ hero
+   The one next action. There is at most one on any screen. */
 
-form input,
-form select {
-  display: block;
-  width: 100%;
-  margin-top: 0.35em;
-  background: var(--raised);
-  color: var(--ink);
+.hero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  padding: var(--s5);
+  background: var(--card);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 0.6em 0.7em;
+  border-radius: var(--r-hero);
+}
+
+@media (min-width: 1024px) {
+  .hero {
+    padding: var(--s6);
+    gap: var(--s5);
+  }
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3);
+  margin-top: var(--s2);
+}
+
+/* ---------------------------------------------------------------- facts
+   Label and value, as a definition list. */
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--s5);
+  row-gap: var(--s2);
+}
+
+.facts dt {
+  color: var(--ink-3);
+  font-size: 15px;
+  line-height: 1.55;
+  padding-top: 2px;
+}
+
+.facts dd {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------------- buttons */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  min-height: 48px;
+  padding: 0 var(--s5);
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
   font-size: 17px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--quick) var(--ease);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.primary-button {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.primary-button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.secondary-button {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--edge);
+}
+
+.secondary-button:hover:not(:disabled) {
+  background: var(--raised);
+}
+
+.quiet-button {
   min-height: 44px;
+  padding: 0 var(--s3);
+  background: transparent;
+  color: var(--ink-2);
+  font-weight: 500;
 }
 
-form input[type="file"] {
-  padding: 0.5em;
+.quiet-button:hover:not(:disabled) {
+  background: var(--card);
+  color: var(--ink);
 }
 
-section + section {
-  margin-top: 2em;
-  padding-top: 0.5em;
-  border-top: 1px solid var(--line);
+/* --------------------------------------------------------------- notices
+   A neutral block stating a fact. Never an alarm colour: offline, not yet
+   transcribed and refused are all facts to act on, and none of them is the
+   passed-deadline red. */
+
+.notice,
+.problem,
+.stale {
+  display: block;
+  max-width: var(--measure);
+  padding: var(--s3) var(--s4);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--edge);
+  border-radius: 0 var(--r-control) var(--r-control) 0;
+  color: var(--ink-2);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.problem {
+  color: var(--ink);
+}
+
+/* -------------------------------------------------------------- skeleton
+   The shape of what is loading, and static. No shimmer: a loop is not an
+   answer to anything I did. */
+
+.skeleton {
+  display: block;
+  background: var(--card);
+  border-radius: var(--r-card);
+}
+
+.skeleton-line {
+  display: block;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--raised);
+}
+
+.skeleton-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+/* ---------------------------------------------------------------- fields */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  color: var(--ink-2);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 var(--s3);
+  background: var(--ground);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-control);
+  color: var(--ink);
+  /* 17px on an input too: iOS zooms the viewport on focus below 16px. */
+  font-size: 17px;
+  font-weight: 400;
+}
+
+.field textarea {
+  padding: var(--s3);
+  min-height: 96px;
+}
+
+.field input[type="file"] {
+  padding: var(--s3);
+}
+
+.field .hint {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+
+/* --------------------------------------------------------------- sign in */
+
+.signin {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--s5) var(--s4);
+}
+
+.signin-card {
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  padding: var(--s6) var(--s5);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-hero);
+}
+
+.signin-card form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  margin-top: var(--s2);
+}
+
+.signin-card .button {
+  width: 100%;
 }

@@ -431,3 +431,86 @@ def test_precaching_bypasses_the_http_cache():
     """Or a new worker can store the OLD files under the new version's name."""
     body = (WEB / "sw.js").read_text(encoding="utf-8")
     assert 'cache: "reload"' in body
+
+
+# ---------------------------------------------------------------------------
+# the visual system: contrast, recomputed from the stylesheet itself
+# ---------------------------------------------------------------------------
+#
+# DESIGN.md section 8 lists a ratio beside every colour token. Those numbers are
+# only true while the hex values are the ones they were measured on, so this
+# reads the tokens out of app.css and measures again -- a token edited for taste
+# cannot quietly fall below WCAG AA.
+
+
+def _tokens():
+    css = (WEB / "app.css").read_text(encoding="utf-8")
+    root = re.search(r":root\s*\{(.*?)\n\}", css, re.S).group(1)
+    return dict(re.findall(r"--([a-z0-9-]+):\s*(#[0-9a-fA-F]{6})\s*;", root))
+
+
+def _luminance(hex_colour):
+    channels = [int(hex_colour[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+    linear = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def _contrast(a, b):
+    high, low = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+SURFACES = ("ground", "card", "raised")
+
+
+@pytest.mark.parametrize("ink", ["ink", "ink-2", "ink-3", "accent", "passed"])
+@pytest.mark.parametrize("surface", SURFACES)
+def test_text_tokens_clear_aa_on_every_surface(ink, surface):
+    tokens = _tokens()
+    ratio = _contrast(tokens[ink], tokens[surface])
+    assert ratio >= 4.5, f"--{ink} on --{surface} is {ratio:.2f}:1"
+
+
+@pytest.mark.parametrize("surface", SURFACES)
+def test_control_edges_clear_three_to_one(surface):
+    """WCAG 1.4.11: a control's boundary has to be findable."""
+    tokens = _tokens()
+    ratio = _contrast(tokens["edge"], tokens[surface])
+    assert ratio >= 3, f"--edge on --{surface} is {ratio:.2f}:1"
+
+
+def test_the_primary_button_label_is_readable():
+    tokens = _tokens()
+    assert _contrast(tokens["accent-ink"], tokens["accent"]) >= 4.5
+    assert _contrast(tokens["accent-ink"], tokens["accent-hover"]) >= 4.5
+
+
+def test_every_subject_swatch_is_readable_and_none_is_red():
+    """Subject colours sit beside names on cards; none may read as the alarm."""
+    import colorsys
+
+    body = (WEB / "subject-color.js").read_text(encoding="utf-8")
+    swatches = re.findall(r'"(#[0-9a-f]{6})"', body)
+    assert len(swatches) == 12
+    card = _tokens()["card"]
+    for swatch in swatches:
+        assert _contrast(swatch, card) >= 4.5, swatch
+        r, g, b = (int(swatch[i : i + 2], 16) / 255 for i in (1, 3, 5))
+        hue = colorsys.rgb_to_hls(r, g, b)[0] * 360
+        # Red and orange, where the passed-deadline colour lives.
+        assert not (hue < 38 or hue > 345), f"{swatch} is hue {hue:.0f}"
+
+
+def test_nothing_in_the_client_reads_the_hour():
+    """The 23:00 state must look exactly like every other state.
+
+    A screen that styled itself by the clock -- a night tint, a "late" warning --
+    would be the app deciding I am behind because of what time it is. Dates are
+    read (tomorrow is a wall-clock fact); the hour of the day is not.
+    """
+    for module in WEB.rglob("*.js"):
+        if "vendor" in module.parts:
+            continue
+        body = re.sub(r"//[^\n]*|/\*.*?\*/", "", module.read_text(encoding="utf-8"), flags=re.S)
+        assert "getHours" not in body, module.name
+        assert "getUTCHours" not in body, module.name

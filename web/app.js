@@ -26,6 +26,8 @@ import { Deadlines, Library } from "/screens/library.js";
 import { Timetable } from "/screens/timetable.js";
 import { Projects } from "/screens/projects.js";
 import { Add } from "/screens/add.js";
+import { More, SECONDARY } from "/screens/more.js";
+import { Icon } from "/icons.js";
 import { linkProps, match, navigate, useRoute } from "/router.js";
 import { flushWhenOnline } from "/queue.js";
 
@@ -184,70 +186,130 @@ function Shell({ onSignOut, offline }) {
 
   // The reader is full-screen and owns the viewport, so it renders alone --
   // no nav, no chrome but its own. Section 6: everything else is navigation.
-  if (reading) return html`<${Reader} driveId=${reading} />`;
+  if (reading) return html`<div class="legacy"><${Reader} driveId=${reading} /></div>`;
 
+  // The content first and the navigation after it, in the document as on the
+  // screen: section 2 says the front door is one item, and everything else is
+  // one tap behind it.
   return html`
-    ${offline
-      ? html`<p class="pad stale" role="status">
-          The server isn't answering, so these screens show what was last known.
-        </p>`
-      : null}
-    <${Screen} route=${route} status=${status} />
-    <${Nav} here=${route.path} />
-    <footer class="pad">
-      <button class="plain" onClick=${onSignOut}>Sign out</button>
-    </footer>
+    <div class="shell">
+      <main class="shell-main" id="main">
+        ${offline
+          ? html`<p class="notice" role="status">
+              The server isn't answering, so these screens show what was last known.
+            </p>`
+          : null}
+        <${Screen} route=${route} status=${status} onSignOut=${onSignOut} />
+      </main>
+      <${Sidebar} here=${route.path} onSignOut=${onSignOut} />
+      <${TabBar} here=${route.path} />
+    </div>
   `;
 }
 
+// Screens not yet rebuilt in the redesign. Each is wrapped in .legacy so its
+// old styles (styles/legacy.css) apply to it and to nothing else; a screen
+// leaves this set in the commit that rebuilds it.
+const LEGACY = new Set([
+  "now",
+  "subjects",
+  "subject",
+  "library",
+  "deadlines",
+  "timetable",
+  "projects",
+  "add",
+  "status",
+]);
+
 /** Which screen this path is. */
-function Screen({ route, status }) {
+function Screen({ route, status, onSignOut }) {
+  const [name, screen] = pick(route, status, onSignOut);
+  return LEGACY.has(name) ? html`<div class="legacy">${screen}</div>` : screen;
+}
+
+function pick(route, status, onSignOut) {
   const path = route.path;
   const subject = match("/subjects/", path);
-  if (subject) return html`<${Subject} name=${subject} />`;
-  if (path === "/subjects") return html`<${Subjects} />`;
+  if (subject) return ["subject", html`<${Subject} name=${subject} />`];
+  if (path === "/subjects") return ["subjects", html`<${Subjects} />`];
   if (path === "/library")
-    return html`<${Library} course=${route.query.get("course")} />`;
-  if (path === "/deadlines") return html`<${Deadlines} />`;
-  if (path === "/timetable") return html`<${Timetable} />`;
-  if (path === "/projects") return html`<${Projects} />`;
-  if (path === "/add") return html`<${Add} />`;
-  if (path === "/status") return html`<${Status} />`;
-  return html`<${Now} status=${status} />`;
+    return ["library", html`<${Library} course=${route.query.get("course")} />`];
+  if (path === "/deadlines") return ["deadlines", html`<${Deadlines} />`];
+  if (path === "/timetable") return ["timetable", html`<${Timetable} />`];
+  if (path === "/projects") return ["projects", html`<${Projects} />`];
+  if (path === "/add") return ["add", html`<${Add} />`];
+  if (path === "/status") return ["status", html`<${Status} />`];
+  if (path === "/more") return ["more", html`<${More} onSignOut=${onSignOut} />`];
+  return ["now", html`<${Now} status=${status} />`];
+}
+
+// The four places a thumb reaches for; the rest are under More on a phone and
+// listed in full in the sidebar.
+const PRIMARY = [
+  ["/", "Now", "now"],
+  ["/subjects", "Subjects", "subjects"],
+  ["/timetable", "Timetable", "timetable"],
+  ["/library", "Library", "library"],
+];
+
+/** Which top-level place a path belongs to, so a subject page lights Subjects. */
+function placeOf(path) {
+  if (path.startsWith("/subjects")) return "/subjects";
+  if (path.startsWith("/library") || path.startsWith("/items")) return "/library";
+  return path;
 }
 
 /**
- * The whole picture, one tap away and never the front door.
- *
- * A row at the END of the content rather than a fixed tab bar. Section 2 is
- * explicit that the default screen is one item and that everything else is
- * behind it -- a bar pinned over the bottom of the screen would put four other
- * destinations in front of the one thing I opened the app to do.
+ * The tab bar, below 1024px. Five places and no counts: DESIGN.md section 7
+ * forbids a badge counting what I have not done, and a number on a tab is
+ * exactly that badge.
  */
-function Nav({ here }) {
-  const places = [
-    ["/", "Now"],
-    ["/subjects", "Subjects"],
-    ["/library", "Library"],
-    ["/deadlines", "Deadlines"],
-    ["/timetable", "Timetable"],
-    ["/projects", "Projects"],
-    ["/add", "Add"],
-    ["/status", "Counted"],
-  ];
+function TabBar({ here }) {
+  const place = placeOf(here);
+  const inMore = place === "/more" || SECONDARY.some(([to]) => to === place);
+  const tabs = [...PRIMARY, ["/more", "More", "more"]];
   return html`
-    <nav class="nav pad">
-      ${places.map(
-        ([to, label]) =>
-          html`<a
-            key=${to}
-            class=${here === to ? "nav-here" : ""}
-            aria-current=${here === to ? "page" : null}
-            ...${linkProps(to)}
-          >
-            ${label}
-          </a>`
-      )}
+    <nav class="tabbar" aria-label="Places">
+      ${tabs.map(([to, label, icon]) => {
+        const current = to === "/more" ? inMore : place === to;
+        return html`<a
+          key=${to}
+          class="tab"
+          aria-current=${current ? "page" : null}
+          ...${linkProps(to)}
+        >
+          <${Icon} name=${icon} />
+          <span>${label}</span>
+        </a>`;
+      })}
+    </nav>
+  `;
+}
+
+/** The sidebar, at 1024px and above: every destination, and Sign out. */
+function Sidebar({ here, onSignOut }) {
+  const place = placeOf(here);
+  const link = ([to, label, icon]) => html`<a
+    key=${to}
+    class="side-link"
+    aria-current=${place === to ? "page" : null}
+    ...${linkProps(to)}
+  >
+    <${Icon} name=${icon} />
+    <span>${label}</span>
+  </a>`;
+  return html`
+    <nav class="sidebar" aria-label="All places">
+      <p class="sidebar-name">classroom-agent</p>
+      <div class="sidebar-group">${PRIMARY.map(link)}</div>
+      <div class="sidebar-group">${SECONDARY.map(link)}</div>
+      <div class="sidebar-foot">
+        <button class="side-link" type="button" onClick=${onSignOut}>
+          <${Icon} name="signout" />
+          <span>Sign out</span>
+        </button>
+      </div>
     </nav>
   `;
 }

@@ -673,9 +673,18 @@ def test_no_progress_bar_for_a_subject(subjects):
 def test_the_whole_picture_is_one_tap_away(busy):
     """Section 2: reachable, and never the front door."""
     assert "Subjects" in busy["text"]
-    assert "Counted" in busy["text"]
-    # The nav is at the END of the content, not pinned over it.
-    assert busy["html"].index("nav") > busy["html"].index("deficit")
+    # Four places a thumb reaches, the rest under More -- and never a count on
+    # any of them, which is the badge section 7 forbids.
+    for place in ("Now", "Timetable", "Library", "More"):
+        assert place in busy["text"]
+    assert "Counted" not in busy["text"]
+    # The navigation comes AFTER the content in the document: the next action
+    # is what a screen reader, and a slow first paint, reach first.
+    assert busy["html"].index("<nav") > busy["html"].index("deficit")
+    # No number on a tab or a sidebar link, ever.
+    for nav in re.findall(r"<nav\b.*?</nav>", busy["html"], flags=re.S):
+        words = re.sub(r"<[^>]+>", " ", nav)
+        assert not re.search(r"\d", words), words
 
 
 @pytest.fixture(scope="module")
