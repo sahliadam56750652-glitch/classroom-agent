@@ -1,0 +1,130 @@
+/*
+  Subjects, and one subject. Counts and a state -- no percentage, and no bar for
+  a subject: a progress indicator for something that never completes is a mood
+  ring.
+*/
+
+.subjects {
+  list-style: none;
+  padding: 0;
+}
+
+.subject .card {
+  height: 100%;
+}
+
+.subject-next {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* The inactive group: one compact disclosure at the bottom. */
+.inactive {
+  gap: 0;
+  border-top: 1px solid var(--line);
+  padding-top: var(--s2);
+}
+
+.inactive-summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  min-height: 48px;
+  padding: var(--s3) var(--s1);
+  cursor: pointer;
+  color: var(--ink-2);
+  list-style: none;
+}
+
+.inactive-summary::-webkit-details-marker {
+  display: none;
+}
+
+/* A drawn chevron that turns, so the group reads as something that opens. */
+.inactive-summary::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-right: var(--s1);
+  border-right: 1.75px solid var(--ink-3);
+  border-bottom: 1.75px solid var(--ink-3);
+  transform: translateY(-2px) rotate(-45deg);
+  transition: transform var(--quick) var(--ease);
+}
+
+.inactive[open] > .inactive-summary::before {
+  transform: translateY(-4px) rotate(45deg);
+}
+
+.inactive-list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+@media (min-width: 720px) {
+  .inactive-list {
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    column-gap: var(--s3);
+  }
+}
+
+.inactive-row {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-height: 56px;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-control);
+  text-decoration: none;
+}
+
+.inactive-row:hover {
+  background: var(--card);
+}
+
+/* One subject. */
+.back-link {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  text-decoration: none;
+  color: var(--ink-2);
+}
+
+.back-link::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-right: var(--s2);
+  border-left: 1.75px solid currentColor;
+  border-bottom: 1.75px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.back-link:hover {
+  color: var(--ink);
+}
+
+.subject-page .screen-header {
+  gap: var(--s1);
+}
+
+.subject-facts {
+  display: grid;
+}
+
+.subject-session {
+  align-items: baseline;
+  gap: var(--s4);
+}
+
+.session-at {
+  flex: none;
+  min-width: 8.5em;
+  color: var(--ink-2);
+}

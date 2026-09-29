@@ -610,21 +610,21 @@ button.card:focus-visible {
 /* ---------------------------------------------------------------- facts
    Label and value, as a definition list. */
 
-.facts {
+.fact-list {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   column-gap: var(--s5);
   row-gap: var(--s2);
 }
 
-.facts dt {
+.fact-list dt {
   color: var(--ink-3);
   font-size: 15px;
   line-height: 1.55;
   padding-top: 2px;
 }
 
-.facts dd {
+.fact-list dd {
   color: var(--ink);
   overflow-wrap: anywhere;
 }

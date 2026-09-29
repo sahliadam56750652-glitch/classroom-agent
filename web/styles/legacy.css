@@ -252,48 +252,6 @@
   outline-offset: 2px;
 }
 
-/* --------------------------------------------------------- subjects
-   Counts and a state. No percentage, and no bar for a subject -- a progress
-   indicator for something that never completes is a mood ring. */
-.legacy .subjects {
-  list-style: none;
-  padding: 0;
-  margin: 1.2em 0;
-}
-
-.legacy .subject {
-  padding: 0.8em 0;
-  border-top: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
-  gap: 0.15em;
-}
-
-.legacy .subject-name {
-  color: var(--ink);
-  text-decoration: none;
-  font-weight: 500;
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-}
-
-.legacy .subject-name:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.legacy .subject-said {
-  color: var(--ink-quiet);
-  font-size: 0.93rem;
-}
-
-.legacy .subject-age,
-.legacy .subject-next {
-  color: var(--ink-faint);
-  font-size: 0.88rem;
-}
-
 /* A plain list of figures. Deliberately not cards: identical rounded boxes
    with the same shadow under each are decoration, and these are numbers I
    came here to read. */
