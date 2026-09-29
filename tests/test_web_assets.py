@@ -359,3 +359,52 @@ def test_only_positions_are_queued_offline():
     assert "position" in body.lower()
     for forbidden in ("/api/tasks", "/api/projects", "/api/uploads", "/api/adjustments"):
         assert forbidden not in body, forbidden
+
+
+# ---------------------------------------------------------------------------
+# installability
+# ---------------------------------------------------------------------------
+
+
+def test_the_manifest_has_what_android_needs_to_install():
+    """Bubblewrap wraps THIS at 5d, and it reads the manifest.
+
+    An SVG alone is not enough: Android's installer wants raster icons at 192
+    and 512, and without them the install prompt simply never appears -- which
+    presents as "it would not install" with nothing said about why.
+    """
+    manifest = json.loads((WEB / "manifest.webmanifest").read_text(encoding="utf-8"))
+    sizes = {icon.get("sizes") for icon in manifest["icons"]}
+    assert "192x192" in sizes
+    assert "512x512" in sizes
+
+    types = {icon.get("type") for icon in manifest["icons"]}
+    assert "image/png" in types, "an SVG alone will not install on Android"
+
+
+def test_a_maskable_icon_exists():
+    """Without one, a launcher crops the glyph into whatever shape it likes."""
+    manifest = json.loads((WEB / "manifest.webmanifest").read_text(encoding="utf-8"))
+    purposes = {icon.get("purpose") for icon in manifest["icons"]}
+    assert "maskable" in purposes
+
+
+def test_an_install_opens_on_the_default_screen():
+    """`start_url` is "/" and that is the whole design.
+
+    An installed app that opened on a menu would have lost section 2 entirely:
+    the front door is the next single action, and everything else is one tap
+    behind it.
+    """
+    manifest = json.loads((WEB / "manifest.webmanifest").read_text(encoding="utf-8"))
+    assert manifest["start_url"] == "/"
+    assert manifest["display"] == "standalone"
+
+
+def test_every_icon_the_manifest_names_is_precached():
+    """An installed app whose icon needs a round trip shows a blank square."""
+    manifest = json.loads((WEB / "manifest.webmanifest").read_text(encoding="utf-8"))
+    shell = (WEB / "sw.js").read_text(encoding="utf-8")
+    listed = re.search(r"const SHELL_FILES = \[(.*?)\];", shell, re.S).group(1)
+    for icon in manifest["icons"]:
+        assert icon["src"] in listed, icon["src"]

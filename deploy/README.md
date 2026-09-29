@@ -210,6 +210,15 @@ That turns on the `Origin` comparison for every request that changes something.
 not, and unset means the check is off -- which is right on a laptop, where there
 is no public origin to compare against.
 
+**Installing it on the phone.** Open the origin in Chrome, then the menu ->
+"Add to home screen". The prompt only appears over HTTPS with a reachable
+manifest and raster icons at 192 and 512 -- all three are in place, and a missing
+one presents as "it would not install" with nothing said about why. The installed
+app opens on `/`, which is the default screen and the point of the whole design.
+
+Bubblewrap wraps that same manifest at 5d. It needs `assetlinks.json` served
+from the origin, which is a 5d step and not this one.
+
 **Two things to check once, at the browser, before trusting it:**
 
 - Sign in from the phone and confirm the cookie survives a restart of the

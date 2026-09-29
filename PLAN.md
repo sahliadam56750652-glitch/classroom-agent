@@ -140,6 +140,38 @@ all of them assumptions of a single-threaded CLI, and they are listed in the
 spec. The most consequential: `connect()` applied the whole of `schema.sql` on
 every call, which is free once per invocation and a write lock once per request.
 
+**Phase 5c — complete.** The web client: a PWA of plain ES modules with
+vendored dependencies, no build step, served by `agent serve` in development and
+by Caddy on the box. Eight slices, eight commits.
+
+- **0** — the scaffold, and three 5b amendments the primary path needed: the
+  server derives the position anchor from a page index (a browser cannot compute
+  it), `DocumentOut` carries its windows, and `telegram.bot_username` reaches the
+  client. `agent webcontract` generates `web/contract.js` from the API's own
+  schema, which is what replaces a type checker.
+- **1** — the default screen, in both of the states section 4 names.
+- **2** — the reader: PDF.js over range requests, position anchored by content.
+- **3** — the service worker, four cache policies, and a queue that holds
+  exactly one kind of write.
+- **4** — subjects, subject detail, and `/status`, which exists so that every
+  figure the coverage number is built from is reachable.
+- **5** — library, deadlines, and the timetable with adjustments, which is the
+  Phase 5 requirement that started the adjustments layer.
+- **6** — projects and the hand-entry screen.
+- **7** — installability.
+
+**The tests that matter are `tests/test_web_render.py`.** A no-build client has
+no compiler, and the API's own suite could not see the client at all: slice 1
+alone had five defects invisible to 1,415 passing tests and obvious on sight, and
+a sixth -- FastAPI running a sync `yield` dependency's setup and teardown on
+different threadpool workers -- that no unit test could reach, because Starlette's
+TestClient runs a request inside one portal thread. Every real request had been
+failing. So the suite now starts a real uvicorn and a real browser.
+
+The reader's PDF rendering is the one thing NOT covered there, and the reason is
+the harness: `--virtual-time-budget` fast-forwards timers but not the network and
+starves a Web Worker. It is checked by looking; `web/VENDOR.md` says how.
+
 **The term is running, and the gate has a real backlog. Measured 2026-09-25**,
 against the live database rather than estimated:
 
