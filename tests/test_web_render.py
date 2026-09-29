@@ -89,6 +89,13 @@ chrome_only = pytest.mark.skipif(
 
 
 def free_port() -> int:
+    """A port that was free a moment ago.
+
+    Inherently a race: the socket is closed before uvicorn binds it, so another
+    process can take it in between. That is why the caller RETRIES rather than
+    trusting this -- a flaky fixture in a suite run before every commit teaches
+    you to re-run a red suite instead of reading it, which is worse than no test.
+    """
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
@@ -120,45 +127,69 @@ def served(tmp_path_factory):
 
     _seed(data)
 
-    port = free_port()
     environment = {**os.environ, "DATA_DIR": str(data)}
 
-    # A FILE, not a pipe. uvicorn logs a line per request, and an unread
-    # subprocess.PIPE holds about 64 KB before the writer BLOCKS -- so the server
-    # answered the first several dozen requests and then froze mid-suite, with
-    # every later test timing out on a socket read. Nothing was wrong with the
-    # server; the test harness had stopped listening to it. A file has no such
-    # limit, and it is still readable when something fails.
-    log = root / "serve.log"
-    handle = log.open("w", encoding="utf-8")
-    process = subprocess.Popen(
-        [
-            sys.executable, "-m", "agent.cli", "serve",
-            "--config", str(root / "config.yaml"),
-            "--host", "127.0.0.1", "--port", str(port),
-        ],
-        stdout=handle,
-        stderr=subprocess.STDOUT,
-        env=environment,
-        cwd=str(REPO_ROOT),
-    )
+    import urllib.request
 
-    base = f"http://127.0.0.1:{port}"
-    for _ in range(120):
-        if process.poll() is not None:
-            pytest.fail(f"serve exited: {log.read_text(errors='replace')[-2000:]}")
-        try:
-            import urllib.request
+    # Three attempts, because `free_port` is inherently a race -- the socket is
+    # closed before uvicorn binds it -- and losing that race looks exactly like
+    # the server failing to start. A full suite run hit this once; a flaky
+    # fixture in a suite run before every commit teaches you to re-run a red
+    # suite rather than read it.
+    process = handle = base = None
+    failures = []
 
-            with urllib.request.urlopen(f"{base}/api/health", timeout=1) as response:
-                if response.status == 200:
-                    break
-        except Exception:
-            time.sleep(0.25)
-    else:
+    for attempt in range(3):
+        port = free_port()
+        # A FILE, not a pipe. uvicorn logs a line per request, and an unread
+        # subprocess.PIPE holds about 64 KB before the writer BLOCKS -- so the
+        # server answered the first several dozen requests and then froze
+        # mid-suite, with every later test timing out on a socket read. Nothing
+        # was wrong with the server; the harness had stopped listening to it.
+        log = root / f"serve-{attempt}.log"
+        handle = log.open("w", encoding="utf-8")
+        process = subprocess.Popen(
+            [
+                sys.executable, "-m", "agent.cli", "serve",
+                "--config", str(root / "config.yaml"),
+                "--host", "127.0.0.1", "--port", str(port),
+            ],
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            env=environment,
+            cwd=str(REPO_ROOT),
+        )
+
+        candidate = f"http://127.0.0.1:{port}"
+        healthy = False
+        for _ in range(120):
+            if process.poll() is not None:
+                break
+            try:
+                with urllib.request.urlopen(
+                    f"{candidate}/api/health", timeout=1
+                ) as response:
+                    if response.status == 200:
+                        healthy = True
+                        break
+            except Exception:
+                time.sleep(0.25)
+
+        if healthy:
+            base = candidate
+            break
+
+        # Not healthy: record why, clean up, and try another port.
         process.kill()
-        tail = log.read_text(errors="replace")[-2000:]
-        pytest.fail(f"serve never became healthy:\n{tail}")
+        process.wait(timeout=10)
+        handle.close()
+        failures.append(log.read_text(errors="replace")[-1200:])
+
+    if base is None:
+        pytest.fail(
+            "serve never became healthy in three attempts:\n\n"
+            + "\n---\n".join(failures)
+        )
 
     yield base, process
 
@@ -597,3 +628,62 @@ def test_the_whole_picture_is_one_tap_away(busy):
     assert "Counted" in busy["text"]
     # The nav is at the END of the content, not pinned over it.
     assert busy["html"].index("nav") > busy["html"].index("deficit")
+
+
+@pytest.fixture(scope="module")
+def timetable(served, tmp_path_factory):
+    base, _ = served
+    return render(base, tmp_path_factory.mktemp("tt"), path="/timetable")
+
+
+@chrome_only
+def test_the_timetable_offers_to_record_what_happened(timetable):
+    """The Phase 5 requirement: a moved or cancelled session, in a few taps.
+
+    On a phone at 22:00 hand-editing timetable.yaml does not happen, so the gate
+    prepares me for a lecture that is not taking place.
+    """
+    assert "Cancel" in timetable["text"]
+    assert "Move" in timetable["text"]
+
+
+@chrome_only
+def test_the_timetable_screen_never_offers_to_edit_the_file(timetable):
+    """The file holds the pattern and keeps ONE writer.
+
+    A control that wrote it would undo the Phase 3a decision by giving one
+    source of truth two writers, so there must be no such control -- and the
+    screen says so rather than leaving its absence to be noticed.
+    """
+    html_out = timetable["html"]
+    assert "timetable.yaml is never written" in timetable["text"]
+    for forbidden in ("/api/timetable/file", "Edit pattern", "Save timetable"):
+        assert forbidden not in html_out, forbidden
+
+
+@chrome_only
+def test_no_dialog_is_used_to_record_a_move(timetable):
+    """`prompt()` blocks the page and is suppressed outright in some installed
+    PWAs -- a Move button that silently does nothing is worse than none."""
+    import re as _re
+
+    for path in ("web/screens/timetable.js",):
+        body = (REPO_ROOT / path).read_text(encoding="utf-8")
+        # Comments stripped first. This file explains in words that it does NOT
+        # use prompt(), and a textual scan flagged the explanation -- which
+        # would leave a real call and a note about it indistinguishable, and
+        # eventually get the note deleted to make the test pass.
+        body = _re.sub(r"/\*.*?\*/", "", body, flags=_re.S)
+        body = _re.sub(r"^\s*//.*$", "", body, flags=_re.M)
+        for blocking in ("prompt(", "confirm(", "alert("):
+            assert blocking not in body, blocking
+
+
+@chrome_only
+def test_the_deadlines_screen_invents_no_urgency(served, tmp_path_factory):
+    """`due_at` is the only fact about time. No countdown, no escalation."""
+    base, _ = served
+    found = render(base, tmp_path_factory.mktemp("dl"), path="/deadlines")
+    text = found["text"]
+    for forbidden in ("hours left", "days left", "overdue in", "urgent", "!"):
+        assert forbidden not in text, forbidden

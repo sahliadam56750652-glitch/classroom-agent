@@ -12,6 +12,8 @@ import { Now } from "/screens/now.js";
 import { Reader } from "/reader/reader.js";
 import { Subject, Subjects } from "/screens/subjects.js";
 import { Status } from "/screens/status.js";
+import { Deadlines, Library } from "/screens/library.js";
+import { Timetable } from "/screens/timetable.js";
 import { linkProps, match, useRoute } from "/router.js";
 import { flushWhenOnline } from "/queue.js";
 
@@ -142,6 +144,10 @@ function Screen({ route, status }) {
   const subject = match("/subjects/", path);
   if (subject) return html`<${Subject} name=${subject} />`;
   if (path === "/subjects") return html`<${Subjects} />`;
+  if (path === "/library")
+    return html`<${Library} course=${route.query.get("course")} />`;
+  if (path === "/deadlines") return html`<${Deadlines} />`;
+  if (path === "/timetable") return html`<${Timetable} />`;
   if (path === "/status") return html`<${Status} />`;
   return html`<${Now} status=${status} />`;
 }
@@ -158,6 +164,9 @@ function Nav({ here }) {
   const places = [
     ["/", "Now"],
     ["/subjects", "Subjects"],
+    ["/library", "Library"],
+    ["/deadlines", "Deadlines"],
+    ["/timetable", "Timetable"],
     ["/status", "Counted"],
   ];
   return html`

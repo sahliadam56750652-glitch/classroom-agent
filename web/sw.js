@@ -39,6 +39,8 @@ const SHELL_FILES = [
   "/screens/now.js",
   "/screens/subjects.js",
   "/screens/status.js",
+  "/screens/library.js",
+  "/screens/timetable.js",
   "/queue.js",
   "/reader/reader.js",
   "/icon.svg",

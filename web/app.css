@@ -564,3 +564,126 @@ h2 {
   font-weight: 600;
   margin: 1.6em 0 0;
 }
+
+/* ------------------------------------------------------ timetable + lists */
+.posts,
+.sessions {
+  list-style: none;
+  padding: 0;
+  margin: 1em 0;
+}
+
+.post,
+.session {
+  padding: 0.7em 0;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15em;
+}
+
+.session {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 0.9em;
+}
+
+.post-title {
+  color: var(--ink);
+}
+
+.post-meta {
+  color: var(--ink-quiet);
+  font-size: 0.9rem;
+}
+
+/* The only red in the app, and only once the time has actually gone. */
+.post-meta.passed {
+  color: var(--passed);
+}
+
+.session-when {
+  color: var(--ink-quiet);
+  font-variant-numeric: tabular-nums;
+  min-width: 3.4em;
+}
+
+.session-what {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1em;
+}
+
+.session-note {
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+
+.session-do {
+  display: flex;
+  gap: 0.3em;
+}
+
+.session-do .plain {
+  margin-top: 0;
+  font-size: 0.9rem;
+  padding: 0 0.5em;
+}
+
+/* Shown in order to be crossed out. A day that is silently shorter than the
+   printed timetable is indistinguishable from a bug in the resolver. */
+.session.departed .session-what b,
+.session.departed .session-when {
+  text-decoration: line-through;
+  color: var(--ink-faint);
+}
+
+.session.departed .session-note {
+  color: var(--ink-faint);
+  text-decoration: none;
+}
+
+.move-form {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.9em;
+  margin-bottom: 1em;
+}
+
+.move-form label {
+  display: block;
+  color: var(--ink-quiet);
+  font-size: 0.92rem;
+  margin-bottom: 0.5em;
+}
+
+.move-form input {
+  margin-top: 0.4em;
+}
+
+/* What was recorded, said back. Not a toast: it stays until the next action,
+   because "which evening gates it now" is the part worth reading twice. */
+.said {
+  color: var(--ink);
+  background: var(--raised);
+  border-left: 3px solid var(--accent);
+  padding: 0.7em 0.9em;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 0.93rem;
+}
+
+input[type="search"],
+input[type="time"],
+input[type="date"] {
+  background: var(--raised);
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+/* Six destinations wrap on a phone rather than scrolling sideways. */
+.nav {
+  flex-wrap: wrap;
+  gap: 0.2em 1.1em;
+}
