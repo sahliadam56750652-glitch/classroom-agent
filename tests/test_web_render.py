@@ -687,3 +687,67 @@ def test_the_deadlines_screen_invents_no_urgency(served, tmp_path_factory):
     text = found["text"]
     for forbidden in ("hours left", "days left", "overdue in", "urgent", "!"):
         assert forbidden not in text, forbidden
+
+
+@pytest.fixture(scope="module")
+def add_screen(served, tmp_path_factory):
+    base, _ = served
+    return render(base, tmp_path_factory.mktemp("add"), path="/add")
+
+
+@chrome_only
+def test_the_add_screen_offers_the_three_hand_entries(add_screen):
+    """Phase 6's point: a third of my week has no Classroom at all."""
+    text = add_screen["text"]
+    assert "Upload a file" in text
+    assert "Record a task" in text
+    assert "Log a session" in text
+
+
+@chrome_only
+def test_the_upload_form_says_what_happens_next(add_screen):
+    """An uploaded file enters the pipeline unchanged. That is the feature."""
+    assert "Download is the only stage an upload skips" in add_screen["text"]
+
+
+@chrome_only
+def test_no_percentage_control_anywhere_in_the_client():
+    """Milestone-based progress, enforced where it can be undone.
+
+    A percentage is a feeling typed into a box. The server sends none, and a
+    slider or a percent field here would reintroduce exactly what the milestone
+    design exists to prevent.
+    """
+    import re as _re
+
+    for path in sorted((REPO_ROOT / "web").rglob("*.js")):
+        if "vendor" in path.parts:
+            continue
+        body = path.read_text(encoding="utf-8")
+        body = _re.sub(r"/\*.*?\*/", "", body, flags=_re.S)
+        body = _re.sub(r"^\s*//.*$", "", body, flags=_re.M)
+        assert 'type="range"' not in body, path.name
+        assert "percent" not in body.lower(), path.name
+
+
+@chrome_only
+def test_nothing_in_the_client_computes_a_share_of_a_deficit():
+    """The other half of the enforcement.
+
+    The server omits the field; that only means anything while the client
+    declines to reconstruct it, and `unreviewed / (unreviewed + verified)` is one
+    line away at any time.
+    """
+    import re as _re
+
+    for path in sorted((REPO_ROOT / "web").rglob("*.js")):
+        if "vendor" in path.parts:
+            continue
+        body = _re.sub(
+            r"^\s*//.*$", "", path.read_text(encoding="utf-8"), flags=_re.M
+        )
+        # A division whose right-hand side mentions a count we publish.
+        suspicious = _re.findall(
+            r"/\s*\(?\s*\w*(?:unreviewed|verified|total|milestones_total)", body
+        )
+        assert not suspicious, f"{path.name}: {suspicious}"

@@ -687,3 +687,82 @@ input[type="date"] {
   flex-wrap: wrap;
   gap: 0.2em 1.1em;
 }
+
+/* ------------------------------------------------------ projects + forms */
+.projects {
+  list-style: none;
+  padding: 0;
+  margin: 1.2em 0;
+}
+
+.project {
+  padding: 0.9em 0;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+}
+
+.project-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1em;
+}
+
+/* Milestones are TAPPED to complete, so each is a real target. There is no
+   slider and no percent field: a number I can quietly revise upward is what
+   DESIGN.md's closing constraint forbids. */
+.milestones {
+  list-style: none;
+  padding: 0;
+  margin: 0.3em 0 0.5em;
+}
+
+.milestones li {
+  padding: 0.15em 0;
+}
+
+.milestones .plain {
+  margin-top: 0;
+  padding: 0.4em 0;
+  min-height: 44px;
+  text-align: left;
+}
+
+.milestones .done {
+  color: var(--ink-faint);
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+form label {
+  display: block;
+  color: var(--ink-quiet);
+  font-size: 0.93rem;
+  margin: 0.9em 0 0;
+}
+
+form input,
+form select {
+  display: block;
+  width: 100%;
+  margin-top: 0.35em;
+  background: var(--raised);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.6em 0.7em;
+  font-size: 17px;
+  min-height: 44px;
+}
+
+form input[type="file"] {
+  padding: 0.5em;
+}
+
+section + section {
+  margin-top: 2em;
+  padding-top: 0.5em;
+  border-top: 1px solid var(--line);
+}

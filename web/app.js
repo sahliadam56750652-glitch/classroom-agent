@@ -14,6 +14,8 @@ import { Subject, Subjects } from "/screens/subjects.js";
 import { Status } from "/screens/status.js";
 import { Deadlines, Library } from "/screens/library.js";
 import { Timetable } from "/screens/timetable.js";
+import { Projects } from "/screens/projects.js";
+import { Add } from "/screens/add.js";
 import { linkProps, match, useRoute } from "/router.js";
 import { flushWhenOnline } from "/queue.js";
 
@@ -148,6 +150,8 @@ function Screen({ route, status }) {
     return html`<${Library} course=${route.query.get("course")} />`;
   if (path === "/deadlines") return html`<${Deadlines} />`;
   if (path === "/timetable") return html`<${Timetable} />`;
+  if (path === "/projects") return html`<${Projects} />`;
+  if (path === "/add") return html`<${Add} />`;
   if (path === "/status") return html`<${Status} />`;
   return html`<${Now} status=${status} />`;
 }
@@ -167,6 +171,8 @@ function Nav({ here }) {
     ["/library", "Library"],
     ["/deadlines", "Deadlines"],
     ["/timetable", "Timetable"],
+    ["/projects", "Projects"],
+    ["/add", "Add"],
     ["/status", "Counted"],
   ];
   return html`
