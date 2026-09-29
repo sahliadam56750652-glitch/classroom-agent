@@ -13,18 +13,18 @@
 // subject that happened to hash to red would read as a subject in trouble.
 
 export const SWATCHES = [
-  "#c9ae6d",
-  "#b4b672",
-  "#9cbd82",
-  "#83c297",
-  "#6ec4af",
-  "#64c3c6",
-  "#6abfd9",
-  "#7db8e6",
-  "#94b1eb",
-  "#aca9e8",
-  "#c1a2de",
-  "#d29ccc",
+  "#d5bb7d",
+  "#a0a146",
+  "#aaca91",
+  "#5cb07a",
+  "#7fd0bc",
+  "#12b1b5",
+  "#7ccbe4",
+  "#53a3dc",
+  "#a2bef5",
+  "#9590df",
+  "#cdafe8",
+  "#c380bd",
 ];
 
 /**

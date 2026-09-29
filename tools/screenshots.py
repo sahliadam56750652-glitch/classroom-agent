@@ -345,6 +345,9 @@ def capture(base: str, out: Path, name: str, path: str, signed_in: bool) -> None
 
 def main() -> int:
     label = sys.argv[1] if len(sys.argv) > 1 else "after"
+    # Any further arguments name the screens to take, so one screen's commit
+    # re-shoots that screen and leaves the others as they were.
+    only = set(sys.argv[2:])
     if CHROME is None:
         print("no Chrome to render with", file=sys.stderr)
         return 1
@@ -374,6 +377,8 @@ def main() -> int:
             return 1
         print(f"writing {out}")
         for name, path, signed_in in SCREENS:
+            if only and name not in only:
+                continue
             capture(base, out, name, path, signed_in)
     finally:
         server.kill()

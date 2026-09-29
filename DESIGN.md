@@ -340,13 +340,20 @@ they are the resting state of most material most of the time.
 
 Each subject has one colour, the same on every screen: a pip before its name and
 the left edge of anything that belongs to it. It is a pure function of the name —
-FNV-1a over the UTF-8 bytes, modulo twelve — into twelve swatches at OKLCH
-lightness 0.76, chroma 0.09, hues 88° to 330° in 22° steps:
+FNV-1a over the UTF-8 bytes, modulo twelve — into twelve swatches at hues 88°
+to 330° in 22° steps, alternating between two OKLCH steps (lightness 0.80 /
+chroma 0.085, and 0.69 / 0.115):
 
-`#c9ae6d` `#b4b672` `#9cbd82` `#83c297` `#6ec4af` `#64c3c6`
-`#6abfd9` `#7db8e6` `#94b1eb` `#aca9e8` `#c1a2de` `#d29ccc`
+`#d5bb7d` `#a0a146` `#aaca91` `#5cb07a` `#7fd0bc` `#12b1b5`
+`#7ccbe4` `#53a3dc` `#a2bef5` `#9590df` `#cdafe8` `#c380bd`
 
-All sit between 7.8:1 and 8.5:1 on a card. **No swatch is red or orange** — hues
+The alternation is measured, not decorative. At one lightness, hues 22° apart
+were indistinguishable on the first screenshots — three of four sessions on one
+day read as the same teal — and with twelve subjects on the timetable, neighbours
+are guaranteed. Alternating lightness makes every neighbouring pair differ in two
+dimensions instead of one.
+
+All sit between 5.9:1 and 9.7:1 on a card. **No swatch is red or orange** — hues
 0°–80° are excluded so that no subject can ever look like the passed-deadline
 colour, and a subject's identity can never read as its state. Twelve names into
 twelve swatches will sometimes share one; that is harmless because **a subject's

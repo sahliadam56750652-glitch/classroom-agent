@@ -571,12 +571,13 @@ button.card:focus-visible {
   border-radius: 50%;
   background: var(--subject);
   margin-right: var(--s2);
+  /* Centred on the lower-case letters, so it sits on the text's line rather
+     than on its baseline. */
+  vertical-align: 0.06em;
 }
 
 .named {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
+  display: inline;
 }
 
 /* ------------------------------------------------------------------ hero

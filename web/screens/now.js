@@ -17,6 +17,8 @@ import { html } from "/html.js";
 import { Offline, api, describe } from "/api.js";
 import { plural, relativeDay, sessionName } from "/format.js";
 import { linkProps } from "/router.js";
+import { Icon } from "/icons.js";
+import { Problem, Skeleton, SubjectName } from "/ui.js";
 
 /**
  * The shape of the document, with tonight's range marked.
@@ -70,26 +72,34 @@ function PageRuler({ windows, first }) {
   `;
 }
 
-/** Nothing waiting. One line, then nothing. */
+/**
+ * Nothing waiting. One line, then nothing -- a quiet card rather than the hero,
+ * because there is no action to make large, and nothing backfilled beside it on
+ * a wide screen either.
+ */
 function Clear({ body }) {
   const session = body.next_session;
   return html`
-    <main class="pad now">
-      <p class="clear-line">Nothing waiting.</p>
-      ${session
-        ? html`<p class="quiet">
-            ${`Next session: ${sessionName(session)}, ${relativeDay(
-              body.for_date
-            )} ${session.start}.`}
-          </p>`
-        : /*
-           * No session to name. Said, rather than left as an unexplained blank:
-           * a holiday, a date no timetable version covers and a day whose
-           * sessions were all moved away are three different facts, and the
-           * server already distinguishes them.
-           */
-          html`<p class="quiet">${body.silent_because || "Nothing scheduled."}</p>`}
-    </main>
+    <div class="screen now">
+      <div class="card now-clear">
+        <div class="card-body">
+          <p class="t-lead">Nothing waiting.</p>
+          ${session
+            ? html`<p class="t-state">
+                ${`Next session: ${sessionName(session)}, ${relativeDay(
+                  body.for_date
+                )} ${session.start}.`}
+              </p>`
+            : /*
+               * No session to name. Said, rather than left as an unexplained
+               * blank: a holiday, a date no timetable version covers and a day
+               * whose sessions were all moved away are three different facts,
+               * and the server already distinguishes them.
+               */
+              html`<p class="t-state">${body.silent_because || "Nothing scheduled."}</p>`}
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -126,40 +136,161 @@ function notRead(item, windows) {
   return text;
 }
 
-/** The state to design first, because it is the one the app is in most often. */
+/**
+ * What tomorrow's session is, said once inside the hero: the reason these
+ * pages rather than others. A plain sentence -- no countdown to it.
+ */
+function forSession(subject, forDate) {
+  const session = (subject.sessions || [])[0];
+  if (!session) return "";
+  const where = session.parts && session.parts[0] && session.parts[0].room;
+  return (
+    `For the ${sessionName(session)}, ${relativeDay(forDate)} ${session.start}` +
+    (where ? `, ${where}.` : ".")
+  );
+}
+
+/**
+ * The state to design first, because it is the one the app is in most often.
+ *
+ * One hero card: the deficit as its first, smallest line (section 2 -- above the
+ * item and nowhere else), the title as the largest thing on the screen, the
+ * window, the shape of the document, what is not readable, and the two doors.
+ * It looks identical at 23:00 and at 14:00, because the app knows nothing at
+ * 23:00 that it did not know at 14:00.
+ */
 function Waiting({ body, botUsername }) {
   const { item, subject, windows } = body;
   const window = windows && windows.length ? windows[0] : null;
   const pages = item.pages || 0;
+  const why = forSession(subject, body.for_date);
+  // Each part kept whole on its own line, so "pages 1-20" never breaks at the
+  // hyphen on a phone.
+  const scope = [
+    pages ? plural(pages, "page") : "",
+    window && pages ? `an evening is about ${window.label}` : "",
+  ].filter(Boolean);
 
   return html`
-    <main class="pad now">
-      <!-- The deficit. One subordinate line, above the item, and nowhere else. -->
-      <p class="deficit">
-        ${subject.name} · ${plural(subject.unreviewed, "unreviewed", "unreviewed")}
-      </p>
+    <div class="screen now">
+      <div class="split">
+        <article class="hero now-hero" aria-labelledby="now-title">
+          <!-- The deficit. One subordinate line, above the item, and nowhere else. -->
+          <p class="t-state deficit">
+            <${SubjectName} name=${subject.name} />${` · ${plural(
+              subject.unreviewed,
+              "unreviewed",
+              "unreviewed"
+            )}`}
+          </p>
 
-      <h1 class="item-title">${item.label}</h1>
+          <div class="now-what">
+            <h1 class="t-hero item-title" id="now-title">${item.label}</h1>
+            ${scope.length
+              ? html`<p class="t-state">
+                  ${scope.map(
+                    (part, n) =>
+                      html`<span key=${n} class="nowrap">${part}${
+                        n < scope.length - 1 ? " ·" : ""
+                      }</span>${" "}`
+                  )}
+                </p>`
+              : null}
+          </div>
 
-      <p class="scope">
-        ${pages ? html`${plural(pages, "page")}` : null}
-        ${window && pages
-          ? html`<span class="sep"> · </span>${`an evening is about ${window.label}`}`
-          : null}
-      </p>
+          <${PageRuler} windows=${windows} first=${window ? window.index : 0} />
 
-      <${PageRuler} windows=${windows} first=${window ? window.index : 0} />
+          ${why ? html`<p class="t-meta">${why}</p>` : null}
 
-      ${item.unread ? html`<p class="not-read">${notRead(item, windows)}</p>` : null}
+          ${item.unread
+            ? html`<p class="notice not-read">${notRead(item, windows)}</p>`
+            : null}
 
-      <${Actions}
-        item=${item}
-        files=${body.files}
-        windows=${windows}
-        botUsername=${botUsername}
-      />
-    </main>
+          <${Actions}
+            item=${item}
+            files=${body.files}
+            windows=${windows}
+            botUsername=${botUsername}
+          />
+        </article>
+
+        <${Tomorrow} forDate=${body.for_date} />
+      </div>
+    </div>
   `;
+}
+
+const WIDE = "(min-width: 1024px)";
+
+/**
+ * The day the pages are for, beside the hero on a wide screen.
+ *
+ * Sessions and nothing else: no counts, no standing, nothing that makes the
+ * front door a dashboard (section 2). On a phone it is not fetched at all --
+ * there the hero is the whole screen, and the timetable is one tab away.
+ */
+function Tomorrow({ forDate }) {
+  const [day, setDay] = useState(null);
+
+  useEffect(() => {
+    if (!matchMedia(WIDE).matches) return;
+    let live = true;
+    const range = encodeURIComponent(forDate);
+    api
+      .get(`/api/timetable?from=${range}&to=${range}`)
+      .then((found) => live && setDay((found.days || [])[0] || null))
+      .catch(() => {
+        // Context, not the answer. Without it the hero still stands alone.
+      });
+    return () => {
+      live = false;
+    };
+  }, [forDate]);
+
+  if (!day || !(day.sessions.length || day.departed.length)) return null;
+  const when = relativeDay(forDate);
+
+  return html`
+    <section class="section now-day" aria-label="The sessions these pages are for">
+      <h2 class="section-title">${when.charAt(0).toUpperCase() + when.slice(1)}</h2>
+      <ul class="list">
+        ${day.sessions.map(
+          (session) => html`<li key=${`${session.start}-${sessionName(session)}`}>
+            <${SessionCard} session=${session} />
+          </li>`
+        )}
+        ${day.departed.map(
+          (session) => html`<li key=${`gone-${session.start}-${sessionName(session)}`}>
+            <${SessionCard} session=${session} departed=${true} />
+          </li>`
+        )}
+      </ul>
+    </section>
+  `;
+}
+
+/** The kind of session in words: "lecture", "lab". */
+function kindOf(session) {
+  const kind = (session.kind || "").toLowerCase();
+  return { lec: "lecture", tut: "tutorial", lab: "lab" }[kind] || kind;
+}
+
+function SessionCard({ session, departed = false }) {
+  const parts = session.parts || [];
+  const where = [kindOf(session), parts[0] && parts[0].room].filter(Boolean).join(", ");
+  return html`<div class=${`card now-session ${departed ? "departed" : ""}`}>
+    <span class="t-meta num now-time">${session.start}</span>
+    <div class="card-body">
+      <span class="now-session-name">
+        ${parts.map(
+          (part, n) =>
+            html`<span key=${n}>${n ? " + " : ""}<${SubjectName} name=${part.subject} /></span>`
+        )}
+      </span>
+      ${where ? html`<span class="t-meta">${where}</span>` : null}
+      ${session.note ? html`<span class="t-meta">${session.note}</span>` : null}
+    </div>
+  </div>`;
 }
 
 /**
@@ -196,28 +327,30 @@ function Actions({ item, files, windows, botUsername }) {
   }, [readable && readable.drive_id]);
 
   return html`
-    <div class="actions">
+    <div class="hero-actions actions">
       ${readable
         ? html`<a
-            class="primary"
+            class="button primary-button"
             ...${linkProps(`/read/${encodeURIComponent(readable.drive_id)}`)}
           >
+            <${Icon} name="document" />
             ${window ? `Read ${window.label}` : "Read it"}
           </a>`
-        : html`<p class="problem">
+        : html`<p class="notice">
             Nothing readable is held for this post yet. ${" "}
             <code>agent fetch</code> and <code>agent extract</code> bring it
             here.
           </p>`}
       ${botUsername
         ? html`<a
-            class="secondary"
+            class="button secondary-button"
             href=${`https://t.me/${botUsername}`}
             rel="noopener"
           >
+            <${Icon} name="send" />
             Read and Skip are in Telegram
           </a>`
-        : html`<p class="quiet actions-note">
+        : html`<p class="t-meta actions-note">
             Read and Skip are in the Telegram conversation. Set
             <code>telegram.bot_username</code> in <code>config.yaml</code> to
             link to it from here.
@@ -251,24 +384,25 @@ export function Now({ status }) {
   }, []);
 
   if (problem) {
-    return html`<main class="pad"><p class="problem">${problem}</p></main>`;
+    return html`<div class="screen"><${Problem}>${problem}</${Problem}></div>`;
   }
   if (offline) {
-    return html`<main class="pad">
-      <p class="problem">No connection, so this is not tonight's answer yet.</p>
-    </main>`;
+    return html`<div class="screen">
+      <${Problem}>No connection, so this is not tonight's answer yet.</${Problem}>
+    </div>`;
   }
   if (!body) {
     // No spinner. At 23:00 on mobile data the gap is real, and a spinner in it
-    // is the app performing busyness before it knows anything.
-    return html`<main class="pad"><p class="faint">…</p></main>`;
+    // is the app performing busyness before it knows anything. The shape of
+    // the answer instead, and still.
+    return html`<div class="screen"><${Skeleton} hero=${true} rows=${0} /></div>`;
   }
 
   const asOf = body.__cachedAt;
 
   return html`
     ${asOf
-      ? html`<p class="pad stale">
+      ? html`<p class="notice now-stale" role="status">
           ${`No connection. This is as of ${new Date(asOf).toLocaleTimeString(
             undefined,
             { hour: "2-digit", minute: "2-digit" }

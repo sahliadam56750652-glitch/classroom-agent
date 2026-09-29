@@ -211,7 +211,6 @@ function Shell({ onSignOut, offline }) {
 // old styles (styles/legacy.css) apply to it and to nothing else; a screen
 // leaves this set in the commit that rebuilds it.
 const LEGACY = new Set([
-  "now",
   "subjects",
   "subject",
   "library",

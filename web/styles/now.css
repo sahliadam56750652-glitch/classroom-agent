@@ -1,0 +1,116 @@
+/*
+  Now: the default screen. One item, read tired, on a phone.
+
+  The title is the largest thing on the screen by construction: section 2 fixes
+  the deficit as one subordinate line ABOVE it. Nothing here escalates -- no
+  alarm colour, no countdown, no change in tone at 23:00.
+*/
+
+.now-hero {
+  max-width: 44rem;
+}
+
+.now-what {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.item-title {
+  /* Long Classroom titles are normal -- "TP3 : Graphes et arbres couvrants" --
+     and breaking them beats a horizontal scrollbar on a phone. */
+  overflow-wrap: break-word;
+}
+
+/* The one graphic in the app: the shape of the document, with the window an
+   evening starts with marked. NOT a progress bar -- nothing records which
+   windows have been read, so a filled bar would claim windows were done. */
+.ruler {
+  display: flex;
+  gap: 3px;
+  height: 6px;
+}
+
+.tick {
+  min-width: 4px;
+  border-radius: 3px;
+  background: var(--pressed);
+}
+
+/* Where an evening would start. Marked, not filled. */
+.tick-now {
+  background: var(--accent);
+}
+
+/* Pages nothing has read: hollow, a fact about the material, never red. */
+.tick-unread {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--edge);
+}
+
+.tick-now.tick-unread {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.hero-actions .button {
+  flex: 1 1 auto;
+  padding: 0 var(--s4);
+  white-space: nowrap;
+}
+
+.actions-note {
+  flex-basis: 100%;
+}
+
+.now-stale {
+  margin-bottom: var(--s4);
+}
+
+.now-clear {
+  max-width: 34rem;
+  padding: var(--s5);
+}
+
+/* Tomorrow, beside the hero. Only on a wide screen: see screens/now.js. */
+.now-day {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .now-day {
+    display: flex;
+    padding-top: var(--s2);
+  }
+}
+
+.now-session {
+  align-items: baseline;
+  gap: var(--s4);
+}
+
+.now-time {
+  flex: none;
+  min-width: 3.2em;
+  color: var(--ink-2);
+}
+
+.now-session-name {
+  font-weight: 500;
+}
+
+/* A session that moved or was cancelled: said, and set back, never hidden. */
+.now-session.departed .now-session-name {
+  text-decoration: line-through;
+  text-decoration-color: var(--ink-3);
+  color: var(--ink-2);
+}
+
+/* The server says why a day is quiet in lower case, as a clause. */
+.now-clear .t-state::first-letter {
+  text-transform: uppercase;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
