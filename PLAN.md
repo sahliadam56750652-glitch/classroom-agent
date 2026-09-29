@@ -1224,6 +1224,29 @@ semester's scope.
   write scope requested because the project means to write. Invariant 6 keeps
   exactly one exception, and it keeps the one it was always going to have.
 
+- **A self-hosted display face, or the system stack everywhere.** *Raised by the
+  5c visual redesign; DESIGN.md's side taken, recommendation below.*
+
+  The two design skills the redesign was built with both reach for a chosen
+  typeface -- one recommends Inter, the other argues that type carries a page's
+  personality and a default family is the commonest tell of an unfinished one.
+  DESIGN.md section 6 says "the app's own type is a system stack at a real reading
+  size", and that is what shipped: hierarchy is built from size, weight and colour
+  instead.
+
+  The disagreement is real, not a misreading. A display face used ONLY for the
+  hero title and the screen titles would cost roughly 30-60 KB as a subset WOFF2,
+  self-hosted in `web/` and precached so offline still works, and it would give
+  the one memorable element on `/` a voice the system stack does not have. Against
+  it: that is 30-60 KB on the first load over mobile data, a flash of fallback text
+  the first time, and a second family in an app whose brief is to get out of the
+  way at 23:00. Body text should stay the system stack regardless -- DESIGN.md's
+  reason there is reading comfort, and no one has argued with it.
+
+  **Recommendation: leave it for a month of real use.** If the titles read as
+  generic once the layout is finished, try one display face on the hero only and
+  judge it by eye at 23:00. If they do not, close this.
+
 - **The default screen has ONE button, not two.** *Decided at 5c slice 1 with a
   recommendation; overrule it if the reading is wrong.*
 

@@ -288,6 +288,115 @@ product; everything else is navigation.
 
 ---
 
+## 8. Visual system
+
+Everything above says what the app may say. This says how it looks, and every
+rule above wins where the two meet. Measured rather than chosen by eye: the
+contrast figures below are computed, and `tests/test_web_assets.py` recomputes
+them from `app.css` so a token cannot drift below AA unnoticed.
+
+### Type
+
+The system stack, per section 6 — `-apple-system`, Segoe UI, Roboto — because it
+is already on the device, costs nothing on mobile data at 23:00, and is a real
+reading face on every platform this runs on. Hierarchy comes from size, weight
+and colour, not from a second family. Whether a self-hosted display face for the
+few headline elements would earn its bytes is an open question in `PLAN.md`.
+
+| role | size / line | weight | colour | used for |
+|---|---|---|---|---|
+| hero | 30 / 1.2 (38 at ≥1024) | 600 | ink | the one item on `/` |
+| title | 24 / 1.25 | 600 | ink | a screen's name |
+| lead | 19 / 1.35 | 500 | ink | a card's name: subject, post, project |
+| body | 17 / 1.55 | 400 | ink | the floor for anything read as prose |
+| state | 17 / 1.45 | 400 | ink-2 | what a card's thing is doing |
+| meta | 15 / 1.45 | 400 | ink-3 | when, how many pages, which room |
+
+Counts and times are `tabular-nums`. No weight below 400. No all-caps labels, no
+tracked-out eyebrows: a label that needs shouting is a label in the wrong place.
+
+### Colour
+
+| token | value | on ground | on card | on raised | role |
+|---|---|---|---|---|---|
+| ground | `#0f1216` | | | | the page |
+| card | `#161a20` | | | | a tappable thing |
+| raised | `#1c2129` | | | | the hero, a hovered card |
+| pressed | `#232933` | | | | a pressed or selected thing |
+| ink | `#e8e5df` | 14.9 | 13.9 | 12.9 | names, titles, body |
+| ink-2 | `#b3aea6` | 8.5 | 7.9 | 7.3 | state |
+| ink-3 | `#969189` | 6.0 | 5.6 | 5.2 | metadata |
+| accent | `#8ab4dc` | 8.6 | 8.0 | 7.4 | focus, the primary action, "here" |
+| passed | `#e3837a` | 7.0 | 6.5 | 6.0 | a deadline that has already gone — nothing else |
+| edge | `#646e7c` | 3.6 | 3.4 | 3.1 | a control's border (WCAG 1.4.11 wants 3:1) |
+| line | `#2a313b` | | | | a divider, never a boundary that carries meaning |
+
+Off-white on near-black, as section 6 asks, and warm rather than blue-white so a
+40-page sitting does not glare. **There is one warm alarm and it is `passed`.**
+Unreviewed, behind, blocked and not-yet-transcribed are all neutral ink, because
+they are the resting state of most material most of the time.
+
+### Subject colour
+
+Each subject has one colour, the same on every screen: a pip before its name and
+the left edge of anything that belongs to it. It is a pure function of the name —
+FNV-1a over the UTF-8 bytes, modulo twelve — into twelve swatches at OKLCH
+lightness 0.76, chroma 0.09, hues 88° to 330° in 22° steps:
+
+`#c9ae6d` `#b4b672` `#9cbd82` `#83c297` `#6ec4af` `#64c3c6`
+`#6abfd9` `#7db8e6` `#94b1eb` `#aca9e8` `#c1a2de` `#d29ccc`
+
+All sit between 7.8:1 and 8.5:1 on a card. **No swatch is red or orange** — hues
+0°–80° are excluded so that no subject can ever look like the passed-deadline
+colour, and a subject's identity can never read as its state. Twelve names into
+twelve swatches will sometimes share one; that is harmless because **a subject's
+colour never appears without its name**, which is also what keeps it from being
+the only carrier of meaning for anyone who cannot tell the swatches apart.
+
+### Space, radius, surface
+
+Spacing steps are 4 · 8 · 12 · 16 · 24 · 32 · 48 · 64. Cards pad 16, sections
+separate 32, the hero pads 24 (32 at ≥1024).
+
+Radius says what a thing is: 10 for a control, 14 for a card, 20 for the hero,
+fully round for a pill. Not one radius on everything.
+
+Depth is surface lightness and a 1px line, never a drop shadow — a shadow on a
+near-black ground is invisible, and pretending otherwise is decoration.
+
+### Motion
+
+140ms, ease-out, and only in answer to something I did: a press, a hover, a
+disclosure opening. Nothing moves on its own. No entrance animation, no shimmer
+on a skeleton — a skeleton is a static shape, because a loop is not an answer to
+anything. `prefers-reduced-motion` turns all of it off.
+
+### Layout
+
+Below 1024px: one column, and a tab bar at the bottom within reach of a thumb —
+Now, Subjects, Timetable, Library, More — with no counts on it (section 7: no
+badge that counts what I have not done). At 1024px and above: a sidebar with
+every destination, and the width used — two columns wherever the content has two
+parts. Content never exceeds 72 characters a line. The reader has no tab bar and
+no sidebar: it owns the screen, per section 6.
+
+### Components
+
+| component | what it is |
+|---|---|
+| shell | the tab bar or the sidebar, and the content beside it |
+| screen header | a title, and at most one line of ink-2 beneath it |
+| card | a whole tappable surface, 56px minimum, a chevron when it goes somewhere |
+| hero | the one next action on `/` — raised surface, subject edge, the primary button |
+| pip / edge | the subject's colour, never alone |
+| notice | a neutral block that states a fact: not transcribed, offline, a problem |
+| fact list | label and value, tabular numbers, nothing summarised |
+| skeleton | static blocks in the shape of what is loading |
+| button | primary (accent fill), secondary (edge outline), quiet (text) — all 44px |
+| field | a visible label above a 44px input; an error beside it, in words |
+
+---
+
 ## Whether this is working
 
 Four questions, answerable by looking:
