@@ -172,3 +172,63 @@ def _without_stamp(body: str) -> str:
     return "\n".join(
         line for line in body.splitlines() if not line.startswith("export const GENERATED_AT")
     )
+
+
+# ---------------------------------------------------------------------------
+# the service worker's version
+# ---------------------------------------------------------------------------
+#
+# The shell is served cache-first, which is what makes the app open offline. The
+# cost of that is that a changed app.js is invisible until the worker's cache
+# name changes -- an installed PWA keeps running yesterday's code with no sign
+# that it is. A hand-bumped "v1" is exactly the kind of step that gets forgotten,
+# and the symptom (the fix is deployed and the phone does not have it) looks like
+# the fix not working.
+#
+# So the version is a hash of the shell's own contents, stamped by this command,
+# and `tests/test_web_assets.py` fails when a shell file changed without it.
+
+import hashlib
+import re as _re
+
+_SHELL_LIST = _re.compile(r"const SHELL_FILES = \[(.*?)\];", _re.S)
+_VERSION_LINE = _re.compile(r'^const VERSION = "[^"]*";', _re.M)
+
+
+def shell_files(web_dir: Path) -> list[str]:
+    """The paths sw.js precaches, as written in it."""
+    body = (web_dir / "sw.js").read_text(encoding="utf-8")
+    listed = _SHELL_LIST.search(body)
+    if not listed:
+        raise ValueError("sw.js has no SHELL_FILES array")
+    return _re.findall(r'"([^"]+)"', listed.group(1))
+
+
+def shell_version(web_dir: Path) -> str:
+    """A short hash of every precached file's bytes, in list order.
+
+    "/" is the app itself and is served as index.html, so it is hashed as that.
+    A missing file is hashed as its name, so the version still moves when the
+    list does -- and the precache test separately refuses a missing path.
+    """
+    digest = hashlib.sha256()
+    for path in shell_files(web_dir):
+        name = "index.html" if path == "/" else path.lstrip("/")
+        target = web_dir / name
+        digest.update(path.encode())
+        digest.update(target.read_bytes() if target.is_file() else b"<missing>")
+    return digest.hexdigest()[:12]
+
+
+def stamp_worker(web_dir: Path) -> tuple[Path, bool]:
+    """Write the shell hash into sw.js's VERSION line. Returns (path, changed)."""
+    worker = web_dir / "sw.js"
+    body = worker.read_text(encoding="utf-8")
+    line = f'const VERSION = "{shell_version(web_dir)}";'
+    if not _VERSION_LINE.search(body):
+        raise ValueError("sw.js has no `const VERSION = \"...\";` line to stamp")
+    updated = _VERSION_LINE.sub(line, body, count=1)
+    if updated == body:
+        return worker, False
+    worker.write_text(updated, encoding="utf-8")
+    return worker, True

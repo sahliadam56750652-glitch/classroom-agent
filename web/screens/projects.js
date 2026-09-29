@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
-import { api } from "/api.js";
+import { api, describe } from "/api.js";
 import { hasPassed, localTime } from "/format.js";
 
 function Project({ project, onComplete, onClose }) {
@@ -75,7 +75,7 @@ export function Projects() {
     api
       .get("/api/projects")
       .then(setRows)
-      .catch((err) => setProblem(err.detail || err.message));
+      .catch((err) => setProblem(describe(err)));
 
   useEffect(load, []);
 
@@ -85,7 +85,7 @@ export function Projects() {
       await work();
       await load();
     } catch (err) {
-      setProblem(err.detail || err.message);
+      setProblem(describe(err));
     }
   }
 

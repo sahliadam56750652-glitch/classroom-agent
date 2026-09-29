@@ -17,14 +17,21 @@ import { expect } from "/contract.js";
 
 export class ApiError extends Error {
   constructor(status, detail, route) {
-    super(detail || `${route} failed with ${status}`);
+    // A sentence, never "GET /api/x failed with 500". That string used to be
+    // this default and it reached the screen whenever a response had no detail;
+    // the route stays on the object for the console, where it is useful.
+    super(detail || "The server refused that request.");
     this.status = status;
     this.detail = detail;
     this.route = route;
   }
 }
 
-/** Thrown on a 401. The app shows sign-in; nothing else handles it. */
+/**
+ * Thrown on a 401, and never shown. A 401 anywhere means signed out, so the
+ * request that hit it also raises the app-wide signal below; the screen that
+ * made the call does not get to decide what a missing session looks like.
+ */
 export class NotSignedIn extends ApiError {}
 
 /**
@@ -40,15 +47,33 @@ export class Offline extends Error {
   }
 }
 
-async function request(method, path, { body, form, signal } = {}) {
+// Anything that wants to know the session went away. The app listens once and
+// routes to /signin; no screen handles a 401 itself.
+const signedOutListeners = new Set();
+
+/** Subscribe to "the server says there is no session". Returns an unsubscribe. */
+export function onSignedOut(listener) {
+  signedOutListeners.add(listener);
+  return () => signedOutListeners.delete(listener);
+}
+
+async function request(method, path, { body, form, signal, probe } = {}) {
   const route = `${method} ${templateOf(path)}`;
+  const headers = {};
+  if (body) headers["Content-Type"] = "application/json";
+  // Tells the service worker this request must reach the server or fail. A
+  // cached 200 for /api/status answers "was I signed in last time", which is
+  // not the question -- and treating it as the answer is how the shell rendered
+  // for a session that no longer existed.
+  if (probe) headers["X-Agent-Probe"] = "1";
+
   let response;
   try {
     response = await fetch(path, {
       method,
       credentials: "same-origin",
       signal,
-      headers: body ? { "Content-Type": "application/json" } : undefined,
+      headers,
       body: form ? form : body ? JSON.stringify(body) : undefined,
     });
   } catch (err) {
@@ -56,7 +81,14 @@ async function request(method, path, { body, form, signal } = {}) {
     throw new Offline(route);
   }
 
-  if (response.status === 401) throw new NotSignedIn(401, null, route);
+  if (response.status === 401) {
+    // The sign-in exchange itself answers 401 for a wrong token, and that is a
+    // message for the form, not a sign-out.
+    if (route !== "POST /api/session") {
+      for (const listener of signedOutListeners) listener();
+    }
+    throw new NotSignedIn(401, await detailOf(response), route);
+  }
 
   if (!response.ok) {
     throw new ApiError(response.status, await detailOf(response), route);
@@ -136,15 +168,59 @@ export async function signOut() {
 }
 
 /**
- * Whether there is a live session, asked the only way available: try something
- * that needs one. The cookie is HttpOnly, so there is nothing to inspect.
+ * Whether there is a live session, asked of the SERVER.
+ *
+ * Three answers, because there are three states and collapsing any two of them
+ * is how the reported bug happened:
+ *
+ *   "in"           the server answered 200
+ *   "out"          the server answered 401
+ *   "unreachable"  nothing answered -- offline, or the server still starting
+ *
+ * The probe bypasses the service worker's cache (see `request`), and it retries
+ * once after a pause, because the app is opened at logon at the same moment the
+ * Startup script is starting `agent serve`.
  */
 export async function haveSession() {
-  try {
-    await api.get("/api/status");
-    return true;
-  } catch (err) {
-    if (err instanceof NotSignedIn) return false;
-    throw err;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await request("GET", "/api/status", { probe: true });
+      return "in";
+    } catch (err) {
+      if (err instanceof NotSignedIn) return "out";
+      if (!(err instanceof Offline)) throw err;
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 1500));
+    }
   }
+  return "unreachable";
+}
+
+/**
+ * Any error as a sentence a person can act on. The only thing a screen may show.
+ *
+ * Never a status line, never a stack, never `[object Object]`. The API's own
+ * `detail` strings are already sentences -- "no study item with id 12." -- so
+ * they pass through; everything else is named by what it means.
+ */
+export function describe(err) {
+  if (err instanceof Offline) {
+    return "No connection, so this can't be loaded right now.";
+  }
+  if (err instanceof NotSignedIn) return "Signed out.";
+  if (err instanceof ApiError) {
+    if (err.status >= 500) {
+      return "The server hit an error and could not answer. The detail is in its log.";
+    }
+    if (err.status === 404 && !err.detail) {
+      return "That isn't on the server. It may have been removed.";
+    }
+    return err.detail || "The server refused that request.";
+  }
+  return "Something in the app itself went wrong. Reloading usually clears it.";
+}
+
+/** Tell the service worker to forget cached personal data. Sign-out only. */
+export function forgetCachedData() {
+  const worker = navigator.serviceWorker && navigator.serviceWorker.controller;
+  if (worker) worker.postMessage({ type: "signed-out" });
 }

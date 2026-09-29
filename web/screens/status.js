@@ -11,7 +11,7 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
-import { api } from "/api.js";
+import { api, describe } from "/api.js";
 import { localTime } from "/format.js";
 
 function Counts({ title, counts, note }) {
@@ -45,7 +45,7 @@ export function Status() {
     api
       .get("/api/status")
       .then((found) => live && setStatus(found))
-      .catch((err) => live && setProblem(err.detail || err.message));
+      .catch((err) => live && setProblem(describe(err)));
     return () => {
       live = false;
     };

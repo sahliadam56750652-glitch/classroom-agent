@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -252,41 +253,88 @@ def _seed(data: Path) -> None:
     conn.close()
 
 
+PROBE = """<!DOCTYPE html><html><head><meta charset='utf-8'></head><body>
+<iframe id=f style='width:__WIDTH__px;height:900px;border:0'></iframe>
+<pre id=o></pre><script>
+const q = new URLSearchParams(location.search);
+const TOKEN = q.get('t');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+(async () => {
+  if (q.get('s') !== '0') {
+    await fetch('/api/session', {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({token: TOKEN})});
+  }
+  const f = document.getElementById('f');
+  await new Promise((r) => { f.onload = r;
+    f.src = q.get('p') || (q.get('d') ? '/?date=' + q.get('d') : '/'); });
+  await sleep(2500);
+  const d = () => f.contentDocument;
+  /*STEPS*/
+  const doc = f.contentDocument;
+  const app = doc.getElementById('app');
+  document.getElementById('o').textContent = JSON.stringify({
+    text: doc.body.innerText,
+    html: app ? app.innerHTML : doc.body.innerHTML,
+    path: f.contentWindow.location.pathname,
+    client: doc.documentElement.clientWidth,
+    scroll: doc.documentElement.scrollWidth,
+  });
+})();
+</script></body></html>"""
+
+
 def render(
-    base: str, tmp_path: Path, date: str | None = None, path: str | None = None
+    base: str,
+    tmp_path: Path,
+    date: str | None = None,
+    path: str | None = None,
+    *,
+    sign_in: bool = True,
+    steps: str = "",
+    block_cookies: bool = False,
+    width: int = 390,
 ) -> dict:
-    """Load the app in a real browser and return its text, console and size."""
+    """Load the app in a real browser and return its text, console and size.
+
+    `steps` is JavaScript run inside the probe after the app has loaded, with
+    `d()` returning the app's document and `sleep(ms)` available -- which is how
+    a test signs in through the real form, or revokes a session mid-use and then
+    taps a nav link, instead of asserting on a state it had to fake.
+
+    `block_cookies` sets the profile to refuse every cookie. That is the real
+    shape of "sign-in succeeded and the next call still 401s": the POST returns
+    200 and the browser throws the Set-Cookie away, which is what a Secure cookie
+    over plain http to a non-localhost host does.
+    """
     probe = REPO_ROOT / "web" / "__render_probe.html"
     probe.write_text(
-        "<!DOCTYPE html><html><head><meta charset='utf-8'></head><body>"
-        "<iframe id=f style='width:390px;height:900px;border:0'></iframe>"
-        "<pre id=o></pre><script>\n"
-        "const q=new URLSearchParams(location.search);\n"
-        "(async()=>{await fetch('/api/session',{method:'POST',"
-        "credentials:'same-origin',headers:{'Content-Type':'application/json'},"
-        "body:JSON.stringify({token:q.get('t')})});\n"
-        "const f=document.getElementById('f');\n"
-        "f.src=q.get('p')||(q.get('d')?'/?date='+q.get('d'):'/');\n"
-        "f.onload=()=>setTimeout(()=>{const d=f.contentDocument;\n"
-        "document.getElementById('o').textContent=JSON.stringify({"
-        "text:d.body.innerText,html:d.getElementById('app').innerHTML,"
-        "client:d.documentElement.clientWidth,"
-        "scroll:d.documentElement.scrollWidth});},2500);})();\n"
-        "</script></body></html>",
+        PROBE.replace("__WIDTH__", str(width)).replace("/*STEPS*/", steps),
         encoding="utf-8",
     )
+    profile = tmp_path / "chrome"
+    if block_cookies:
+        (profile / "Default").mkdir(parents=True, exist_ok=True)
+        (profile / "Default" / "Preferences").write_text(
+            json.dumps(
+                {"profile": {"default_content_setting_values": {"cookies": 2}}}
+            ),
+            encoding="utf-8",
+        )
     try:
         url = f"{base}/__render_probe.html?t={TOKEN}"
         if date:
             url += f"&d={date}"
         if path:
             url += f"&p={path}"
-        profile = tmp_path / "chrome"
+        if not sign_in:
+            url += "&s=0"
         result = subprocess.run(
             [
                 find_chrome(), "--headless=new", "--disable-gpu", "--no-first-run",
                 "--no-sandbox", f"--user-data-dir={profile}",
-                "--virtual-time-budget=12000", "--enable-logging=stderr",
+                f"--window-size={max(width + 40, 520)},960",
+                "--virtual-time-budget=20000", "--enable-logging=stderr",
                 "--log-level=0", "--dump-dom", url,
             ],
             capture_output=True,
@@ -751,3 +799,101 @@ def test_nothing_in_the_client_computes_a_share_of_a_deficit():
             r"/\s*\(?\s*\w*(?:unreviewed|verified|total|milestones_total)", body
         )
         assert not suspicious, f"{path.name}: {suspicious}"
+
+
+# ---------------------------------------------------------------------------
+# signed out -- the three ways it happens
+# ---------------------------------------------------------------------------
+#
+# A 401 anywhere means signed out, and the only right response is the sign-in
+# screen: no nav, no "Sign out" for a session that does not exist, and never the
+# raw "GET /api/x failed with 401" that an unhandled error falls through to.
+
+RAW_STATUS = re.compile(r"(GET|POST|PUT|DELETE) /api/\S* failed with \d{3}")
+
+
+def _looks_signed_out(found: dict) -> None:
+    assert found["path"] == "/signin", found["path"]
+    assert "Sign out" not in found["text"], found["text"][:300]
+    assert "<nav" not in found["html"], "a nav rendered for a session that does not exist"
+    assert not RAW_STATUS.search(found["text"]), found["text"][:300]
+
+
+@chrome_only
+def test_opening_with_no_session_lands_on_signin(served, tmp_path_factory):
+    """Asked of the server before the shell renders, and answered by it."""
+    base, _ = served
+    found = render(base, tmp_path_factory.mktemp("s1"), path="/", sign_in=False)
+    _looks_signed_out(found)
+    assert "WEB_API_TOKEN" in found["text"]
+
+
+@chrome_only
+def test_a_401_mid_use_routes_to_signin(served, tmp_path_factory):
+    """The shell is up, the session goes away, and the next tap finds out.
+
+    This is the exact shape of the reported bug: a screen's own error handler
+    received the 401 and printed it, under a nav and a Sign out that no longer
+    meant anything.
+    """
+    base, _ = served
+    found = render(
+        base,
+        tmp_path_factory.mktemp("s2"),
+        path="/",
+        steps="""
+          await fetch('/api/session', {method: 'DELETE', credentials: 'same-origin'});
+          const link = d().querySelector('a[href="/subjects"]');
+          if (link) link.click();
+          await sleep(2500);
+        """,
+    )
+    _looks_signed_out(found)
+
+
+@chrome_only
+def test_a_cookie_the_browser_refused_is_named(served, tmp_path_factory):
+    """Sign-in returns 200 and the next call is still a 401.
+
+    Nothing else can explain that pair, so the screen says it: the browser did
+    not keep the session cookie, and api.secure_cookie is the usual reason -- a
+    Secure cookie over plain http is accepted only for localhost.
+    """
+    base, _ = served
+    found = render(
+        base,
+        tmp_path_factory.mktemp("s3"),
+        path="/signin",
+        sign_in=False,
+        block_cookies=True,
+        steps="""
+          const input = d().querySelector('input[type=password]');
+          input.value = TOKEN;
+          input.dispatchEvent(new Event('input', {bubbles: true}));
+          await sleep(300);
+          d().querySelector('form').requestSubmit();
+          await sleep(3000);
+        """,
+    )
+    assert found["path"] == "/signin", found["path"]
+    assert "api.secure_cookie" in found["text"], found["text"][:500]
+    assert not RAW_STATUS.search(found["text"]), found["text"][:300]
+
+
+def test_no_screen_builds_raw_status_text():
+    """The source of the reported string, removed at the source.
+
+    `ApiError`'s default message was `${route} failed with ${status}`, and every
+    screen printed `err.message` when there was no detail. Checked statically as
+    well as rendered, because a screen nobody renders in a test can still reach
+    it.
+    """
+    for module in sorted((REPO_ROOT / "web").rglob("*.js")):
+        if "vendor" in module.parts:
+            continue
+        body = module.read_text(encoding="utf-8")
+        assert "failed with ${" not in body, module.name
+        assert "err.message" not in body, (
+            f"{module.name} prints err.message; use describe(err) so a user sees "
+            f"a sentence rather than a status line"
+        )

@@ -12,7 +12,7 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
-import { api, Offline } from "/api.js";
+import { Offline, api, describe } from "/api.js";
 
 function useSubjects() {
   const [subjects, setSubjects] = useState([]);
@@ -45,7 +45,7 @@ function Form({ title, note, children, onSubmit, submitLabel }) {
       setProblem(
         err instanceof Offline
           ? "No connection, so this was not recorded. Nothing has been lost — try again when you are back."
-          : err.detail || err.message
+          : describe(err)
       );
     } finally {
       setBusy(false);

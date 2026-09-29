@@ -16,7 +16,7 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
-import { api, Offline } from "/api.js";
+import { Offline, api, describe } from "/api.js";
 import { age, plural } from "/format.js";
 import { linkProps } from "/router.js";
 
@@ -84,7 +84,7 @@ export function Subjects() {
         setProblem(
           err instanceof Offline
             ? "No connection, and nothing has been kept for this screen."
-            : err.detail || err.message
+            : describe(err)
         );
       });
     return () => {
@@ -127,7 +127,7 @@ export function Subject({ name }) {
     api
       .get(`/api/subjects/${encodeURIComponent(name)}`)
       .then((found) => live && setSubject(found))
-      .catch((err) => live && setProblem(err.detail || err.message));
+      .catch((err) => live && setProblem(describe(err)));
     return () => {
       live = false;
     };

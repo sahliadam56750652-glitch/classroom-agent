@@ -685,7 +685,10 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "webcontract",
         parents=[shared],
-        help="regenerate web/contract.js from the API's own OpenAPI schema",
+        help=(
+            "regenerate web/contract.js from the API's schema, and stamp the "
+            "service worker's version from the shell it precaches"
+        ),
     )
 
     notify_parser = sub.add_parser(
@@ -3403,7 +3406,7 @@ def _mount_client(app) -> None:
 
 
 def cmd_webcontract(config: Config, args: argparse.Namespace) -> int:
-    """Regenerate web/contract.js. No server needs to be running.
+    """Regenerate web/contract.js and the worker version. No server needed.
 
     The app is built in-process and its schema read from it, so the generated file
     cannot be a stale copy of a schema that has since moved.
@@ -3419,6 +3422,14 @@ def cmd_webcontract(config: Config, args: argparse.Namespace) -> int:
     print(f"  {'written' if changed else 'unchanged'}: {path}")
     if not changed:
         print("  (the schema has not moved since it was last generated)")
+
+    # After the contract, because the contract is one of the files the worker
+    # precaches and so one of the files its version is a hash of.
+    worker, stamped = contract.stamp_worker(WEB_DIR)
+    print(f"  {'stamped' if stamped else 'unchanged'}: {worker} "
+          f"(shell version {contract.shell_version(WEB_DIR)})")
+    if stamped:
+        print("  An installed app picks this up on its next launch.")
     return 0
 
 

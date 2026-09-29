@@ -19,7 +19,7 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
-import { api } from "/api.js";
+import { api, describe } from "/api.js";
 import { shortDate } from "/format.js";
 
 function today() {
@@ -72,7 +72,7 @@ export function Timetable() {
     api
       .get(`/api/timetable?from=${from}`)
       .then(setData)
-      .catch((err) => setProblem(err.detail || err.message));
+      .catch((err) => setProblem(describe(err)));
   };
 
   useEffect(load, []);
@@ -90,7 +90,7 @@ export function Timetable() {
       );
       load();
     } catch (err) {
-      setProblem(err.detail || err.message);
+      setProblem(describe(err));
     } finally {
       setBusy(false);
     }

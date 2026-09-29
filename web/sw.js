@@ -18,7 +18,11 @@
 // range requests, so reading online and keeping offline are necessarily two
 // different requests -- a kept document is fetched WHOLE, once, on purpose.
 
-const VERSION = "v1";
+// A hash of every file in SHELL_FILES, stamped by `agent webcontract`. Never
+// edited by hand: the shell is served cache-first, so a changed file reaches an
+// installed app ONLY when this changes, and a forgotten bump looks exactly like
+// a fix that did not work. A test fails when it is stale.
+const VERSION = "82daa310514e";
 const SHELL = `shell-${VERSION}`;
 const API = `api-${VERSION}`;
 const DOCS = `docs-${VERSION}`;
@@ -71,7 +75,11 @@ self.addEventListener("install", (event) => {
       .then((cache) =>
         Promise.all(
           SHELL_FILES.map((path) =>
-            cache.add(path).catch((err) => {
+            // `reload` skips the HTTP cache. Without it a new worker could
+            // precache the OLD app.js from the browser's own cache, under the
+            // new version's name, and the update would install and change
+            // nothing.
+            cache.add(new Request(path, { cache: "reload" })).catch((err) => {
               console.warn("[sw] could not precache", path, err);
             })
           )
@@ -110,6 +118,12 @@ self.addEventListener("message", (event) => {
   if (data.type === "forget" && data.url) {
     event.waitUntil(caches.open(DOCS).then((cache) => cache.delete(data.url)));
   }
+  if (data.type === "signed-out") {
+    // Signing out means the cached screens and the kept documents go too. They
+    // are personal data, and "signed out" that still shows last night's backlog
+    // offline is not signed out. The shell stays: it holds nothing of mine.
+    event.waitUntil(Promise.all([caches.delete(API), caches.delete(DOCS)]));
+  }
 });
 
 self.addEventListener("fetch", (event) => {
@@ -120,6 +134,13 @@ self.addEventListener("fetch", (event) => {
 
   if (url.pathname.startsWith("/api/documents/") && url.pathname.endsWith("/file")) {
     event.respondWith(document_(request));
+    return;
+  }
+  if (request.headers.get("X-Agent-Probe")) {
+    // "Is there a session" must be answered by the server or not at all. A
+    // cached 200 would say "there was one", and the shell used to render on
+    // exactly that for a session that no longer existed.
+    event.respondWith(fetch(request));
     return;
   }
   if (url.pathname.startsWith("/api/")) {

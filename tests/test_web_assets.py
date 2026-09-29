@@ -408,3 +408,26 @@ def test_every_icon_the_manifest_names_is_precached():
     listed = re.search(r"const SHELL_FILES = \[(.*?)\];", shell, re.S).group(1)
     for icon in manifest["icons"]:
         assert icon["src"] in listed, icon["src"]
+
+
+def test_the_worker_version_is_the_shell_hash():
+    """A changed shell file must change the worker's cache name.
+
+    The shell is cache-first, so an installed PWA runs the cached app.js until
+    VERSION moves. A stale VERSION is a deployed fix that the phone never gets,
+    presenting as the fix not working -- so it is computed, not remembered.
+    """
+    from agent.api import contract
+
+    body = (WEB / "sw.js").read_text(encoding="utf-8")
+    stamped = re.search(r'^const VERSION = "([^"]*)";', body, re.M).group(1)
+    assert stamped == contract.shell_version(WEB), (
+        "web/sw.js VERSION is stale for the files it precaches -- run "
+        "`agent webcontract`"
+    )
+
+
+def test_precaching_bypasses_the_http_cache():
+    """Or a new worker can store the OLD files under the new version's name."""
+    body = (WEB / "sw.js").read_text(encoding="utf-8")
+    assert 'cache: "reload"' in body

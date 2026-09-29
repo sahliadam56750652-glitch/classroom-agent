@@ -21,7 +21,7 @@
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import { html } from "/html.js";
-import { api, Offline } from "/api.js";
+import { Offline, api, describe } from "/api.js";
 import { linkProps } from "/router.js";
 import { queuePosition } from "/queue.js";
 
@@ -153,7 +153,7 @@ export function Reader({ driveId }) {
         setProblem(
           err instanceof Offline
             ? "No connection, and this document is not kept offline yet."
-            : err.detail || err.message
+            : describe(err)
         );
       });
     return () => {
@@ -186,7 +186,7 @@ export function Reader({ driveId }) {
         return task.promise;
       })
       .then((opened) => live && opened && setPdf(opened))
-      .catch((err) => live && setProblem(err.message || String(err)));
+      .catch((err) => live && setProblem(describe(err)));
     return () => {
       live = false;
       if (task) task.destroy();

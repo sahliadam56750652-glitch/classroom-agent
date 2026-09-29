@@ -14,7 +14,7 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
-import { api, Offline } from "/api.js";
+import { Offline, api, describe } from "/api.js";
 import { plural, relativeDay, sessionName } from "/format.js";
 import { linkProps } from "/router.js";
 
@@ -243,7 +243,7 @@ export function Now({ status }) {
       .catch((err) => {
         if (!live) return;
         if (err instanceof Offline) setOffline(true);
-        else setProblem(err.detail || err.message);
+        else setProblem(describe(err));
       });
     return () => {
       live = false;

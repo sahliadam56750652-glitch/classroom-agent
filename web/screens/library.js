@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
-import { api, Offline } from "/api.js";
+import { Offline, api, describe } from "/api.js";
 import { age, hasPassed, localTime, plural } from "/format.js";
 import { linkProps } from "/router.js";
 
@@ -28,7 +28,7 @@ export function Library({ course }) {
         setProblem(
           err instanceof Offline
             ? "No connection, and the library list is not kept offline."
-            : err.detail || err.message
+            : describe(err)
         );
       });
     return () => {
@@ -97,7 +97,7 @@ export function Deadlines() {
     api
       .get("/api/deadlines")
       .then((found) => live && setRows(found))
-      .catch((err) => live && setProblem(err.detail || err.message));
+      .catch((err) => live && setProblem(describe(err)));
     return () => {
       live = false;
     };
