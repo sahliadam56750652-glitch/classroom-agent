@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
+from ... import entries as entries_mod
 from ... import scope as scope_mod
 from ...db import store
 from ...sync import deadlines as deadlines_mod
@@ -58,6 +59,25 @@ def upcoming(
     # reshuffle between reads.
     found.sort(key=lambda value: (value.due_at is None, value.due_at or "", value.title))
     return [convert.deadline(value) for value in found]
+
+
+@router.get("/homework", response_model=list[schemas.HomeworkOut])
+def homework(
+    conn: Db,
+    config: Conf,
+    table: MaybeTable,
+    session: Session,
+    include_done: bool = Query(False),
+) -> list[schemas.HomeworkOut]:
+    """Classroom coursework with my submission state, and the tasks I entered.
+
+    One list from `entries.homework`, which `agent homework` prints too, so the
+    terminal and the screen cannot disagree about what is outstanding.
+    """
+    found = entries_mod.homework(
+        conn, sorted(scope_mod.local(config, table)), include_done=include_done
+    )
+    return [schemas.HomeworkOut(**value.__dict__) for value in found]
 
 
 @router.get("/events", response_model=list[schemas.EventOut])

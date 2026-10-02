@@ -366,3 +366,103 @@ def log_session(conn: sqlite3.Connection, plan: SessionPlan) -> int:
         kind=plan.kind,
         covered=plan.covered,
     )
+
+
+# ----------------------------------------------------------------------------
+# homework -- Classroom coursework and the tasks entered by hand, in one list
+# ----------------------------------------------------------------------------
+
+# Handed in, or handed back. The same set sync/deadlines.py uses to decide an
+# alert would be noise; RECLAIMED_BY_STUDENT is NOT here, because pulling work
+# back makes it outstanding again.
+DONE_SUBMISSIONS = frozenset({"TURNED_IN", "RETURNED"})
+
+
+@dataclass(frozen=True)
+class Homework:
+    """One thing I have to do, from Classroom or typed in by hand.
+
+    `kind` is "classroom" or "task", and it decides what can be done about it
+    here: a Classroom item can only be OPENED in Classroom (invariant 6 -- this
+    project never writes to Classroom, and turning work in is a write), and a
+    task can be marked done, because the row is mine.
+
+    `due_at` is the stored UTC instant and nothing else about time. No days
+    left, no severity: DESIGN.md forbids manufactured urgency.
+    """
+
+    kind: str
+    id: str
+    course_id: str
+    course_name: str
+    title: str
+    due_at: str | None
+    done: bool
+    link: str | None = None
+    # Classroom only.
+    submission_state: str | None = None
+    late: bool = False
+    grade: float | None = None
+    max_points: float | None = None
+    # Task only.
+    task_kind: str | None = None
+    done_at: str | None = None
+    notes: str | None = None
+
+
+def homework(
+    conn: sqlite3.Connection,
+    course_ids: list[str],
+    *,
+    include_done: bool = False,
+) -> list[Homework]:
+    """Everything due, Classroom and hand-entered, soonest first, undated last.
+
+    Coursework is read for `course_ids` (the caller passes `scope.local`).
+    Manual tasks are read whatever their course, for the reason
+    sync/deadlines.py gives: a task exists only because I typed it in against a
+    subject, so there is no allowlist for it to fall outside.
+
+    Undated items are included. Unlike the deadline list -- which only wants
+    what can cross a threshold -- this is the list of what I have to do, and
+    25 of 46 measured assignments carry no due date at all.
+    """
+    found: list[Homework] = []
+    for row in store.coursework_with_submissions(conn, course_ids):
+        state = row["submission_state"]
+        done = (state or "") in DONE_SUBMISSIONS
+        if done and not include_done:
+            continue
+        found.append(
+            Homework(
+                kind="classroom",
+                id=str(row["id"]),
+                course_id=str(row["course_id"]),
+                course_name=str(row["course_name"] or row["course_id"]),
+                title=str(row["title"] or "(untitled)"),
+                due_at=row["due_at"],
+                done=done,
+                link=row["submission_link"] or row["alternate_link"],
+                submission_state=state,
+                late=bool(row["late"]),
+                grade=row["assigned_grade"],
+                max_points=row["max_points"],
+            )
+        )
+    for row in store.manual_tasks(conn, include_done=include_done):
+        found.append(
+            Homework(
+                kind="task",
+                id=str(row["id"]),
+                course_id=str(row["course_id"]),
+                course_name=str(row["course_name"] or row["course_id"]),
+                title=str(row["title"]),
+                due_at=row["due_at"],
+                done=row["done_at"] is not None,
+                task_kind=str(row["kind"] or "other"),
+                done_at=row["done_at"],
+                notes=row["notes"],
+            )
+        )
+    found.sort(key=lambda value: (value.due_at is None, value.due_at or "", value.title, value.id))
+    return found

@@ -2225,6 +2225,35 @@ def get_manual_task(conn: sqlite3.Connection, task_id: int) -> sqlite3.Row | Non
     ).fetchone()
 
 
+def coursework_with_submissions(
+    conn: sqlite3.Connection, course_ids: Sequence[str]
+) -> list[sqlite3.Row]:
+    """Live coursework in these courses, each with my submission's state.
+
+    LEFT JOIN, because an assignment with no submission row is still mine to
+    do -- that is the not-started case. Soft-deleted coursework is left out: a
+    teacher who removed the assignment is not expecting it handed in.
+    """
+    if not course_ids:
+        return []
+    placeholders = ", ".join("?" for _ in course_ids)
+    return conn.execute(
+        f"""
+        SELECT cw.id, cw.course_id, cw.title, cw.due_at, cw.alternate_link,
+               cw.work_type, cw.max_points, c.name AS course_name,
+               s.state AS submission_state, s.late, s.assigned_grade,
+               s.alternate_link AS submission_link
+          FROM coursework cw
+          LEFT JOIN courses c ON c.id = cw.course_id
+          LEFT JOIN submissions s
+                 ON s.coursework_id = cw.id AND s.deleted_at IS NULL
+         WHERE cw.course_id IN ({placeholders})
+           AND cw.deleted_at IS NULL
+        """,
+        list(course_ids),
+    ).fetchall()
+
+
 def manual_tasks(
     conn: sqlite3.Connection,
     course_ids: Sequence[str] | None = None,

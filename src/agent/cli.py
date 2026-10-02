@@ -495,6 +495,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="report what would be recorded; write nothing",
     )
 
+    homework_parser = sub.add_parser(
+        "homework",
+        parents=[shared],
+        help="Classroom coursework and hand-entered tasks, in one list by due date",
+    )
+    homework_parser.add_argument(
+        "--all", action="store_true", dest="include_done",
+        help="include what is handed in or done",
+    )
+
     upload_parser = sub.add_parser(
         "upload",
         parents=[shared],
@@ -2364,6 +2374,59 @@ def _log_session(config: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+# What a submission state says, in words. Classroom's own vocabulary is shouty
+# and half of it means the same thing to me.
+SUBMISSION_WORDS = {
+    None: "not started",
+    "NEW": "not handed in",
+    "CREATED": "not handed in",
+    "RECLAIMED_BY_STUDENT": "taken back, not handed in",
+    "TURNED_IN": "handed in",
+    "RETURNED": "returned",
+}
+
+
+def cmd_homework(config: Config, args: argparse.Namespace) -> int:
+    """Everything due: Classroom coursework and hand-entered tasks, in one list.
+
+    Read-only. A Classroom item is handed in on Classroom; a task is marked done
+    with `agent tasks --done N`.
+    """
+    table, _ = scope_mod.load(config)
+    conn = store.open_db(config)
+    try:
+        found = entries.homework(
+            conn, sorted(scope_mod.local(config, table)), include_done=args.include_done
+        )
+    finally:
+        conn.close()
+
+    if not found:
+        print("Nothing outstanding.")
+        return 0
+
+    zone = composer.display_zone(config.timezone)
+    _print_table(
+        ["due", "subject", "what", "title", "state"],
+        [
+            [
+                _local_stamp(value.due_at, zone) or "no date",
+                value.course_name,
+                "classroom" if value.kind == "classroom" else f"task {value.id}",
+                value.title,
+                (
+                    SUBMISSION_WORDS.get(value.submission_state, value.submission_state or "")
+                    + (", late" if value.late else "")
+                )
+                if value.kind == "classroom"
+                else ("done" if value.done else "to do"),
+            ]
+            for value in found
+        ],
+    )
+    return 0
+
+
 def cmd_tasks(config: Config, args: argparse.Namespace) -> int:
     """Record something due, mark one done, or list what is outstanding.
 
@@ -3817,6 +3880,7 @@ COMMANDS = {
     "projects": cmd_projects,
     "sessions": cmd_sessions,
     "tasks": cmd_tasks,
+    "homework": cmd_homework,
     "subjects": cmd_subjects,
     "timetable": cmd_timetable,
     "gate": cmd_gate,

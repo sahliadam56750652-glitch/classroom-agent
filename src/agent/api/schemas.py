@@ -491,6 +491,31 @@ class QuizzesOut(BaseModel):
     attempts: list[PastAttemptOut] = Field(default_factory=list)
 
 
+class HomeworkOut(BaseModel):
+    """One thing to do. `due_at` is an instant and nothing else about time.
+
+    A Classroom item carries its submission state and a link; it cannot be
+    submitted from here, because invariant 6 means this project never writes to
+    Classroom. A task can be marked done, through POST /api/tasks/{id}/complete.
+    """
+
+    kind: str
+    id: str
+    course_id: str
+    course_name: str = ""
+    title: str
+    due_at: str | None = None
+    done: bool = False
+    link: str | None = None
+    submission_state: str | None = None
+    late: bool = False
+    grade: float | None = None
+    max_points: float | None = None
+    task_kind: str | None = None
+    done_at: str | None = None
+    notes: str | None = None
+
+
 # NextOut and StudyItemOut both reference DocumentOut before it is defined.
 NextOut.model_rebuild()
 StudyItemOut.model_rebuild()
