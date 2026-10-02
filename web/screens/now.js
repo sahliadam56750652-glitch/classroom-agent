@@ -15,10 +15,10 @@
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { Offline, api, describe } from "/api.js";
-import { plural, relativeDay, sessionName } from "/format.js";
+import { localTime, plural, relativeDay, sessionName, shortDate } from "/format.js";
 import { linkProps } from "/router.js";
 import { Icon } from "/icons.js";
-import { Problem, Skeleton, SubjectName } from "/ui.js";
+import { Card, Problem, Skeleton, SubjectName, useSubjectNames } from "/ui.js";
 import { QuizEntry } from "/screens/quiz.js";
 
 /**
@@ -81,7 +81,6 @@ function PageRuler({ windows, first }) {
 function Clear({ body }) {
   const session = body.next_session;
   return html`
-    <div class="screen now">
       <div class="card now-clear">
         <div class="card-body">
           <p class="t-lead">Nothing waiting.</p>
@@ -100,7 +99,6 @@ function Clear({ body }) {
               html`<p class="t-state">${body.silent_because || "Nothing scheduled."}</p>`}
         </div>
       </div>
-    </div>
   `;
 }
 
@@ -173,8 +171,6 @@ function Waiting({ body, onNext }) {
   ].filter(Boolean);
 
   return html`
-    <div class="screen now">
-      <div class="split">
         <article class="hero now-hero" aria-labelledby="now-title">
           <!-- The deficit. One subordinate line, above the item, and nowhere else. -->
           <p class="t-state deficit">
@@ -215,31 +211,34 @@ function Waiting({ body, onNext }) {
             onNext=${onNext}
           />
         </article>
-
-        <${Tomorrow} forDate=${body.for_date} />
-      </div>
-    </div>
   `;
 }
 
-const WIDE = "(min-width: 1024px)";
+/** Today's date, locally, as the timetable names a day. */
+function localToday() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+// How far ahead "due soon" looks. Four days: far enough to see the week's
+// shape on a Thursday, near enough that the list stays short. An instant on
+// each, never a countdown -- format.js has no timeUntil and must not.
+const DUE_DAYS = 4;
 
 /**
- * The day the pages are for, beside the hero on a wide screen.
- *
- * Sessions and nothing else: no counts, no standing, nothing that makes the
- * front door a dashboard (section 2). On a phone it is not fetched at all --
- * there the hero is the whole screen, and the timetable is one tab away.
+ * Today's sessions. A fact about the day, not about me: no counts, no standing
+ * (section 2 keeps the whole picture off the front door, and this is not it).
+ * A session that moved or was cancelled is shown, crossed out, with why.
  */
-function Tomorrow({ forDate }) {
+function TodaySessions() {
   const [day, setDay] = useState(null);
 
   useEffect(() => {
-    if (!matchMedia(WIDE).matches) return;
     let live = true;
-    const range = encodeURIComponent(forDate);
+    const today = localToday();
     api
-      .get(`/api/timetable?from=${range}&to=${range}`)
+      .get(`/api/timetable?from=${today}&to=${today}`)
       .then((found) => live && setDay((found.days || [])[0] || null))
       .catch(() => {
         // Context, not the answer. Without it the hero still stands alone.
@@ -247,14 +246,15 @@ function Tomorrow({ forDate }) {
     return () => {
       live = false;
     };
-  }, [forDate]);
+  }, []);
 
   if (!day || !(day.sessions.length || day.departed.length)) return null;
-  const when = relativeDay(forDate);
 
   return html`
-    <section class="section now-day" aria-label="The sessions these pages are for">
-      <h2 class="section-title">${when.charAt(0).toUpperCase() + when.slice(1)}</h2>
+    <section class="section today-part" aria-labelledby="today-sessions">
+      <h2 class="section-title" id="today-sessions">
+        Today<span class="t-meta today-date">${shortDate(day.date)}</span>
+      </h2>
       <ul class="list">
         ${day.sessions.map(
           (session) => html`<li key=${`${session.start}-${sessionName(session)}`}>
@@ -266,6 +266,55 @@ function Tomorrow({ forDate }) {
             <${SessionCard} session=${session} departed=${true} />
           </li>`
         )}
+      </ul>
+    </section>
+  `;
+}
+
+/**
+ * What is due in the next few days, soonest first, as the instants they are.
+ *
+ * Only what has not passed: a passed deadline is the one red in this app and it
+ * belongs on the Work screen, where it can be dealt with, not on the front door.
+ */
+function DueSoon() {
+  const names = useSubjectNames();
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .get("/api/deadlines")
+      .then((found) => live && setRows(found))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  if (!rows) return null;
+  const now = Date.now();
+  const until = now + DUE_DAYS * 86400000;
+  const soon = rows.filter((row) => {
+    const at = row.due_at ? Date.parse(row.due_at) : NaN;
+    return !row.done && at >= now && at <= until;
+  });
+  if (!soon.length) return null;
+
+  return html`
+    <section class="section today-part" aria-labelledby="today-due">
+      <h2 class="section-title" id="today-due">Due in the next ${DUE_DAYS} days</h2>
+      <ul class="list">
+        ${soon.map((row) => {
+          const subject = names[row.course_id] || "";
+          return html`<li key=${`${row.entity_type}-${row.entity_id}`}>
+            <${Card} to="/work" subject=${subject || null}>
+              ${subject ? html`<span class="t-meta"><${SubjectName} name=${subject} /></span>` : null}
+              <span class="t-body due-title">${row.title}</span>
+              <span class="t-meta num">${localTime(row.due_at)}${row.label ? ` · ${row.label}` : ""}</span>
+            </${Card}>
+          </li>`;
+        })}
       </ul>
     </section>
   `;
@@ -463,6 +512,8 @@ export function Now({ status }) {
 
   const asOf = body.__cachedAt;
 
+  // The one next action first and largest; then today's sessions, then what is
+  // due soon. Beside the hero at 1024px and above, below it on a phone.
   return html`
     ${asOf
       ? html`<p class="notice now-stale" role="status">
@@ -472,8 +523,18 @@ export function Now({ status }) {
           )}.`}
         </p>`
       : null}
-    ${body.waiting
-      ? html`<${Waiting} body=${body} onNext=${() => setRound((n) => n + 1)} />`
-      : html`<${Clear} body=${body} />`}
+    <div class="screen today">
+      <div class="split">
+        <div class="today-main">
+          ${body.waiting
+            ? html`<${Waiting} body=${body} onNext=${() => setRound((n) => n + 1)} />`
+            : html`<${Clear} body=${body} />`}
+        </div>
+        <div class="today-aside">
+          <${TodaySessions} />
+          <${DueSoon} />
+        </div>
+      </div>
+    </div>
   `;
 }

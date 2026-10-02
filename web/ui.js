@@ -18,6 +18,26 @@ export function ScreenHeader({ title, children }) {
   </header>`;
 }
 
+/** A screen's own parts, as links; the one this is marked. */
+export function SectionLinks({ links, here }) {
+  return html`<nav class="section-links" aria-label="Parts of this screen">
+    ${links.map(
+      ([to, label]) => html`<a
+        key=${to}
+        aria-current=${here === to ? "page" : null}
+        ...${linkProps(to)}
+      >${label}</a>`
+    )}
+  </nav>`;
+}
+
+/** Study's three parts, the same row on each of them. */
+export const STUDY_PARTS = [
+  ["/study", "Subjects"],
+  ["/quizzes", "Quizzes"],
+  ["/library", "Library"],
+];
+
 /** A subject's name with its colour beside it. The colour is never alone. */
 export function SubjectName({ name, class: extra = "" }) {
   return html`<span class=${`named ${extra}`} style=${subjectStyle(name)}>

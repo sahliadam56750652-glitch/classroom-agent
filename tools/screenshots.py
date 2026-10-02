@@ -38,6 +38,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
+sys.path.insert(0, str(REPO / "tools"))
 
 from PIL import Image  # noqa: E402  -- python-pptx already depends on Pillow
 
@@ -49,20 +50,52 @@ WIDTHS = {"390": (390, 844), "1440": (1440, 900)}
 BUSY_DAY = "2026-10-05"
 CLEAR_DAY = "2026-10-04"
 
+# `{net}` and `{attempt}` are study item and attempt ids, filled in once the
+# seed has made them. The quiz is taken LAST, because starting one changes what
+# the Study and Quizzes screens say about that lecture.
 SCREENS = [
     ("signin", "/signin", False),
-    ("now", f"/?date={BUSY_DAY}", True),
-    ("now-empty", f"/?date={CLEAR_DAY}", True),
-    ("subjects", "/subjects", True),
-    ("subject", "/subjects/Database", True),
+    ("today", f"/?date={BUSY_DAY}", True),
+    ("today-empty", f"/?date={CLEAR_DAY}", True),
+    ("study", "/study", True),
+    ("subject", "/study/Database", True),
+    ("subject-quiz", "/study/Computer%20Networks", True),
+    ("quizzes", "/quizzes", True),
+    ("quiz-result", "/quiz/attempt/{attempt}", True),
     ("timetable", "/timetable", True),
     ("library", "/library", True),
-    ("deadlines", "/deadlines", True),
+    ("work", "/work", True),
     ("projects", "/projects", True),
     ("add", "/add", True),
     ("status", "/status", True),
+    ("more", "/more", True),
     ("reader", "/read/d-db-ch4", True),
+    ("quiz", "/quiz/{net}", True),
 ]
+
+# The state DESIGN.md section 4 says to design first: 23:00, nothing done, a
+# lecture in the morning. Taken with the page's clock genuinely reading 23:xx --
+# its time zone set over DevTools (tools/cdp.py) to one where it is 23:00 right
+# now -- so the picture is of 23:00 and not a claim about it. Setting the clock
+# itself was tried and dropped: virtual time "advance" skips every idle moment
+# and the page's clock ran weeks ahead during the load.
+LATE = ("today-2300", f"/?date={BUSY_DAY}")
+
+
+def zone_at_23() -> str:
+    """A time zone whose local hour is 23 at this moment."""
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo, available_timezones
+
+    now = datetime.now(timezone.utc)
+    for name in sorted(available_timezones()):
+        if "/" in name and not name.startswith(("Etc/", "SystemV/")):
+            if now.astimezone(ZoneInfo(name)).hour == 23:
+                return name
+    return "Etc/GMT"
+
+
+IDS: dict[str, int] = {}
 
 CHROME = next(
     (
@@ -267,6 +300,15 @@ def seed(root: Path) -> Path:
     store.add_manual_task(conn, course_id="manual-calculus-iii",
                           title="Série 2 — double integrals", kind="exercise_sheet",
                           due_at="2026-10-09T22:59:00Z")
+    # One thing due in two days from whenever this runs, because Today lists what
+    # is due in the next four days of the REAL clock -- the only seed that is not
+    # a fixed date, and the only way Today's third section can be looked at.
+    from datetime import datetime, timedelta, timezone
+
+    soon = (datetime.now(timezone.utc) + timedelta(days=2)).replace(hour=21, minute=59, second=0)
+    store.add_manual_task(conn, course_id="manual-calculus-iii",
+                          title="Série 3 — line integrals", kind="exercise_sheet",
+                          due_at=soon.strftime("%Y-%m-%dT%H:%M:%SZ"))
     store.add_manual_task(conn, course_id="manual-algebra-iii",
                           title="Read chapter 3 before the tutorial", kind="reading")
 
@@ -288,9 +330,78 @@ def seed(root: Path) -> Path:
     store.add_adjustment(conn, applies_on="2026-10-07", kind="cancelled",
                          subject="Artificial Intelligence", course_id="c-ai",
                          session_start="10:15", reason="conference")
+    _seed_quiz(conn)
     conn.commit()
     conn.close()
     return data
+
+
+def _seed_quiz(conn) -> None:
+    """Networks' lecture 2: read, its questions written, sat once and missed.
+
+    And OS's lab 1 opened but not marked read, so a subject page shows the door
+    that asks for a quiz as well as the one that takes it.
+    """
+    import json as _json
+
+    from agent.db import store
+    from agent.gate import quiz as gate_quiz
+
+    net = conn.execute("SELECT id FROM study_items WHERE entity_id = 'p-net-l2'").fetchone()[0]
+    lab = conn.execute("SELECT id FROM study_items WHERE entity_id = 'p-os-lab1'").fetchone()[0]
+    conn.execute(
+        "UPDATE study_items SET state = 'reviewed', delivered_at = '2026-09-29T19:00:00Z', "
+        "reviewed_at = '2026-09-29T19:40:00Z' WHERE id = ?", (net,))
+    conn.execute(
+        "UPDATE study_items SET state = 'delivered', delivered_at = '2026-09-30T19:00:00Z' "
+        "WHERE id = ?", (lab,))
+
+    asked = [
+        ("Which layer frames bits into units a link can carry?",
+         ["The physical layer", "The link layer", "The network layer", "The transport layer"], 1,
+         "The link layer turns a bit stream into frames.", 4),
+        ("What does a CRC let a receiver do?",
+         ["Correct any error", "Detect most burst errors", "Encrypt the frame", "Route the frame"], 1,
+         "A cyclic redundancy check detects errors; it does not correct them.", 9),
+        ("Why does Ethernet need a minimum frame size?",
+         ["To fill the cable", "So a collision is seen before sending ends",
+          "To carry an IP header", "To align on 32 bits"], 1,
+         "A frame must last long enough for the sender to hear a collision.", 14),
+        ("What does a switch learn from incoming frames?",
+         ["Destination IP addresses", "Source MAC addresses and their ports",
+          "Routing tables", "Frame lengths"], 1,
+         "A switch fills its table from each frame's source address.", 18),
+        ("What is byte stuffing for?",
+         ["Compressing frames", "Keeping the flag byte out of the payload",
+          "Padding short frames", "Marking priority"], 1,
+         "Stuffing escapes any payload byte that looks like the frame delimiter.", 7),
+        ("What does ARP map?",
+         ["MAC to port", "IP address to MAC address", "Port to service", "Name to IP"], 1,
+         "ARP finds the link-layer address for an IP address on the same link.", 22),
+    ]
+    questions = [
+        {"question": q, "options": o, "correct": c, "explanation": e,
+         "source_file": "Lecture 2 — the link layer", "source_page": page}
+        for q, o, c, e, page in asked
+    ]
+    rows = store.study_item_sources(conn, "coursework_material", "p-net-l2")
+    fingerprint = gate_quiz.fingerprint_of(rows, 6)
+    store.save_questions(conn, item_id=net, source_hash=fingerprint, model="stub",
+                         questions=_json.dumps(questions))
+
+    generated = gate_quiz.cached_set(conn, net, fingerprint)
+    attempt = gate_quiz.Attempt(
+        attempt_id=0, item_id=net, questions=generated.questions,
+        # Four right, two missed: not a pass, and something to look up.
+        answers=[1, 1, 0, 1, 1, 3], flags=[False] * 6, index=6,
+        model="stub", source_hash=fingerprint, pass_ratio=0.75,
+        label="Lecture 2 — the link layer",
+    )
+    attempt.attempt_id = store.start_quiz_attempt(
+        conn, item_id=net, state=attempt.to_json(), now="2026-09-30T20:10:00Z")
+    gate_quiz.settle(conn, attempt, now="2026-09-30T20:16:00Z")
+    IDS["net"] = net
+    IDS["attempt"] = attempt.attempt_id
 
 
 PROBE = """<!DOCTYPE html><html><head><meta charset='utf-8'>
@@ -307,6 +418,34 @@ const q = new URLSearchParams(location.search);
   document.getElementById('f').src = q.get('p');
 })();
 </script></body></html>"""
+
+
+def capture_late(base: str, out: Path, name: str, path: str) -> None:
+    """The same capture, with the page's clock reading 23:00-something."""
+    from cdp import screenshot_at
+
+    for label, (width, height) in WIDTHS.items():
+        probe = REPO / "web" / "__shot.html"
+        probe.write_text(
+            PROBE.replace("__W__", str(width)).replace("__H__", str(height)),
+            encoding="utf-8",
+        )
+        raw = out / f".{name}-{label}.raw.png"
+        url = f"{base}/__shot.html?t={TOKEN}&p={urllib.request.quote(path, safe='/?=&')}"
+        try:
+            clock = screenshot_at(
+                CHROME, url, (max(width, 520), height), raw, timezone=zone_at_23(),
+            )
+        finally:
+            probe.unlink(missing_ok=True)
+        if clock is None or not raw.is_file():
+            print(f"  ! {name} at {label}px: no screenshot")
+            continue
+        with Image.open(raw) as image:
+            image.crop((0, 0, width, height)).save(out / f"{name}-{label}.png")
+        raw.unlink()
+        # The page's own word for the time, so the label is evidence.
+        print(f"  {name}-{label}.png  (the page said: {clock})")
 
 
 def capture(base: str, out: Path, name: str, path: str, signed_in: bool) -> None:
@@ -379,7 +518,9 @@ def main() -> int:
         for name, path, signed_in in SCREENS:
             if only and name not in only:
                 continue
-            capture(base, out, name, path, signed_in)
+            capture(base, out, name, path.format(**IDS), signed_in)
+        if not only or LATE[0] in only:
+            capture_late(base, out, *LATE)
     finally:
         server.kill()
         server.wait(timeout=10)

@@ -29,6 +29,7 @@ import { Add } from "/screens/add.js";
 import { More, SECONDARY } from "/screens/more.js";
 import { PastAttempt, Quiz, Quizzes } from "/screens/quiz.js";
 import { Icon } from "/icons.js";
+import { ScreenHeader, SectionLinks, STUDY_PARTS } from "/ui.js";
 import { linkProps, match, navigate, useRoute } from "/router.js";
 import { flushWhenOnline } from "/queue.js";
 
@@ -228,39 +229,77 @@ function Screen({ route, status, onSignOut }) {
 
 function pick(route, status, onSignOut) {
   const path = route.path;
-  const subject = match("/subjects/", path);
+  // Study. /subjects/... is the old address of a subject and still works, so a
+  // link saved before the redesign is not a dead end.
+  const subject = match("/study/", path) || match("/subjects/", path);
   if (subject) return ["subject", html`<${Subject} name=${subject} />`];
+  if (path === "/study" || path === "/subjects") return ["subjects", html`<${Subjects} />`];
   const past = match("/quiz/attempt/", path);
   if (past) return ["quiz", html`<${PastAttempt} attemptId=${past} />`];
   const quizItem = match("/quiz/", path);
   if (quizItem) return ["quiz", html`<${Quiz} itemId=${quizItem} />`];
   if (path === "/quizzes") return ["quizzes", html`<${Quizzes} />`];
-  if (path === "/subjects") return ["subjects", html`<${Subjects} />`];
   if (path === "/library")
-    return ["library", html`<${Library} course=${route.query.get("course")} />`];
-  if (path === "/deadlines") return ["deadlines", html`<${Deadlines} />`];
-  if (path === "/timetable") return ["timetable", html`<${Timetable} />`];
+    // Not yet redesigned itself, but it is part of Study, so it sits under
+    // Study's title and section links like the other two parts.
+    return [
+      "library-part",
+      html`<div class="screen">
+        <${ScreenHeader} title="Study" />
+        <${SectionLinks} links=${STUDY_PARTS} here="/library" />
+        <div class="legacy"><${Library} course=${route.query.get("course")} /></div>
+      </div>`,
+    ];
+  // Work. Not yet redesigned: the deadline list stands in for homework until
+  // the Work screens are built in the same system.
+  if (path === "/work" || path === "/deadlines") return ["deadlines", html`<${Deadlines} />`];
   if (path === "/projects") return ["projects", html`<${Projects} />`];
+  if (path === "/timetable") return ["timetable", html`<${Timetable} />`];
   if (path === "/add") return ["add", html`<${Add} />`];
   if (path === "/status") return ["status", html`<${Status} />`];
   if (path === "/more") return ["more", html`<${More} onSignOut=${onSignOut} />`];
   return ["now", html`<${Now} status=${status} />`];
 }
 
-// The four places a thumb reaches for; the rest are under More on a phone and
-// listed in full in the sidebar.
-const PRIMARY = [
-  ["/", "Now", "now"],
-  ["/subjects", "Subjects", "subjects"],
+// The five places, DESIGN.md section 8. Four here and More, which the tab bar
+// adds and the sidebar does not need.
+const PLACES = [
+  ["/", "Today", "now"],
+  ["/study", "Study", "subjects"],
+  ["/work", "Work", "projects"],
   ["/timetable", "Timetable", "timetable"],
-  ["/library", "Library", "library"],
 ];
 
-/** Which top-level place a path belongs to, so a subject page lights Subjects. */
+// Each place's own parts, listed under it in the sidebar and as section links
+// on the screen itself.
+const PARTS = {
+  "/study": [
+    ["/quizzes", "Quizzes", "quiz"],
+    ["/library", "Library", "library"],
+  ],
+  "/work": [["/projects", "Projects", "projects"]],
+};
+
+/** Which of the five places a path belongs to, so a subject page lights Study. */
 function placeOf(path) {
-  if (path.startsWith("/subjects")) return "/subjects";
-  if (path.startsWith("/library") || path.startsWith("/items")) return "/library";
+  if (
+    path.startsWith("/study") ||
+    path.startsWith("/subjects") ||
+    path.startsWith("/quiz") ||
+    path.startsWith("/library")
+  )
+    return "/study";
+  if (path === "/work" || path.startsWith("/projects") || path === "/deadlines") return "/work";
+  if (path === "/timetable") return "/timetable";
+  if (path === "/") return "/";
+  return "/more";
+}
+
+/** The exact destination a path is, for the sidebar's finer marking. */
+function partOf(path) {
   if (path.startsWith("/quiz")) return "/quizzes";
+  if (path.startsWith("/subjects") || path.startsWith("/study")) return "/study";
+  if (path === "/deadlines") return "/work";
   return path;
 }
 
@@ -271,33 +310,31 @@ function placeOf(path) {
  */
 function TabBar({ here }) {
   const place = placeOf(here);
-  const inMore = place === "/more" || SECONDARY.some(([to]) => to === place);
-  const tabs = [...PRIMARY, ["/more", "More", "more"]];
+  const tabs = [...PLACES, ["/more", "More", "more"]];
   return html`
     <nav class="tabbar" aria-label="Places">
-      ${tabs.map(([to, label, icon]) => {
-        const current = to === "/more" ? inMore : place === to;
-        return html`<a
+      ${tabs.map(
+        ([to, label, icon]) => html`<a
           key=${to}
           class="tab"
-          aria-current=${current ? "page" : null}
+          aria-current=${place === to ? "page" : null}
           ...${linkProps(to)}
         >
           <${Icon} name=${icon} />
           <span>${label}</span>
-        </a>`;
-      })}
+        </a>`
+      )}
     </nav>
   `;
 }
 
 /** The sidebar, at 1024px and above: every destination, and Sign out. */
 function Sidebar({ here, onSignOut }) {
-  const place = placeOf(here);
-  const link = ([to, label, icon]) => html`<a
+  const exact = partOf(here);
+  const link = ([to, label, icon], sub = false) => html`<a
     key=${to}
-    class="side-link"
-    aria-current=${place === to ? "page" : null}
+    class=${`side-link ${sub ? "side-sub" : ""}`}
+    aria-current=${exact === to ? "page" : null}
     ...${linkProps(to)}
   >
     <${Icon} name=${icon} />
@@ -306,8 +343,12 @@ function Sidebar({ here, onSignOut }) {
   return html`
     <nav class="sidebar" aria-label="All places">
       <p class="sidebar-name">classroom-agent</p>
-      <div class="sidebar-group">${PRIMARY.map(link)}</div>
-      <div class="sidebar-group">${SECONDARY.map(link)}</div>
+      <div class="sidebar-group">
+        ${PLACES.map(
+          (place) => html`${link(place)}${(PARTS[place[0]] || []).map((part) => link(part, true))}`
+        )}
+      </div>
+      <div class="sidebar-group">${SECONDARY.map((entry) => link(entry))}</div>
       <div class="sidebar-foot">
         <button class="side-link" type="button" onClick=${onSignOut}>
           <${Icon} name="signout" />

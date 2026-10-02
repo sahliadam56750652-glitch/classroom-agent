@@ -3464,6 +3464,9 @@ def _mount_client(app) -> None:
     mimetypes.add_type("text/javascript", ".mjs")
     mimetypes.add_type("text/javascript", ".js")
     mimetypes.add_type("application/manifest+json", ".webmanifest")
+    # Windows' registry often has no entry for it, and a font served as
+    # application/octet-stream is refused by some browsers outright.
+    mimetypes.add_type("font/woff2", ".woff2")
 
     index = WEB_DIR / "index.html"
 

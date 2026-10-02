@@ -723,11 +723,10 @@ def test_no_progress_bar_for_a_subject(subjects):
 @chrome_only
 def test_the_whole_picture_is_one_tap_away(busy):
     """Section 2: reachable, and never the front door."""
-    assert "Subjects" in busy["text"]
-    # Four places a thumb reaches, the rest under More -- and never a count on
-    # any of them, which is the badge section 7 forbids.
-    for place in ("Now", "Timetable", "Library", "More"):
-        assert place in busy["text"]
+    # The five places of DESIGN.md section 8 -- and never a count on any of
+    # them, which is the badge section 7 forbids.
+    for place in ("Today", "Study", "Work", "Timetable", "More"):
+        assert place in busy["text"], place
     assert "Counted" not in busy["text"]
     # The navigation comes AFTER the content in the document: the next action
     # is what a screen reader, and a slow first paint, reach first.
@@ -903,7 +902,7 @@ def test_a_401_mid_use_routes_to_signin(served, tmp_path_factory):
         path="/",
         steps="""
           await fetch('/api/session', {method: 'DELETE', credentials: 'same-origin'});
-          const link = d().querySelector('a[href="/subjects"]');
+          const link = d().querySelector('a[href="/study"]');
           if (link) link.click();
           await sleep(2500);
         """,
@@ -996,3 +995,16 @@ def test_a_finished_quiz_shows_counts_and_links_to_the_page(served, tmp_path_fac
     assert "What you missed" in text
     assert "Open page" in text
     assert "/read/d-quiz?page=" in found["html"]
+
+
+@chrome_only
+def test_study_holds_subjects_quizzes_and_library(served, tmp_path_factory):
+    """DESIGN.md section 8: Study's three parts, a row of links under its title."""
+    base, _ = served
+    found = render(base, tmp_path_factory.mktemp("study"), path="/study")
+    html_out = found["html"]
+    for part in ('href="/study"', 'href="/quizzes"', 'href="/library"'):
+        assert part in html_out, part
+    assert "Database" in found["text"]
+    assert "%" not in found["text"]
+    assert found["scroll"] <= found["client"]

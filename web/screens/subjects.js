@@ -22,8 +22,12 @@ import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { Offline, api, describe } from "/api.js";
 import { age, plural, relativeDay } from "/format.js";
+import { subjectStyle as subjectStyleOf } from "/subject-color.js";
 import { linkProps } from "/router.js";
-import { Card, Problem, ScreenHeader, Skeleton, SubjectName } from "/ui.js";
+import { Card, Problem, ScreenHeader, SectionLinks, Skeleton, STUDY_PARTS, SubjectName } from "/ui.js";
+import { QuizEntry } from "/screens/quiz.js";
+import { Icon } from "/icons.js";
+import { navigate } from "/router.js";
 
 // What each state says, and whether there is anything to do about it. The
 // wording is the client's half of `messages._subject_line`; the classification
@@ -87,6 +91,24 @@ function nextSessions(timetable) {
   return next;
 }
 
+/** Rows grouped by the date of their next session, in order; "~" is no session. */
+function byDay(rows, next) {
+  const groups = [];
+  for (const row of rows) {
+    const day = next[row.name] ? next[row.name].date : "~";
+    const last = groups[groups.length - 1];
+    if (last && last[0] === day) last[1].push(row);
+    else groups.push([day, [row]]);
+  }
+  return groups;
+}
+
+function dayHeading(day) {
+  if (day === "~") return "No session in the next two weeks";
+  const said = relativeDay(day);
+  return said.charAt(0).toUpperCase() + said.slice(1);
+}
+
 function order(rows, next) {
   const key = (row) => {
     const found = next[row.name];
@@ -106,7 +128,7 @@ function order(rows, next) {
 function Standing({ subject, next }) {
   const item = subject.next_item;
   const meta = [
-    next ? `Next session ${when(next)}` : "",
+    next ? `${kindOf(next.session)} at ${next.start}` : "",
     subject.state === "behind" && subject.oldest_posted_at
       ? `oldest posted ${age(subject.oldest_posted_at)}`
       : "",
@@ -114,7 +136,7 @@ function Standing({ subject, next }) {
 
   return html`<li class="subject">
     <${Card}
-      to=${`/subjects/${encodeURIComponent(subject.name)}`}
+      to=${`/study/${encodeURIComponent(subject.name)}`}
       subject=${subject.name}
     >
       <span class="t-lead"><${SubjectName} name=${subject.name} /></span>
@@ -137,7 +159,7 @@ function Inactive({ rows }) {
     <ul class="inactive-list">
       ${rows.map(
         (row) => html`<li key=${row.name}>
-          <a class="inactive-row" ...${linkProps(`/subjects/${encodeURIComponent(row.name)}`)}>
+          <a class="inactive-row" ...${linkProps(`/study/${encodeURIComponent(row.name)}`)}>
             <${SubjectName} name=${row.name} />
             <span class="t-meta">${standing(row)}</span>
           </a>
@@ -187,20 +209,28 @@ export function Subjects() {
 
   return html`
     <div class="screen">
-      <${ScreenHeader} title="Subjects">
+      <${ScreenHeader} title="Study">
         ${behind.length
           ? `${plural(behind.length, "subject")} with something unreviewed, ` +
             `${plural(
               behind.reduce((sum, row) => sum + row.unreviewed, 0),
               "item"
-            )} in total. In the order of their next session.`
+            )} in total.`
           : "Nothing unreviewed in any gated subject."}
       </${ScreenHeader}>
-      <ul class="grid subjects">
-        ${active.map(
-          (row) => html`<${Standing} key=${row.name} subject=${row} next=${next[row.name]} />`
+      <${SectionLinks} links=${STUDY_PARTS} here="/study" />
+      <div class="study-days">
+        ${byDay(active, next).map(
+          ([day, rows]) => html`<section class="day-group" key=${day} aria-label=${dayHeading(day)}>
+            <h2 class="day-heading">${dayHeading(day)}</h2>
+            <ul class="grid subjects">
+              ${rows.map(
+                (row) => html`<${Standing} key=${row.name} subject=${row} next=${next[row.name]} />`
+              )}
+            </ul>
+          </section>`
         )}
-      </ul>
+      </div>
       <${Inactive} rows=${inactive} />
     </div>
   `;
@@ -224,16 +254,85 @@ function kindOf(session) {
   return { lec: "lecture", tut: "tutorial", lab: "lab" }[kind] || kind;
 }
 
+/** What a study item's state means, in words. */
+const ITEM_STATE = {
+  pending: "not opened yet",
+  delivered: "opened, not marked read",
+  reviewed: "read, not verified",
+  verified: "verified",
+  skipped: "skipped",
+};
+
+/**
+ * One post of this subject's: what it is, where I am with it, and the doors.
+ *
+ * Opening a post fetches its files on the tap rather than up front: a subject
+ * can hold forty posts, and asking for forty file lists to draw forty buttons
+ * would be forty requests for a screen I mostly scroll past.
+ */
+function Post({ post, subject }) {
+  const [problem, setProblem] = useState("");
+  const state = post.study_item_state;
+
+  async function open() {
+    setProblem("");
+    try {
+      const found = await api.get(`/api/study-items/${post.study_item_id}`);
+      const file = (found.files || []).find((f) => f.readable);
+      if (file) navigate(`/read/${encodeURIComponent(file.drive_id)}`);
+      else setProblem("Nothing readable is held for this post yet.");
+    } catch (err) {
+      setProblem(describe(err));
+    }
+  }
+
+  const meta = [
+    plural(post.pages, "page"),
+    post.unread ? `${post.unread} not transcribed` : "",
+    post.creation_time ? `posted ${age(post.creation_time)}` : "",
+  ].filter(Boolean);
+
+  return html`<li>
+    <div class="card has-subject post-card" style=${subjectStyleOf(subject)}>
+      <div class="card-body">
+        <span class="t-lead">${post.title}</span>
+        ${state ? html`<span class="t-state">${ITEM_STATE[state] || state}</span>` : null}
+        <span class="t-meta num">${meta.join(" · ")}</span>
+        <div class="post-doors">
+          ${post.study_item_id
+            ? html`<button class="button quiet-button" type="button" onClick=${open}>
+                <${Icon} name="document" /> Open
+              </button>`
+            : null}
+          ${state === "delivered" || state === "reviewed"
+            ? html`<${QuizEntry} itemId=${post.study_item_id} compact=${true} />`
+            : null}
+        </div>
+        ${problem ? html`<p class="t-meta">${problem}</p>` : null}
+      </div>
+    </div>
+  </li>`;
+}
+
 export function Subject({ name }) {
   const [subject, setSubject] = useState(null);
   const [sessions, setSessions] = useState(null);
+  const [posts, setPosts] = useState(null);
   const [problem, setProblem] = useState("");
 
   useEffect(() => {
     let live = true;
     api
       .get(`/api/subjects/${encodeURIComponent(name)}`)
-      .then((found) => live && setSubject(found))
+      .then((found) => {
+        if (!live) return;
+        setSubject(found);
+        if (!found.course_id) return setPosts([]);
+        api
+          .get(`/api/library?course=${encodeURIComponent(found.course_id)}`)
+          .then((rows) => live && setPosts(rows))
+          .catch(() => live && setPosts([]));
+      })
       .catch((err) => live && setProblem(describe(err)));
     api
       .get("/api/timetable")
@@ -247,17 +346,16 @@ export function Subject({ name }) {
   if (problem) {
     return html`<div class="screen">
       <${Problem}>${problem}</${Problem}>
-      <p><a class="button quiet-button" ...${linkProps("/subjects")}>All subjects</a></p>
+      <p><a class="button quiet-button" ...${linkProps("/study")}>All subjects</a></p>
     </div>`;
   }
   if (!subject) return html`<div class="screen"><${Skeleton} rows=${3} /></div>`;
 
-  const item = subject.next_item;
 
   return html`
     <div class="screen subject-page">
       <header class="screen-header">
-        <a class="back-link t-meta" ...${linkProps("/subjects")}>Subjects</a>
+        <a class="back-link t-meta" ...${linkProps("/study")}>Study</a>
         <h1 class="t-title"><${SubjectName} name=${subject.name} /></h1>
         <p class="t-state">${standing(subject)}</p>
       </header>
@@ -278,28 +376,19 @@ export function Subject({ name }) {
                         <dd>${age(subject.oldest_posted_at)}</dd>`
                     : null}
                 </dl>
-                ${item
-                  ? html`<div class="section">
-                      <h2 class="section-title">Next</h2>
-                      <${Card} subject=${subject.name}>
-                        <span class="t-lead">${item.label}</span>
-                        ${item.pages
-                          ? html`<span class="t-meta">${plural(item.pages, "page")}</span>`
-                          : null}
-                      </${Card}>
-                    </div>`
-                  : null}
               `
             : null}
 
-          ${subject.course_id
-            ? html`<${Card}
-                to=${`/library?course=${encodeURIComponent(subject.course_id)}`}
-              >
-                <span class="t-lead">Material held for this subject</span>
-                <span class="t-meta">Every post and file this install has for it.</span>
-              </${Card}>`
-            : null}
+          <section class="section">
+            <h2 class="section-title">Material</h2>
+            ${posts === null
+              ? html`<${Skeleton} rows=${2} />`
+              : posts.length
+              ? html`<ul class="list">
+                  ${posts.map((post) => html`<${Post} key=${post.entity_id} post=${post} subject=${subject.name} />`)}
+                </ul>`
+              : html`<p class="t-state">Nothing held for this subject yet.</p>`}
+          </section>
         </div>
 
         ${sessions && sessions.length

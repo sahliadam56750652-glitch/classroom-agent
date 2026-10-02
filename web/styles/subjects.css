@@ -128,3 +128,32 @@
   min-width: 8.5em;
   color: var(--ink-2);
 }
+
+/* Study: subjects under the day of their next session. */
+.study-days {
+  display: flex;
+  flex-direction: column;
+}
+
+/* One post on a subject's page, with its doors. */
+.post-card .card-body {
+  gap: var(--s1);
+}
+
+.post-doors {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s4);
+  margin-top: var(--s2);
+}
+
+.post-doors > .button.quiet-button {
+  margin-left: calc(var(--s3) * -1);
+}
+
+.post-doors .quiz-entry {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+}

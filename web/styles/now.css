@@ -72,16 +72,28 @@
   padding: var(--s5);
 }
 
-/* Tomorrow, beside the hero. Only on a wide screen: see screens/now.js. */
-.now-day {
-  display: none;
+/* Today's sessions and what is due, beside the hero on a wide screen and below
+   it on a phone. */
+.today-aside {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s6);
 }
 
 @media (min-width: 1024px) {
-  .now-day {
-    display: flex;
+  .today-aside {
     padding-top: var(--s2);
   }
+}
+
+.today-date {
+  margin-left: var(--s2);
+  font-weight: 400;
+}
+
+.due-title {
+  font-weight: 500;
+  overflow-wrap: anywhere;
 }
 
 .now-session {
@@ -137,6 +149,15 @@
 
 .now-answers .button {
   padding: 0 var(--s3);
+}
+
+/* On a narrow phone the two labels need every pixel to stay on one line, and
+   the words are what say what each one records -- so the icons go, not the
+   words, and the two stay side by side at the same size. */
+@media (max-width: 440px) {
+  .now-answers .button svg {
+    display: none;
+  }
 }
 
 .now-reason-toggle {

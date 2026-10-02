@@ -25,7 +25,7 @@ import { api, describe } from "/api.js";
 import { linkProps, navigate } from "/router.js";
 import { Icon } from "/icons.js";
 import { localTime, plural } from "/format.js";
-import { Card, Problem, ScreenHeader, Skeleton, SubjectName, useSubjectNames } from "/ui.js";
+import { Card, Problem, ScreenHeader, SectionLinks, Skeleton, STUDY_PARTS, SubjectName, useSubjectNames } from "/ui.js";
 
 const LETTERS = ["A", "B", "C", "D"];
 
@@ -358,9 +358,10 @@ export function Quizzes() {
   if (!body) return html`<div class="screen"><${Skeleton} rows=${4} /></div>`;
 
   return html`<div class="screen">
-    <${ScreenHeader} title="Quizzes">
+    <${ScreenHeader} title="Study">
       Lectures read and not yet verified, and every quiz already sat.
     </${ScreenHeader}>
+    <${SectionLinks} links=${STUDY_PARTS} here="/quizzes" />
 
     <section class="section">
       <h2 class="section-title">Ready to sit</h2>

@@ -159,15 +159,28 @@ def test_nothing_is_loaded_from_a_third_party_origin():
     assert not offenders, offenders
 
 
-def test_fonts_are_a_system_stack():
-    """DESIGN.md section 6 asks for a system stack at a real reading size.
+def test_the_font_is_self_hosted_precached_and_never_waited_for():
+    """DESIGN.md section 8: one face, from web/fonts/, offline, swapped in.
 
-    A web font is a round-trip before text paints, which is the opposite of what
-    a reader opened at 23:00 on mobile data needs.
+    Every @font-face source is a local path that exists and is in the service
+    worker's precache -- so the app still renders in its own face with the radio
+    off -- and every one swaps, so nothing waits for a font at 23:00 on mobile
+    data. The system stack stays behind it as the fallback.
     """
+    from agent.api import contract as contract_mod
+
     css = (WEB / "app.css").read_text(encoding="utf-8")
-    assert "@font-face" not in css
-    assert "-apple-system" in css
+    faces = re.findall(r"@font-face\s*\{(.*?)\}", css, re.S)
+    assert faces, "no @font-face at all"
+    precached = set(contract_mod.shell_files(WEB))
+    for face in faces:
+        assert "font-display: swap" in face, face
+        for url in re.findall(r'url\("([^"]+)"\)', face):
+            assert url.startswith("/fonts/"), url
+            assert (WEB / url.lstrip("/")).is_file(), url
+            assert url in precached, f"{url} is not precached"
+    assert "-apple-system" in css, "the system stack is the fallback"
+    assert (WEB / "fonts" / "OFL.txt").is_file(), "the licence travels with the font"
 
 
 def test_the_body_floor_is_seventeen_pixels():

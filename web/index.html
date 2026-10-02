@@ -15,6 +15,9 @@
 <meta name="theme-color" content="#0f1216">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icon-192.png">
+<!-- The Latin subset, asked for before the stylesheet asks, so the swap from the
+     system stack happens on the first paint rather than a moment after it. -->
+<link rel="preload" href="/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/app.css">
 <!-- One stylesheet per screen, so one screen's redesign reverts on its own. -->
 <link rel="stylesheet" href="/styles/legacy.css">

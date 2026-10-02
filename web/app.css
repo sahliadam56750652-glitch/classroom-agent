@@ -22,6 +22,32 @@
   the page at 14:00 -- a night mode would be the app deciding I am in trouble.
 */
 
+/* The one face. Self-hosted and precached (DESIGN.md section 8), and swapped
+   in over the system stack so text never waits for it. Two subsets, so a page
+   in English loads 34 KB and a French accent pulls the other 19 only if it
+   appears. */
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("/fonts/atkinson-next-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("/fonts/atkinson-next-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 :root {
   color-scheme: dark;
 
@@ -98,8 +124,8 @@ body {
   margin: 0;
   background: var(--ground);
   color: var(--ink);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+  font-family: "Atkinson Hyperlegible Next", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   /* The floor for anything read as prose: this text is read tired. */
   font-size: 17px;
   line-height: 1.55;
@@ -424,6 +450,17 @@ textarea {
   cursor: pointer;
 }
 
+/* A place's own parts, under it. */
+.side-link.side-sub {
+  min-height: 40px;
+  padding-left: calc(var(--s3) + 32px);
+  font-size: 15px;
+}
+
+.side-link.side-sub svg {
+  display: none;
+}
+
 .side-link svg {
   flex: none;
   width: 20px;
@@ -460,6 +497,8 @@ textarea {
 }
 
 .grid {
+  list-style: none;
+  padding: 0;
   display: grid;
   gap: var(--s3);
   grid-template-columns: minmax(0, 1fr);
@@ -809,4 +848,59 @@ button.card:focus-visible {
 
 .signin-card .button {
   width: 100%;
+}
+
+/* ---------------------------------------------------------- section links
+   A screen's own parts, as a row of links under its title. */
+
+.section-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s5);
+  border-bottom: 1px solid var(--line);
+  margin-top: var(--s2);
+}
+
+.section-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--ink-2);
+  text-decoration: none;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.section-links a:hover {
+  color: var(--ink);
+}
+
+.section-links a[aria-current="page"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+/* -------------------------------------------------------------- day group
+   A heading naming a day, over what belongs to it. */
+
+.day-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.day-group + .day-group {
+  margin-top: var(--s5);
+}
+
+.day-heading {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.day-heading .t-meta {
+  font-weight: 400;
+  margin-left: var(--s2);
 }

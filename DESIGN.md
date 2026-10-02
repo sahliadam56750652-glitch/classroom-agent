@@ -216,8 +216,11 @@ product; everything else is navigation.
   screenshots and photographed boards — which is precisely the content the vision
   OCR exists to preserve, and losing it visually after paying to read it would be
   absurd.
-- **The app's own type is a system stack at a real reading size** — 17px body
-  floor, generous line height, no thin weights. This text is read tired.
+- **The app's own type is a legibility face at a real reading size** — 17px
+  body floor, generous line height, no thin weights. This text is read tired.
+  *(Amended 2026-10-02: was "a system stack". Which face is a question of how the
+  app looks, which section 8 owns; what this line protects -- size, line height,
+  weight, and text that paints before the font arrives -- is unchanged.)*
 - **On scroll, the chrome goes.** One element persists: position within the
   window (`34 / 42`). No floating action button, no toolbar, no toast, no
   animation over 150ms, no page-turn effect.
@@ -297,11 +300,19 @@ them from `app.css` so a token cannot drift below AA unnoticed.
 
 ### Type
 
-The system stack, per section 6 — `-apple-system`, Segoe UI, Roboto — because it
-is already on the device, costs nothing on mobile data at 23:00, and is a real
-reading face on every platform this runs on. Hierarchy comes from size, weight
-and colour, not from a second family. Whether a self-hosted display face for the
-few headline elements would earn its bytes is an open question in `PLAN.md`.
+**Atkinson Hyperlegible Next**, one family for everything, self-hosted in
+`web/fonts/` (variable weight, Latin and Latin-Extended, 53 KB together, OFL)
+and precached by the service worker so it works offline from the second open.
+`font-display: swap` over the system stack, so text paints at once on the first
+load and nothing waits for a font at 23:00 on mobile data.
+
+Chosen for what it was made for rather than for its looks: the Braille
+Institute drew it for readers with low vision, and its letterforms are built to
+be told apart -- `l I 1`, `0 O`, `rn m` -- which is what code screenshots,
+complexity expressions and lecture titles like "TP3 : Graphes" need from a face
+read tired. It is also not the default every other app reaches for, which the
+first screenshots made obvious was costing this one an identity. Hierarchy comes
+from size, weight and colour, not from a second family.
 
 | role | size / line | weight | colour | used for |
 |---|---|---|---|---|
@@ -380,12 +391,28 @@ anything. `prefers-reduced-motion` turns all of it off.
 
 ### Layout
 
-Below 1024px: one column, and a tab bar at the bottom within reach of a thumb —
-Now, Subjects, Timetable, Library, More — with no counts on it (section 7: no
-badge that counts what I have not done). At 1024px and above: a sidebar with
-every destination, and the width used — two columns wherever the content has two
-parts. Content never exceeds 72 characters a line. The reader has no tab bar and
-no sidebar: it owns the screen, per section 6.
+Five places, the same at every width:
+
+| place | holds |
+|---|---|
+| Today | the one next action (sections 2 and 4), then today's sessions, then what is due in the next few days |
+| Study | subjects in the order of their next session; a subject's material, items and quizzes; Quizzes; Library |
+| Work | homework (Classroom and hand-entered) and projects |
+| Timetable | the week, and recording a moved or cancelled session |
+| More | add, status, sign out |
+
+Below 1024px: one column, and a tab bar at the bottom within reach of a thumb
+with exactly those five, and no counts on it (section 7: no badge that counts
+what I have not done). At 1024px and above: a sidebar with every destination,
+and the width used — two columns wherever the content has two parts, never a
+phone column stranded in a wide window. Content never exceeds 72 characters a
+line. The reader has no tab bar and no sidebar: it owns the screen, per
+section 6.
+
+Study's three parts -- Subjects, Quizzes, Library -- are a row of links under its
+title, the current one marked. Subjects with a session coming are grouped by
+the day of it ("Tomorrow", "Thursday 8 Oct", "Later"), because the order is the
+point and a heading per day makes the order readable at a glance.
 
 ### Components
 
@@ -398,6 +425,9 @@ no sidebar: it owns the screen, per section 6.
 | pip / edge | the subject's colour, never alone |
 | notice | a neutral block that states a fact: not transcribed, offline, a problem |
 | fact list | label and value, tabular numbers, nothing summarised |
+| section links | a screen's own parts, as a row of links; the current one has the accent underline |
+| day group | a heading naming a day, over the cards that belong to it |
+| quiz option | a whole row per option, 56px, its letter in a square; never coloured right or wrong while the quiz is open |
 | skeleton | static blocks in the shape of what is loading |
 | button | primary (accent fill), secondary (edge outline), quiet (text) — all 44px |
 | field | a visible label above a 44px input; an error beside it, in words |

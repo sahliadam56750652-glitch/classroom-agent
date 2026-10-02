@@ -1273,8 +1273,15 @@ semester's scope.
   write scope requested because the project means to write. Invariant 6 keeps
   exactly one exception, and it keeps the one it was always going to have.
 
-- **A self-hosted display face, or the system stack everywhere.** *Raised by the
-  5c visual redesign; DESIGN.md's side taken, recommendation below.*
+- ~~**A self-hosted display face, or the system stack everywhere.**~~ **Closed
+  2026-10-02: one self-hosted face, everywhere.** The redesign brief settled the
+  precedence that made this open -- DESIGN.md decides what the app may say, the
+  design skills decide how it looks -- and a typeface is how. Atkinson
+  Hyperlegible Next, 53 KB in `web/fonts/`, precached, `font-display: swap` over
+  the system stack so nothing waits for it. DESIGN.md sections 6 and 8 record the
+  amendment and why this face. The reasoning below is the record of the question.
+
+  *Raised by the 5c visual redesign; DESIGN.md's side taken, recommendation below.*
 
   The two design skills the redesign was built with both reach for a chosen
   typeface -- one recommends Inter, the other argues that type carries a page's
