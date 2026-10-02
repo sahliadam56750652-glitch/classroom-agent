@@ -1,0 +1,144 @@
+/*
+  Work: homework and projects together, and one project's checklist.
+
+  The only colour here that is not a subject's is --passed, on a due date that
+  has already gone and is not handed in. Nothing escalates before then.
+*/
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+
+.homework-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  margin-bottom: var(--s1);
+}
+
+.homework-title {
+  overflow-wrap: anywhere;
+}
+
+.homework-doors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-top: var(--s2);
+}
+
+.homework-doors .quiet-button:first-child {
+  margin-left: calc(var(--s3) * -1);
+}
+
+.homework-doors .secondary-button {
+  min-height: 44px;
+}
+
+/* A deadline already gone: the one red in the app. */
+.passed,
+.passed .time {
+  color: var(--passed);
+}
+
+.figure.passed {
+  border-color: color-mix(in oklab, var(--passed) 40%, var(--line));
+}
+
+/* ------------------------------------------------------------- the checklist */
+
+.checklist {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  width: 100%;
+  min-height: 56px;
+  padding: var(--s3) var(--s4);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  color: var(--ink);
+  font-size: 17px;
+  text-align: left;
+  cursor: pointer;
+  transition: transform var(--t-press) var(--ease), background var(--t-choose) var(--ease);
+}
+
+.check-row:active:not(:disabled) {
+  transform: scale(0.99);
+}
+
+.check-row:disabled {
+  cursor: default;
+}
+
+.check-box {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 2px solid var(--edge);
+  border-radius: 8px;
+  transition: background var(--t-choose) var(--ease), border-color var(--t-choose) var(--ease);
+}
+
+.check-box svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.4;
+}
+
+.check-row.done {
+  background: var(--subject-tint);
+}
+
+.check-row.done .check-box {
+  background: var(--subject);
+  border-color: var(--subject);
+  color: var(--card);
+}
+
+.check-row.done .check-title {
+  color: var(--ink-2);
+}
+
+.add-step {
+  display: flex;
+  gap: var(--s2);
+  align-items: flex-end;
+}
+
+.add-step-field {
+  flex: 1;
+}
+
+.plain-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  color: var(--ink-2);
+}
+
+.close-project {
+  align-self: flex-start;
+}
+
+.project-page .subject-band .chip {
+  margin-top: var(--s1);
+}

@@ -826,15 +826,32 @@ def add_screen(served, tmp_path_factory):
 def test_the_add_screen_offers_the_three_hand_entries(add_screen):
     """Phase 6's point: a third of my week has no Classroom at all."""
     text = add_screen["text"]
-    assert "Upload a file" in text
+    assert "Upload a board or a handout" in text
     assert "Record a task" in text
     assert "Log a session" in text
+    assert "Start a project" in text
+
+
+@chrome_only
+def test_the_camera_is_one_tap_away_with_the_gallery_beside_it(add_screen):
+    """For the subjects with no Classroom, a photographed board is how material
+    arrives. The first door opens the back camera directly; the second takes a
+    photo from the gallery or a file, because capture= alone would refuse one."""
+    found = re.findall(r"<input[^>]*type=\"file\"[^>]*>", add_screen["html"])
+    camera = [tag for tag in found if 'capture="environment"' in tag]
+    gallery = [tag for tag in found if "capture" not in tag]
+    assert len(camera) == 1 and 'accept="image/*"' in camera[0], found
+    assert len(gallery) == 1 and "image/*" in gallery[0] and ".pdf" in gallery[0], found
+    assert "Photograph a board" in add_screen["text"]
+    assert "Choose a photo or file" in add_screen["text"]
 
 
 @chrome_only
 def test_the_upload_form_says_what_happens_next(add_screen):
     """An uploaded file enters the pipeline unchanged. That is the feature."""
-    assert "Download is the only stage an upload skips" in add_screen["text"]
+    # Said in the screen's voice now; the rule underneath is unchanged and
+    # still on the API's own reply (`note`) and in agent/api/routes/entries.py.
+    assert "read, transcribed and quizzed like anything from Classroom" in add_screen["text"]
 
 
 @chrome_only

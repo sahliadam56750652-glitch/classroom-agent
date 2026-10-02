@@ -26,7 +26,7 @@ from ... import scope as scope_mod
 from ...db import store
 from ...filenames import document_filename
 from ...gate import sections
-from .. import files, schemas
+from .. import convert, files, schemas
 from ..convert import window as convert_window
 from ..deps import Conf, Db, MaybeTable, Session
 
@@ -105,6 +105,13 @@ def library(
                 unread=totals["unread"],
                 study_item_id=int(item["id"]) if item else None,
                 study_item_state=str(item["state"]) if item else None,
+                # Which file to open. The same rows /api/study-items/{id} names,
+                # from the same store function, so a post opens the same file
+                # from the library as from its subject.
+                documents=[
+                    convert.document(found)
+                    for found in store.study_item_files(conn, entity_type, entity_id)
+                ],
             )
         )
     # Newest first: the same instinct as the OCR queue's posting-date order, and

@@ -64,12 +64,6 @@ export function Empty({ title, children }) {
   </div>`;
 }
 
-/** A subject's name with its colour beside it. The colour is never alone. */
-export function SubjectName({ name, class: extra = "" }) {
-  return html`<span class=${`named ${extra}`} style=${subjectStyle(name)}>
-    <span class="pip" aria-hidden="true"></span>${name}
-  </span>`;
-}
 
 /**
  * A card. With `to` the whole card is a link and carries a chevron; without,

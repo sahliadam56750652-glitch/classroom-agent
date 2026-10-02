@@ -1,27 +1,75 @@
-// The library, and the deadlines.
+// The library: every post this install holds, newest first. Part of Study.
 //
-// Both are navigation rather than the product, so both are lists that get out
-// of the way. The one rule with teeth is on the deadlines: `due_at` is the only
-// fact about time, and the client does not compute a second one.
+// Navigation rather than the product -- the reader is the product -- so this is
+// a list that gets out of the way: a search, a row of subject chips to narrow
+// it, and each post a tinted card that opens its file in the reader in one tap.
+//
+// Filtered here rather than by re-asking the server: the whole list is already
+// in hand, and a request per keystroke on mobile data is worse than no filter.
 
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { Offline, api, describe } from "/api.js";
-import { age, hasPassed, localTime, plural } from "/format.js";
-import { linkProps } from "/router.js";
+import { age, plural } from "/format.js";
+import { Icon } from "/icons.js";
+import { navigate } from "/router.js";
+import {
+  Card,
+  Chip,
+  Empty,
+  Problem,
+  ScreenHeader,
+  SectionLinks,
+  Skeleton,
+  STUDY_PARTS,
+  useSubjectNames,
+} from "/ui.js";
+import { subjectStyle } from "/subject-color.js";
+
+const STATE = {
+  pending: "Not opened yet",
+  delivered: "Opened",
+  reviewed: "Read, not verified",
+  verified: "Verified",
+  skipped: "Skipped",
+};
+
+function Post({ post, subject }) {
+  const file = (post.documents || []).find((found) => found.readable);
+  const meta = [
+    plural(post.pages, "page"),
+    post.unread ? `${post.unread} still to transcribe` : "",
+    post.creation_time ? `posted ${age(post.creation_time)}` : "",
+  ].filter(Boolean);
+  const body = html`
+    <${Chip} name=${subject} />
+    <span class="t-lead library-title">${post.title}</span>
+    ${post.study_item_state
+      ? html`<span class="t-state">${STATE[post.study_item_state] || post.study_item_state}</span>`
+      : null}
+    <span class="t-meta">${meta.join(" · ")}</span>
+  `;
+  return html`<li>
+    ${file
+      ? html`<${Card} to=${`/read/${encodeURIComponent(file.drive_id)}`} subject=${subject}>${body}</${Card}>`
+      : html`<${Card} subject=${subject}>
+          ${body}
+          <span class="t-meta">No readable file is held for this yet.</span>
+        </${Card}>`}
+  </li>`;
+}
 
 export function Library({ course }) {
+  const names = useSubjectNames();
   const [posts, setPosts] = useState(null);
   const [problem, setProblem] = useState("");
   const [query, setQuery] = useState("");
+  const [only, setOnly] = useState(course || "");
 
   useEffect(() => {
     let live = true;
-    const path = course
-      ? `/api/library?course=${encodeURIComponent(course)}`
-      : "/api/library";
     api
-      .get(path)
+      .get("/api/library")
       .then((found) => live && setPosts(found))
       .catch((err) => {
         if (!live) return;
@@ -34,106 +82,80 @@ export function Library({ course }) {
     return () => {
       live = false;
     };
-  }, [course]);
-
-  if (problem) {
-    return html`<main class="pad"><p class="problem">${problem}</p></main>`;
-  }
-  if (!posts) return html`<main class="pad"><p class="faint">…</p></main>`;
-
-  // Filtered here rather than by re-asking the server: the whole list is
-  // already in hand, and a request per keystroke on mobile data is worse than
-  // no filter at all.
-  const shown = query
-    ? posts.filter((post) =>
-        post.title.toLowerCase().includes(query.toLowerCase())
-      )
-    : posts;
-
-  return html`
-    <main class="pad">
-      <h1>Library</h1>
-      <input
-        type="search"
-        value=${query}
-        placeholder="filter by title"
-        onInput=${(event) => setQuery(event.target.value)}
-      />
-      ${!posts.length
-        ? html`<p class="quiet">
-            Nothing has been fetched and extracted yet.
-          </p>`
-        : html`
-            <ul class="posts">
-              ${shown.map(
-                (post) => html`
-                  <li class="post" key=${`${post.entity_type}:${post.entity_id}`}>
-                    <span class="post-title">${post.title}</span>
-                    <span class="post-meta">
-                      ${`${post.course_name} · ${plural(post.pages, "page")}` +
-                      (post.unread
-                        ? ` · ${post.unread} not transcribed`
-                        : "") +
-                      (post.creation_time ? ` · ${age(post.creation_time)}` : "")}
-                    </span>
-                  </li>
-                `
-              )}
-            </ul>
-            <p class="quiet">
-              ${`${plural(shown.length, "post")} held.`}
-            </p>
-          `}
-    </main>
-  `;
-}
-
-export function Deadlines() {
-  const [rows, setRows] = useState(null);
-  const [problem, setProblem] = useState("");
-
-  useEffect(() => {
-    let live = true;
-    api
-      .get("/api/deadlines")
-      .then((found) => live && setRows(found))
-      .catch((err) => live && setProblem(describe(err)));
-    return () => {
-      live = false;
-    };
   }, []);
 
-  if (problem) {
-    return html`<main class="pad"><p class="problem">${problem}</p></main>`;
-  }
-  if (!rows) return html`<main class="pad"><p class="faint">…</p></main>`;
+  useEffect(() => setOnly(course || ""), [course]);
 
-  return html`
-    <main class="pad">
-      <h1>Deadlines</h1>
-      ${!rows.length
-        ? html`<p class="quiet">Nothing due.</p>`
-        : html`<ul class="posts">
-            ${rows.map(
-              (row) => html`
-                <li class="post" key=${`${row.entity_type}:${row.entity_id}`}>
-                  <span class="post-title">${row.title}</span>
-                  <span
-                    class=${`post-meta ${hasPassed(row.due_at) ? "passed" : ""}`}
-                  >
-                    <!--
-                      The instant, and nothing else about time. No countdown, no
-                      colour that escalates as it nears: section 7 forbids
-                      manufactured urgency, and the only red in this app is a
-                      deadline that has ALREADY gone.
-                    -->
-                    ${row.due_at ? localTime(row.due_at) : "no date"}
-                    ${row.label ? ` · ${row.label}` : ""}
-                  </span>
-                </li>
-              `
-            )}
-          </ul>`}
-    </main>
+  const subjectOf = (post) => names[post.course_id] || post.course_name;
+
+  const header = html`
+    <${ScreenHeader} title="Study" />
+    <${SectionLinks} links=${STUDY_PARTS} here="/library" />
   `;
+
+  if (problem) return html`<div class="screen">${header}<${Problem}>${problem}</${Problem}></div>`;
+  if (!posts) return html`<div class="screen">${header}<${Skeleton} rows=${4} /></div>`;
+
+  const courses = [...new Map(posts.map((post) => [post.course_id, subjectOf(post)])).entries()].sort(
+    (a, b) => a[1].localeCompare(b[1])
+  );
+  const wanted = query.trim().toLowerCase();
+  const shown = posts.filter(
+    (post) =>
+      (!only || post.course_id === only) &&
+      (!wanted || post.title.toLowerCase().includes(wanted))
+  );
+
+  return html`<div class="screen library">
+    ${header}
+    <div class="library-tools">
+      <label class="field library-search">
+        <span class="visually-hidden">Search the library</span>
+        <span class="search-box">
+          <${Icon} name="search" />
+          <input
+            type="search"
+            value=${query}
+            placeholder="Search titles"
+            onInput=${(event) => setQuery(event.target.value)}
+          />
+        </span>
+      </label>
+      <div class="filter-chips" role="group" aria-label="Show one subject">
+        <button
+          type="button"
+          class="filter-chip"
+          aria-pressed=${only ? "false" : "true"}
+          onClick=${() => {
+            setOnly("");
+            if (course) navigate("/library", { replace: true });
+          }}
+        >All</button>
+        ${courses.map(
+          ([id, name]) => html`<button
+            key=${id}
+            type="button"
+            class="filter-chip"
+            style=${subjectStyle(name)}
+            aria-pressed=${only === id ? "true" : "false"}
+            onClick=${() => setOnly(only === id ? "" : id)}
+          >${name}</button>`
+        )}
+      </div>
+    </div>
+
+    ${!posts.length
+      ? html`<${Empty} title="Nothing here yet.">Material appears once it is fetched, or uploaded from Add.</${Empty}>`
+      : shown.length
+      ? html`<ul class="grid">
+          ${shown.map(
+            (post) => html`<${Post}
+              key=${`${post.entity_type}:${post.entity_id}`}
+              post=${post}
+              subject=${subjectOf(post)}
+            />`
+          )}
+        </ul>`
+      : html`<${Empty} title="Nothing matches.">Try fewer letters, or another subject.</${Empty}>`}
+  </div>`;
 }

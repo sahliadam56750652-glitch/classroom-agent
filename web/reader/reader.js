@@ -22,8 +22,10 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { Offline, api, describe } from "/api.js";
-import { linkProps } from "/router.js";
+import { linkProps, navigate } from "/router.js";
 import { queuePosition } from "/queue.js";
+import { Icon } from "/icons.js";
+import { Problem } from "/ui.js";
 
 // Rendered ahead of and behind the visible page. Two is enough that a scroll
 // never waits, and small enough that 92 canvases never exist at once.
@@ -279,9 +281,9 @@ export function Reader({ driveId }) {
   }, [driveId, current, pdf]);
 
   if (problem) {
-    return html`<main class="pad">
-      <p class="problem">${problem}</p>
-      <p><a class="plain-link" ...${linkProps("/")}>Back</a></p>
+    return html`<main class="reader-problem">
+      <${Problem}>${problem}</${Problem}>
+      <p><a class="button secondary-button" ...${linkProps("/")}><${Icon} name="back" /> Back</a></p>
     </main>`;
   }
 
@@ -294,12 +296,24 @@ export function Reader({ driveId }) {
   return html`
     <div class="reader">
       <header class=${`reader-bar ${chromeShown ? "" : "gone"}`}>
-        <a class="plain-link" ...${linkProps("/")}>Back</a>
+        <a
+          class="button quiet-button reader-back"
+          aria-label="Back"
+          ...${linkProps("/")}
+          onClick=${(event) => {
+            // Back is the system's back when there is somewhere to go: the
+            // reader is opened from Today, a subject, the library or a quiz, and
+            // each expects to be returned to, not to Today.
+            event.preventDefault();
+            if (history.length > 1) history.back();
+            else navigate("/");
+          }}
+        ><${Icon} name="back" /></a>
         <span class="reader-title">${doc ? doc.title : ""}</span>
       </header>
 
       ${note && chromeShown
-        ? html`<p class="reader-note">${note}</p>`
+        ? html`<p class="notice reader-note" role="status">${note}</p>`
         : null}
 
       <div class="pages" ref=${scroller}>
@@ -317,7 +331,7 @@ export function Reader({ driveId }) {
                   // as pages mount and unmount.
                   html`<div class="page spacer" data-page=${n} key=${n}></div>`
             )
-          : html`<p class="pad faint">…</p>`}
+          : html`<div class="page spacer" aria-busy="true"></div>`}
       </div>
 
       <!-- The one element that survives the chrome going. -->

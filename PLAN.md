@@ -189,6 +189,15 @@ starves a Web Worker. It is checked by looking; `web/VENDOR.md` says how.
 - Snooze is still Telegram-only. It belongs to the evening prompt, which the
   web app does not send, so it has nothing to attach to there.
 
+**The web client redesign — complete, 2026-10-02.** The app is called
+**Lectern**. Every screen is rebuilt in DESIGN.md section 8's system, in a light
+(paper) and a dark (warm charcoal) theme chosen per device: Today, Study (subjects,
+a subject, Quizzes, Library), the quiz, Work (homework and projects together), a
+project's checklist, Timetable (week grid / day picker, one menu per session),
+Add (the upload opens the camera in one tap), Status, More and the reader.
+`web/styles/legacy.css` is gone. `tools/screenshots.py after` shoots every screen
+at 390 and 1440 in both themes, the 23:00 one with the page's clock frozen.
+
 **The term is running, and the gate has a real backlog. Measured 2026-09-25**,
 against the live database rather than estimated:
 

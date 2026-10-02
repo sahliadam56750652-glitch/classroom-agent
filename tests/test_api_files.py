@@ -540,6 +540,17 @@ def test_the_library_lists_posts_not_attachments(config, monkeypatch):
     assert body[0]["pages"] == 6
 
 
+def test_a_library_post_names_the_files_it_opens(config, monkeypatch):
+    """The library opens a post in the reader in one tap, so it must say which
+    file -- the same rows /api/study-items/{id} names."""
+    add_document(config, drive_id="d1", title="Slides", parent="p1")
+    add_document(config, drive_id="d2", title="Handout", parent="p1")
+    session = client(config, monkeypatch)
+    post = session.get("/api/library").json()[0]
+    assert sorted(doc["drive_id"] for doc in post["documents"]) == ["d1", "d2"]
+    assert all("readable" in doc for doc in post["documents"])
+
+
 def test_the_library_can_be_filtered_and_searched(config, monkeypatch):
     add_document(config, drive_id="d1", title="SQL joins", parent="p1")
     add_document(config, drive_id="d2", title="Normal forms", parent="p2")

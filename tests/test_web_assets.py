@@ -623,3 +623,16 @@ def test_the_app_is_called_lectern_wherever_a_person_sees_a_name():
         code = re.sub(r"//[^\n]*|/\*.*?\*/", "", module.read_text(encoding="utf-8"), flags=re.S)
         for old in ("classroom-agent", ">Margin<", '"Margin'):
             assert old not in code, f"{module.name} still says {old}"
+
+
+def test_no_stylesheet_ever_inverts_the_page():
+    """DESIGN.md section 6: the PDF renders exactly as the professor made it.
+
+    In either theme. An inverted slide deck destroys diagrams, code screenshots
+    and photographed boards -- the content the vision OCR exists to preserve.
+    Comments are stripped, because the reader's stylesheet says this in words.
+    """
+    for sheet in WEB.rglob("*.css"):
+        body = re.sub(r"/\*.*?\*/", "", sheet.read_text(encoding="utf-8"), flags=re.S)
+        for forbidden in ("invert(", "mix-blend-mode: difference", "mix-blend-mode:difference"):
+            assert forbidden not in body, f"{sheet.name}: {forbidden}"

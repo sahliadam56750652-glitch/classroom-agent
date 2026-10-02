@@ -178,12 +178,7 @@
   --sidebar: 248px;
   --measure: 72ch;
 
-  /* Old names, for styles/legacy.css while the remaining screens are rebuilt.
-     --quick keeps the reader inside section 6's 150ms. */
-  --ink-quiet: var(--ink-2);
-  --ink-faint: var(--ink-3);
-  --pad: var(--s4);
-  --radius: var(--r-control);
+  /* The reader's ceiling: section 6 caps its motion at 150ms. */
   --quick: 140ms;
 }
 
@@ -362,24 +357,13 @@ textarea {
   max-width: var(--measure);
 }
 
-.quiet {
-  color: var(--ink-2);
-}
 
-.faint {
-  color: var(--ink-3);
-}
 
 .booting {
   color: var(--ink-3);
   padding: var(--s4);
 }
 
-.pad {
-  padding: var(--s4);
-  max-width: 44rem;
-  margin: 0 auto;
-}
 
 .visually-hidden {
   position: absolute;
@@ -735,22 +719,6 @@ button.card:active {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-/* The older inline form, for the screens not yet rebuilt. */
-.pip {
-  display: inline-block;
-  flex: none;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--subject);
-  margin-right: var(--s2);
-  vertical-align: 0.06em;
-}
-
-.named {
-  display: inline;
 }
 
 /* ------------------------------------------------------------------ hero

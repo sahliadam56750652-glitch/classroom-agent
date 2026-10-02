@@ -1,0 +1,26 @@
+/* Status: every figure, as chips on sheets. A zero is shown here and only here. */
+
+.status-sync {
+  padding: var(--s5);
+}
+
+/* A failed sync is a fact to act on, not the passed-deadline red. */
+.status-failed {
+  border-left: 3px solid var(--edge);
+}
+
+.status-grid {
+  display: grid;
+  gap: var(--s3);
+}
+
+@media (min-width: 720px) {
+  .status-grid {
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    align-items: start;
+  }
+}
+
+.status-card .card-body {
+  gap: var(--s3);
+}

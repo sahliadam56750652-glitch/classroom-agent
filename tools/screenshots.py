@@ -62,7 +62,13 @@ SCREENS = [
     ("subject-quiz", "/study/Computer%20Networks", True),
     ("quiz-result", "/quiz/attempt/{attempt}", True),
     ("timetable", "/timetable", True),
+    ("work", "/work", True),
+    ("project", "/projects/{project}", True),
+    ("library", "/library", True),
+    ("add", "/add", True),
+    ("status", "/status", True),
     ("more", "/more", True),
+    ("reader", "/read/d-db-ch4", True),
     ("quiz", "/quiz/{net}", True),
 ]
 
@@ -304,6 +310,7 @@ def seed(root: Path) -> Path:
         deadline_at="2026-11-20T22:59:00Z",
         deliverables="A report\nThe source code", team="Adam\nYoussef",
     )
+    IDS["project"] = project_id
     for index, name in enumerate(("Pick the graph library", "Load the map",
                                   "Dijkstra, then A*", "Write the report")):
         milestone = store.add_milestone(conn, project_id, name)

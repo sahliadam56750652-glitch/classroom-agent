@@ -1,0 +1,96 @@
+/*
+  Add: four forms as sheets. The upload is first and widest, because for the
+  subjects with no Classroom a photographed board is how material arrives; its
+  first button opens the camera.
+*/
+
+.add-card {
+  padding: var(--s5);
+}
+
+.add-form {
+  gap: var(--s4);
+}
+
+.add-upload {
+  background: var(--raised);
+  border-radius: var(--r-hero);
+}
+
+.add-grid {
+  display: grid;
+  gap: var(--s4);
+}
+
+@media (min-width: 1024px) {
+  .add-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+  }
+}
+
+/* The two doors: camera first, the gallery and files second. */
+.pick {
+  display: grid;
+  gap: var(--s3);
+}
+
+@media (min-width: 560px) {
+  .pick {
+    grid-template-columns: repeat(2, max-content);
+  }
+}
+
+.pick .button {
+  min-height: 56px;
+  position: relative;
+  white-space: nowrap;
+}
+
+.pick .button svg {
+  width: 22px;
+  height: 22px;
+}
+
+.picked {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.picked-image {
+  display: block;
+  max-width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--card);
+}
+
+.subject-choice {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.subject-choice legend {
+  padding: 0;
+  margin-bottom: var(--s2);
+  color: var(--ink-2);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s3);
+}
+
+.field select {
+  appearance: auto;
+}

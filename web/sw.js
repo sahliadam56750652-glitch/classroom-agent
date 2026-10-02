@@ -22,7 +22,7 @@
 // edited by hand: the shell is served cache-first, so a changed file reaches an
 // installed app ONLY when this changes, and a forgotten bump looks exactly like
 // a fix that did not work. A test fails when it is stale.
-const VERSION = "9d1a309ba422";
+const VERSION = "81bfe9377f1d";
 const SHELL = `shell-${VERSION}`;
 const API = `api-${VERSION}`;
 const DOCS = `docs-${VERSION}`;
@@ -49,18 +49,22 @@ const SHELL_FILES = [
   "/subject-color.js",
   "/theme.js",
   "/greeting.js",
-  "/styles/legacy.css",
   "/styles/more.css",
   "/styles/now.css",
   "/styles/subjects.css",
   "/styles/quiz.css",
   "/styles/timetable.css",
+  "/styles/work.css",
+  "/styles/library.css",
+  "/styles/add.css",
+  "/styles/status.css",
+  "/styles/reader.css",
   "/screens/now.js",
   "/screens/subjects.js",
   "/screens/status.js",
   "/screens/library.js",
   "/screens/timetable.js",
-  "/screens/projects.js",
+  "/screens/work.js",
   "/screens/add.js",
   "/screens/more.js",
   "/screens/quiz.js",

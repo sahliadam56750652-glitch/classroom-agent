@@ -350,6 +350,7 @@ class LibraryPostOut(BaseModel):
     unread: int = 0
     study_item_id: int | None = None
     study_item_state: str | None = None
+    documents: list[DocumentOut] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -519,3 +520,4 @@ class HomeworkOut(BaseModel):
 # NextOut and StudyItemOut both reference DocumentOut before it is defined.
 NextOut.model_rebuild()
 StudyItemOut.model_rebuild()
+LibraryPostOut.model_rebuild()

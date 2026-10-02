@@ -22,14 +22,14 @@ import { Now } from "/screens/now.js";
 import { Reader } from "/reader/reader.js";
 import { Subject, Subjects } from "/screens/subjects.js";
 import { Status } from "/screens/status.js";
-import { Deadlines, Library } from "/screens/library.js";
+import { Library } from "/screens/library.js";
 import { Timetable } from "/screens/timetable.js";
-import { Projects } from "/screens/projects.js";
+import { ProjectPage, Work } from "/screens/work.js";
 import { Add } from "/screens/add.js";
 import { More, SECONDARY } from "/screens/more.js";
 import { PastAttempt, Quiz, Quizzes } from "/screens/quiz.js";
 import { Icon } from "/icons.js";
-import { Brand, ScreenHeader, SectionLinks, STUDY_PARTS } from "/ui.js";
+import { Brand } from "/ui.js";
 import { linkProps, match, navigate, useRoute } from "/router.js";
 import { flushWhenOnline } from "/queue.js";
 
@@ -94,7 +94,7 @@ function SignIn({ onDone }) {
     <main class="signin">
       <div class="signin-card">
         <${Brand} />
-        <p class="quiet">
+        <p class="t-state">
           Paste <code>WEB_API_TOKEN</code> from <code>.env</code>. Once every 90
           days.
         </p>
@@ -153,7 +153,7 @@ function App() {
   }, [state, route.path]);
 
   if (state === "checking") {
-    return html`<main class="pad"><p class="faint">…</p></main>`;
+    return html`<main class="booting" aria-busy="true"><p class="t-meta">…</p></main>`;
   }
   if (state === "out") {
     return html`<${SignIn} onDone=${() => setState("in")} />`;
@@ -188,7 +188,7 @@ function Shell({ onSignOut, offline }) {
 
   // The reader is full-screen and owns the viewport, so it renders alone --
   // no nav, no chrome but its own. Section 6: everything else is navigation.
-  if (reading) return html`<div class="legacy"><${Reader} driveId=${reading} /></div>`;
+  if (reading) return html`<${Reader} driveId=${reading} />`;
 
   // The content first and the navigation after it, in the document as on the
   // screen: section 2 says the front door is one item, and everything else is
@@ -209,21 +209,10 @@ function Shell({ onSignOut, offline }) {
   `;
 }
 
-// Screens not yet rebuilt in the redesign. Each is wrapped in .legacy so its
-// old styles (styles/legacy.css) apply to it and to nothing else; a screen
-// leaves this set in the commit that rebuilds it.
-const LEGACY = new Set([
-  "library",
-  "deadlines",
-  "projects",
-  "add",
-  "status",
-]);
-
 /** Which screen this path is. */
 function Screen({ route, status, onSignOut }) {
-  const [name, screen] = pick(route, status, onSignOut);
-  return LEGACY.has(name) ? html`<div class="legacy">${screen}</div>` : screen;
+  const [, screen] = pick(route, status, onSignOut);
+  return screen;
 }
 
 function pick(route, status, onSignOut) {
@@ -239,20 +228,13 @@ function pick(route, status, onSignOut) {
   if (quizItem) return ["quiz", html`<${Quiz} itemId=${quizItem} />`];
   if (path === "/quizzes") return ["quizzes", html`<${Quizzes} />`];
   if (path === "/library")
-    // Not yet redesigned itself, but it is part of Study, so it sits under
-    // Study's title and section links like the other two parts.
-    return [
-      "library-part",
-      html`<div class="screen">
-        <${ScreenHeader} title="Study" />
-        <${SectionLinks} links=${STUDY_PARTS} here="/library" />
-        <div class="legacy"><${Library} course=${route.query.get("course")} /></div>
-      </div>`,
-    ];
-  // Work. Not yet redesigned: the deadline list stands in for homework until
-  // the Work screens are built in the same system.
-  if (path === "/work" || path === "/deadlines") return ["deadlines", html`<${Deadlines} />`];
-  if (path === "/projects") return ["projects", html`<${Projects} />`];
+    return ["library", html`<${Library} course=${route.query.get("course")} />`];
+  // Work: homework and projects together. /projects and /deadlines are older
+  // addresses of the same screen, kept so a saved link is not a dead end.
+  const project = match("/projects/", path);
+  if (project) return ["project", html`<${ProjectPage} id=${project} />`];
+  if (path === "/work" || path === "/projects" || path === "/deadlines")
+    return ["work", html`<${Work} />`];
   if (path === "/timetable") return ["timetable", html`<${Timetable} />`];
   if (path === "/add") return ["add", html`<${Add} />`];
   if (path === "/status") return ["status", html`<${Status} />`];
@@ -276,7 +258,6 @@ const PARTS = {
     ["/quizzes", "Quizzes", "quiz"],
     ["/library", "Library", "library"],
   ],
-  "/work": [["/projects", "Projects", "projects"]],
 };
 
 /** Which of the five places a path belongs to, so a subject page lights Study. */

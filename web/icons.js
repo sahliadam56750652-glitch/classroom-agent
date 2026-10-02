@@ -25,6 +25,8 @@ const PATHS = {
   external: html`<path d="M13.5 4.5h6v6M19.5 4.5 11 13" /><path d="M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10" />`,
   search: html`<circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" />`,
   close: html`<path d="M6 6l12 12M18 6 6 18" />`,
+  camera: html`<path d="M4.5 8.5a2 2 0 0 1 2-2h2l1.6-2h3.8l1.6 2h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2z" /><circle cx="12" cy="13" r="3.4" />`,
+  image: html`<rect x="4" y="5" width="16" height="14" rx="2.5" /><circle cx="9" cy="10" r="1.6" /><path d="m5 17 4.5-4.5 3 3 2-2 4.5 4.5" />`,
   quiz: html`<rect x="4.5" y="4.5" width="15" height="15" rx="3" /><path d="m8.5 12 2.5 2.5 4.5-5" />`,
   flag: html`<path d="M6 20.5V4" /><path d="M6 4.5h11l-2.2 4 2.2 4H6" />`,
   skip: html`<path d="m6 6.5 6 5.5-6 5.5z" /><path d="M13 6.5 19 12l-6 5.5" />`,

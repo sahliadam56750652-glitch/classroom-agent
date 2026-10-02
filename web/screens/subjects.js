@@ -24,7 +24,7 @@ import { Offline, api, describe } from "/api.js";
 import { age, plural, relativeDay } from "/format.js";
 import { subjectStyle as subjectStyleOf } from "/subject-color.js";
 import { linkProps } from "/router.js";
-import { Card, Chip, Empty, Problem, ScreenHeader, SectionLinks, Skeleton, STUDY_PARTS, SubjectName } from "/ui.js";
+import { Card, Chip, Empty, Problem, ScreenHeader, SectionLinks, Skeleton, STUDY_PARTS } from "/ui.js";
 import { QuizEntry } from "/screens/quiz.js";
 import { Icon } from "/icons.js";
 import { navigate } from "/router.js";
@@ -167,7 +167,7 @@ function Inactive({ rows }) {
       ${rows.map(
         (row) => html`<li key=${row.name}>
           <a class="inactive-row" ...${linkProps(`/study/${encodeURIComponent(row.name)}`)}>
-            <${SubjectName} name=${row.name} />
+            <${Chip} name=${row.name} />
             <span class="t-meta">${standing(row)}</span>
           </a>
         </li>`

@@ -1,0 +1,144 @@
+/*
+  The reader. DESIGN.md section 6: "the reader is the product; everything else
+  is navigation."
+
+  The chrome follows the theme -- paper or charcoal. The PAGE is never touched in
+  either: no invert, no filter, no blend mode. Inverting a slide deck destroys
+  diagrams, code screenshots and photographed boards, which is exactly the
+  content the vision OCR was paid for. tests/test_web_assets.py refuses any
+  stylesheet that inverts, and any that disables pinch-zoom.
+
+  Motion here stays inside section 6's 150ms, on --quick.
+*/
+
+.reader {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--ground);
+}
+
+.reader-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 56px;
+  padding: var(--s1) var(--s3);
+  padding-top: calc(var(--s1) + env(safe-area-inset-top));
+  background: color-mix(in oklab, var(--ground) 92%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+  transform: translateY(0);
+  transition: transform var(--quick) ease-out;
+}
+
+/* On scroll, the chrome goes. */
+.reader-bar.gone {
+  transform: translateY(-100%);
+}
+
+.reader-back {
+  flex: none;
+}
+
+.reader-back svg {
+  width: 20px;
+  height: 20px;
+}
+
+.reader-title {
+  min-width: 0;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.reader-note {
+  position: absolute;
+  top: calc(56px + env(safe-area-inset-top));
+  left: var(--s3);
+  right: var(--s3);
+  z-index: 2;
+  max-width: 44rem;
+  margin: var(--s2) auto 0;
+}
+
+.pages {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  /* NOT `touch-action: none`. Pinch-zoom is never disabled -- a 92-page deck
+     has diagrams that only work zoomed, and disabling it is the single most
+     common way a reader becomes unusable on a phone. */
+  padding: calc(56px + var(--s3) + env(safe-area-inset-top)) var(--s2) var(--s8);
+}
+
+.page {
+  margin: 0 auto var(--s3);
+  display: flex;
+  justify-content: center;
+  /* A page that has not rendered yet still occupies its slot, so the scrollbar
+     does not jump as canvases mount and unmount. */
+  min-height: 40vh;
+}
+
+.page canvas {
+  display: block;
+  /* The only treatment applied to the page: a hairline so a white slide has an
+     edge against either ground. Nothing that alters what is inside it. */
+  box-shadow: 0 0 0 1px var(--line);
+  border-radius: 2px;
+  background: #fff;
+}
+
+.page canvas.blank {
+  min-height: 40vh;
+}
+
+.page.spacer {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+/* Where I am. The one element that persists when the chrome goes. */
+.position {
+  position: absolute;
+  right: var(--s3);
+  bottom: calc(var(--s3) + env(safe-area-inset-bottom));
+  padding: 4px 12px;
+  border-radius: var(--r-pill);
+  background: color-mix(in oklab, var(--raised) 92%, transparent);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.position:empty {
+  display: none;
+}
+
+.reader-problem {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: var(--s6) var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
