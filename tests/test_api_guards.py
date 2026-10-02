@@ -29,23 +29,29 @@ from agent.api import app as app_mod
 
 API_DIR = pathlib.Path(app_mod.__file__).parent
 
-# Names no file in agent/api/ may mention. Two groups, two reasons.
+# Names no file in agent/api/ may mention.
 #
-# The first three are the honesty guarantees: `verified` has exactly one writer,
-# `advance_study_item` is how a study item moves at all, and the quiz is the only
-# thing that can reach a pass. 5b is read-only over study_items, so none of them
-# belongs here.
+# `verified` has exactly one writer, `store.verify_study_item`, and the API must
+# never call it -- not even with a passed attempt in hand. Since 5d the API DOES
+# reach `verified`, and only one way: `quiz.settle`, on an attempt rebuilt from
+# its row, which calls verify_study_item, which re-reads the attempt and refuses
+# one that did not pass. That single permitted name is pinned separately below
+# (`test_settle_is_called_in_exactly_one_place`), so it cannot spread.
 #
-# The rest are the pipeline: the API reads what the scheduled run wrote and
-# performs no stage of it. No sync, no Drive fetch, no OCR, no model call, no
-# Telegram.
+# `advance_study_item` is how an item moves at all. The API moves one only
+# through gate/actions.py -- the functions the bot's Read and Skip buttons call --
+# so it never names the store writer directly.
+#
+# And the generation half of the quiz: writing questions costs a model request,
+# and no route may ever spend one.
 FORBIDDEN_NAMES = (
     "verify_study_item",
     "advance_study_item",
-    # gate/quiz.py's entry points. The quiz is the only thing that can reach a
-    # pass, and generation costs a model request -- neither belongs behind a GET.
-    "settle",
     "generate",
+    "quizgen",
+    "serve_requests",
+    # Not "prepare": `files/upload.py` has a prepare of its own, which the upload
+    # route legitimately calls. The module name above is what catches quizgen's.
 )
 
 FORBIDDEN_MODULES = (
@@ -133,8 +139,9 @@ def test_the_api_never_calls_a_study_item_writer_or_a_gate_write(name):
         if name in identifiers(path)
     ]
     assert not offenders, (
-        f"{name!r} is used in {offenders}. 5b is read-only over study_items and "
-        f"never fires the gate; if that is changing, it changes in PLAN.md first."
+        f"{name!r} is used in {offenders}. The API moves study items only through "
+        f"gate/actions.py and quiz.settle, never fires the gate, and never writes "
+        f"a question; if that is changing, it changes in PLAN.md first."
     )
 
 
@@ -178,7 +185,10 @@ MUST_NOT_LOAD = (
     "agent.files.drive",
     "agent.files.ocr",
     "agent.sync.poller",
-    "agent.gate.quiz",
+    # The quiz's GENERATION half. The grading half, agent.gate.quiz, does load:
+    # the browser sits quizzes through it, and it imports no provider -- which
+    # is asserted by the control below and by tests/test_quiz_split.py.
+    "agent.gate.quizgen",
     "agent.classroom.client",
 )
 
@@ -224,6 +234,32 @@ def test_that_check_is_looking_at_a_real_module_list():
     # And the three inert ones are expected, so the test above is not passing
     # because nothing at all was loaded.
     assert "agent.gate.scheduler" in loaded
+    # 5d: the grading half of the quiz is loaded, and the generation half and
+    # the provider are not -- the split is real in the process that matters.
+    assert "agent.gate.quiz" in loaded
+    assert "agent.gate.actions" in loaded
+
+
+def test_settle_is_called_in_exactly_one_place():
+    """The API's one door to `verified` is quiz.settle, in routes/quiz.py only.
+
+    Not "settle is allowed": one file may name it, and that file's own docstring
+    says why. A second route that settled an attempt would be a second path to
+    the guarantee the coverage figure rests on.
+    """
+    users = sorted(
+        path.relative_to(API_DIR).as_posix()
+        for path in api_sources()
+        if "settle" in identifiers(path)
+    )
+    assert users == ["routes/quiz.py"], users
+
+
+def test_the_api_reaches_settle_through_the_grading_half():
+    """Control for the test above: it found a real call, on the real module."""
+    source = (API_DIR / "routes" / "quiz.py").read_text(encoding="utf-8")
+    assert "quiz.settle(" in source
+    assert "from ...gate import actions, quiz" in source
 
 
 def test_the_forbidden_name_check_can_actually_fail(tmp_path):

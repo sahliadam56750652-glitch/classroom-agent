@@ -2,9 +2,9 @@
 
 `WRITE_ROUTES` is not documentation. A test asserts that the set of non-GET
 routes the app actually exposes equals it exactly, which makes adding a write a
-deliberate act with a failing test in front of it. That is how "the API cannot
-reach `verified`" and "the API never fires the gate" stop being conventions and
-become checks -- the same instinct as `_TRANSITIONS` not containing `verified` at
+deliberate act with a failing test in front of it. That is how "the API reaches
+`verified` only through a passed quiz" and "the API never fires the gate" stop
+being conventions and become checks -- the same instinct as `_TRANSITIONS` not containing `verified` at
 all.
 """
 
@@ -22,6 +22,7 @@ from .routes import (
     entries,
     library,
     meta,
+    quiz,
     study,
     subjects,
     timetable,
@@ -33,8 +34,10 @@ log = logging.getLogger("agent.api")
 # that compares this to the live app is the guard; this is the declaration.
 #
 # Deliberately absent, and each for a stated reason:
-#   * anything touching study_items -- 5b is read-only over them, and `verified`
-#     has exactly one writer which is not reachable from here
+#   * any direct write to study_items -- since 5d the API moves an item only
+#     through gate/actions.py (Read, Skip) and quiz.settle (a passed quiz), the
+#     same paths the bot uses; `verified` keeps its one writer, reached only
+#     behind a stored attempt that passed
 #   * anything creating a gate_runs row -- computing a plan is not firing the
 #     gate, and conflating them lets a morning page swallow the evening prompt
 #   * PUT on timetable.yaml -- the file holds the pattern and keeps one writer
@@ -70,6 +73,16 @@ WRITE_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/sessions"),
         ("POST", "/api/subjects/manual"),
         ("POST", "/api/uploads"),
+        # 5d: the gate's actions, in the browser. Read and Skip go through
+        # gate/actions.py, the functions the bot's buttons call. The quiz routes
+        # reach `verified` only through quiz.settle on an attempt rebuilt from
+        # its row; a request writes to quiz_requests and never to a model.
+        ("POST", "/api/study-items/{item_id}/read"),
+        ("POST", "/api/study-items/{item_id}/skip"),
+        ("POST", "/api/study-items/{item_id}/quiz"),
+        ("POST", "/api/study-items/{item_id}/quiz/request"),
+        ("POST", "/api/quiz-attempts/{attempt_id}/answers"),
+        ("POST", "/api/quiz-attempts/{attempt_id}/flags"),
     }
 )
 
@@ -114,6 +127,7 @@ def create_app(config: Config) -> FastAPI:
 
     app.include_router(meta.router, prefix="/api", tags=["meta"])
     app.include_router(study.router, prefix="/api", tags=["study"])
+    app.include_router(quiz.router, prefix="/api", tags=["quiz"])
     app.include_router(subjects.router, prefix="/api", tags=["subjects"])
     app.include_router(library.router, prefix="/api", tags=["library"])
     app.include_router(deadlines.router, prefix="/api", tags=["deadlines"])

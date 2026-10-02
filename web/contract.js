@@ -9,7 +9,7 @@
 // `tests/test_web_assets.py` fails when this file is out of date, so a forgotten
 // regeneration is a red suite rather than a client that is quietly wrong.
 
-export const GENERATED_AT = "2026-09-26T08:53:31Z";
+export const GENERATED_AT = "2026-10-02T14:58:12Z";
 
 export const ROUTES = {
   "DELETE /api/adjustments/{adjustment_id}": "RecordedOut",
@@ -29,9 +29,12 @@ export const ROUTES = {
   "GET /api/packs/{course_id}": null,
   "GET /api/projects": "ProjectOut",
   "GET /api/projects/{project_id}": "ProjectOut",
+  "GET /api/quiz-attempts/{attempt_id}": "QuizAttemptOut",
+  "GET /api/quizzes": "QuizzesOut",
   "GET /api/sessions": "HeldSessionOut",
   "GET /api/status": "StatusOut",
   "GET /api/study-items/{item_id}": "StudyItemOut",
+  "GET /api/study-items/{item_id}/quiz": "QuizStatusOut",
   "GET /api/subjects": "SubjectOut",
   "GET /api/subjects/{name}": "SubjectOut",
   "GET /api/tasks": "TaskOut",
@@ -44,8 +47,14 @@ export const ROUTES = {
   "POST /api/projects": "ProjectOut",
   "POST /api/projects/{project_id}/close": "ProjectOut",
   "POST /api/projects/{project_id}/milestones": "ProjectOut",
+  "POST /api/quiz-attempts/{attempt_id}/answers": "QuizAttemptOut",
+  "POST /api/quiz-attempts/{attempt_id}/flags": "QuizAttemptOut",
   "POST /api/session": "SignInOut",
   "POST /api/sessions": "HeldSessionOut",
+  "POST /api/study-items/{item_id}/quiz": "QuizAttemptOut",
+  "POST /api/study-items/{item_id}/quiz/request": "QuizStatusOut",
+  "POST /api/study-items/{item_id}/read": "ItemActionOut",
+  "POST /api/study-items/{item_id}/skip": "ItemActionOut",
   "POST /api/subjects/manual": "ManualSubjectOut",
   "POST /api/tasks": "TaskOut",
   "POST /api/tasks/{task_id}/complete": "TaskOut",
@@ -84,6 +93,10 @@ export const MODELS = {
     "to_room",
     "to_start",
     "to_teacher"
+  ],
+  "AnswerIn": [
+    "choice",
+    "index"
   ],
   "Body_upload_api_uploads_post": [
     "file",
@@ -132,6 +145,9 @@ export const MODELS = {
     "payload",
     "type"
   ],
+  "FlagIn": [
+    "index"
+  ],
   "GateOut": [
     "for_date",
     "provisional",
@@ -162,6 +178,11 @@ export const MODELS = {
     "held_on",
     "id",
     "kind"
+  ],
+  "ItemActionOut": [
+    "item_id",
+    "moved",
+    "state"
   ],
   "ItemOut": [
     "alternate_link",
@@ -232,6 +253,17 @@ export const MODELS = {
     "subject",
     "why"
   ],
+  "PastAttemptOut": [
+    "attempt_id",
+    "correct",
+    "counted",
+    "course_id",
+    "course_name",
+    "finished_at",
+    "item_id",
+    "label",
+    "passed"
+  ],
   "PositionIn": [
     "page_hash",
     "page_index"
@@ -270,6 +302,72 @@ export const MODELS = {
     "team",
     "title"
   ],
+  "QuizAttemptOut": [
+    "attempt_id",
+    "course_id",
+    "course_name",
+    "finished",
+    "finished_at",
+    "index",
+    "item_id",
+    "label",
+    "questions",
+    "result",
+    "started_at",
+    "total"
+  ],
+  "QuizItemOut": [
+    "course_id",
+    "course_name",
+    "item_id",
+    "label",
+    "state",
+    "status"
+  ],
+  "QuizQuestionOut": [
+    "chosen",
+    "flagged",
+    "index",
+    "options",
+    "question"
+  ],
+  "QuizResultOut": [
+    "correct",
+    "counted",
+    "failures",
+    "flagged",
+    "needed",
+    "passed",
+    "review",
+    "verified"
+  ],
+  "QuizReviewOut": [
+    "chosen",
+    "correct",
+    "drive_id",
+    "explanation",
+    "flagged",
+    "index",
+    "options",
+    "question",
+    "right",
+    "source_file",
+    "source_page"
+  ],
+  "QuizStatusOut": [
+    "attempt_id",
+    "item_id",
+    "kind",
+    "reason",
+    "request_outcome",
+    "requested_at",
+    "when"
+  ],
+  "QuizzesOut": [
+    "attempts",
+    "ready",
+    "waiting"
+  ],
   "RecordedOut": [
     "applies_on",
     "gate_evening",
@@ -304,6 +402,9 @@ export const MODELS = {
   "SignInOut": [
     "expires_at",
     "signed_in"
+  ],
+  "SkipIn": [
+    "reason"
   ],
   "StatusOut": [
     "events_pending",

@@ -352,6 +352,145 @@ class LibraryPostOut(BaseModel):
     study_item_state: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# 5d: Read, Skip, and the quiz
+# ---------------------------------------------------------------------------
+
+
+class SkipIn(BaseModel):
+    """An optional reason. The record is never empty without one -- see
+    gate/actions.py, which writes where the skip came from as its floor."""
+
+    reason: str = Field("", max_length=280)
+
+
+class ItemActionOut(BaseModel):
+    item_id: int
+    moved: bool
+    state: str
+
+
+class QuizStatusOut(BaseModel):
+    """Whether this item's quiz can be sat, and if not, why and when.
+
+    `kind` is one of: open, ready, requested, not-generated, not-delivered,
+    not-readable. `reason` is the sentence to show; `when` says when a requested
+    set will exist, measured rather than promised -- whether the bot is
+    listening is read from its heartbeat, not assumed.
+    """
+
+    item_id: int
+    kind: str
+    reason: str = ""
+    when: str = ""
+    attempt_id: int | None = None
+    requested_at: str | None = None
+    # How the last request closed, when it closed without a set: the refusal's
+    # sentence, so the screen can say why instead of waiting forever.
+    request_outcome: str | None = None
+
+
+class AnswerIn(BaseModel):
+    index: int = Field(..., ge=0)
+    choice: int = Field(..., ge=0)
+
+
+class FlagIn(BaseModel):
+    index: int = Field(..., ge=0)
+
+
+class QuizQuestionOut(BaseModel):
+    """One question as it may be shown WHILE the quiz is open.
+
+    No correct index and no explanation. Those exist only on `QuizReviewOut`,
+    which is built from a finished attempt -- so an open attempt cannot leak an
+    answer through this model however a route is written.
+    """
+
+    index: int
+    question: str
+    options: list[str]
+    chosen: int | None = None
+    flagged: bool = False
+
+
+class QuizReviewOut(BaseModel):
+    """One question after the attempt was settled: what was right, and where.
+
+    `drive_id` and `page` point at the source in the reader when the question
+    named a file this item holds. `page` is 1-based, as the question gave it.
+    """
+
+    index: int
+    question: str
+    options: list[str]
+    chosen: int | None = None
+    correct: int
+    flagged: bool = False
+    right: bool = False
+    explanation: str = ""
+    source_file: str = ""
+    source_page: int | None = None
+    drive_id: str | None = None
+
+
+class QuizResultOut(BaseModel):
+    """Counts, never a percentage. "5 of 6", and the bar it had to clear."""
+
+    passed: bool
+    verified: bool
+    correct: int
+    counted: int
+    needed: int
+    flagged: int
+    failures: int = 0
+    review: list[QuizReviewOut] = Field(default_factory=list)
+
+
+class QuizAttemptOut(BaseModel):
+    attempt_id: int
+    item_id: int
+    label: str = ""
+    course_id: str = ""
+    course_name: str = ""
+    total: int
+    index: int
+    finished: bool
+    started_at: str | None = None
+    finished_at: str | None = None
+    questions: list[QuizQuestionOut] = Field(default_factory=list)
+    result: QuizResultOut | None = None
+
+
+class QuizItemOut(BaseModel):
+    item_id: int
+    label: str
+    course_id: str
+    course_name: str = ""
+    state: str
+    status: QuizStatusOut
+
+
+class PastAttemptOut(BaseModel):
+    attempt_id: int
+    item_id: int
+    label: str = ""
+    course_id: str = ""
+    course_name: str = ""
+    finished_at: str
+    correct: int
+    counted: int
+    passed: bool
+
+
+class QuizzesOut(BaseModel):
+    """The Quizzes screen: what can be sat now, what is waiting, what was sat."""
+
+    ready: list[QuizItemOut] = Field(default_factory=list)
+    waiting: list[QuizItemOut] = Field(default_factory=list)
+    attempts: list[PastAttemptOut] = Field(default_factory=list)
+
+
 # NextOut and StudyItemOut both reference DocumentOut before it is defined.
 NextOut.model_rebuild()
 StudyItemOut.model_rebuild()

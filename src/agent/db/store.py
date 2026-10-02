@@ -1840,6 +1840,12 @@ def count_api_sessions(conn: sqlite3.Connection) -> int:
     return int(conn.execute("SELECT count(*) AS n FROM api_sessions").fetchone()["n"])
 
 
+# The bot_state key `agent bot` stamps on every pass of its loop. Here rather
+# than in gate/bot.py so that the API can read it without importing the bot --
+# which would load the Telegram client into a process that must never send.
+BOT_HEARTBEAT_KEY = "heartbeat_at"
+
+
 def get_bot_state(conn: sqlite3.Connection, key: str) -> str | None:
     row = conn.execute("SELECT value FROM bot_state WHERE key = ?", (key,)).fetchone()
     return None if row is None else row["value"]

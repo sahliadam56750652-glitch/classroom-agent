@@ -36,11 +36,10 @@ from .scheduler import Item, Subject, item_by_id, items_for, stored_subjects
 
 OFFSET_KEY = "last_update_id"
 
-# Stamped on every pass of the poll loop. The API reads it to say whether a
-# requested quiz will be written in a minute or two (the bot is listening) or at
-# the next scheduled run (it is not). A claim about another process, so it is
-# measured rather than assumed.
-HEARTBEAT_KEY = "heartbeat_at"
+# Stamped on every pass of the poll loop, so the API can say whether a requested
+# quiz will be written in a minute or two or at the next scheduled run. Defined
+# in store.py, where the API can read it without loading this module.
+HEARTBEAT_KEY = store.BOT_HEARTBEAT_KEY
 
 SNOOZE = timedelta(hours=2)
 

@@ -1,11 +1,12 @@
 """Everything the API can write, and the one thing it cannot.
 
 The load-bearing test in this file is
-`test_verified_stays_zero_after_every_write_route`. It exercises every non-GET
-route the app exposes and asserts the count of `verified` study items is still
-zero -- the behavioural half of the guarantee whose other halves are the import
-guard and the route whitelist. It mirrors the existing Telegram test that presses
-every button and asserts the same.
+`test_no_write_route_reaches_verified_without_a_passed_quiz`. It exercises every
+non-GET route the app exposes -- including Read, Skip and every quiz route, with
+no set written and so no quiz to pass -- and asserts the count of `verified`
+study items is still zero. Since 5d the API CAN reach `verified`, through
+quiz.settle on a passed attempt and no other way; tests/test_api_quiz.py pins
+that door from the other side. This one pins that every other door is shut.
 
 Everything else here is about refusals being the same sentence at a terminal and
 over HTTP, which is only true because slice 0 made them exceptions instead of
@@ -47,12 +48,13 @@ PDF = (
 # ---------------------------------------------------------------------------
 
 
-def test_verified_stays_zero_after_every_write_route(config, monkeypatch):
-    """Every non-GET route, exercised, and `verified` is still zero.
+def test_no_write_route_reaches_verified_without_a_passed_quiz(config, monkeypatch):
+    """Every non-GET route, exercised, no quiz passed, and `verified` is still zero.
 
-    Enumerated from the app rather than listed by hand, so a write added without
-    a thought here still gets pressed. The route whitelist makes adding one a
-    deliberate act; this makes adding one that touches study_items a failing test.
+    Listed here and compared with WRITE_ROUTES, so a write added without a thought
+    here fails the comparison. The route whitelist makes adding one a deliberate
+    act; this makes adding one that reaches `verified` some other way than a
+    passed quiz a failing test.
     """
     session = client(config, monkeypatch)
     app = session.app if hasattr(session, "app") else None
@@ -113,6 +115,24 @@ def test_verified_stays_zero_after_every_write_route(config, monkeypatch):
             "/api/uploads",
             files={"file": ("board.pdf", io.BytesIO(PDF), "application/pdf")},
             data={"subject": "Database"},
+        ),
+        ("POST", "/api/study-items/{item_id}/read"): lambda: session.post(
+            "/api/study-items/1/read"
+        ),
+        ("POST", "/api/study-items/{item_id}/skip"): lambda: session.post(
+            "/api/study-items/1/skip", json={"reason": "covered in the TD"}
+        ),
+        ("POST", "/api/study-items/{item_id}/quiz"): lambda: session.post(
+            "/api/study-items/1/quiz"
+        ),
+        ("POST", "/api/study-items/{item_id}/quiz/request"): lambda: session.post(
+            "/api/study-items/1/quiz/request"
+        ),
+        ("POST", "/api/quiz-attempts/{attempt_id}/answers"): lambda: session.post(
+            "/api/quiz-attempts/1/answers", json={"index": 0, "choice": 0}
+        ),
+        ("POST", "/api/quiz-attempts/{attempt_id}/flags"): lambda: session.post(
+            "/api/quiz-attempts/1/flags", json={"index": 0}
         ),
     }
 
