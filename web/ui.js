@@ -46,9 +46,9 @@ export function Chip({ name, class: extra = "" }) {
 
 /** The mark and the name, linking home. */
 export function Brand() {
-  return html`<a class="brand" ...${linkProps("/")} aria-label="Margin, Today">
+  return html`<a class="brand" ...${linkProps("/")} aria-label="Lectern, Today">
     <${Mark} />
-    <span class="brand-name">Margin</span>
+    <span class="brand-name">Lectern</span>
   </a>`;
 }
 

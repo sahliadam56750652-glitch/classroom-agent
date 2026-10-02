@@ -10,7 +10,7 @@
 -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>Margin</title>
+<title>Lectern</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#f3efe7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#171512" media="(prefers-color-scheme: dark)">
@@ -22,7 +22,7 @@
 -->
 <script>
   try {
-    var chosen = localStorage.getItem("margin.theme");
+    var chosen = localStorage.getItem("lectern.theme") || localStorage.getItem("margin.theme");
     if (chosen === "light" || chosen === "dark") {
       document.documentElement.dataset.theme = chosen;
       document.querySelector('meta[name="theme-color"]:not([media])')

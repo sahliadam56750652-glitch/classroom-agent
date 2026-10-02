@@ -608,3 +608,18 @@ def test_every_module_stylesheet_and_font_is_precached():
         if "/" + path.relative_to(WEB).as_posix() not in precached
     )
     assert not missing, f"not precached: {missing}"
+
+
+def test_the_app_is_called_lectern_wherever_a_person_sees_a_name():
+    """DESIGN.md section 8: Lectern on the screen; the repo keeps its own name."""
+    manifest = json.loads((WEB / "manifest.webmanifest").read_text(encoding="utf-8"))
+    assert manifest["name"] == "Lectern" and manifest["short_name"] == "Lectern"
+    head = (WEB / "index.html").read_text(encoding="utf-8")
+    assert "<title>Lectern</title>" in head
+    brand = (WEB / "ui.js").read_text(encoding="utf-8")
+    assert '<span class="brand-name">Lectern</span>' in brand
+    # No screen still says the old names. Comments may tell the history.
+    for module in list(WEB.glob("*.js")) + list(WEB.glob("screens/*.js")):
+        code = re.sub(r"//[^\n]*|/\*.*?\*/", "", module.read_text(encoding="utf-8"), flags=re.S)
+        for old in ("classroom-agent", ">Margin<", '"Margin'):
+            assert old not in code, f"{module.name} still says {old}"

@@ -397,7 +397,7 @@ PROBE = """<!DOCTYPE html><html><head><meta charset='utf-8'>
 <script>
 const q = new URLSearchParams(location.search);
 (async () => {
-  try { localStorage.setItem('margin.theme', q.get('theme') || 'dark'); } catch (e) {}
+  try { localStorage.setItem('lectern.theme', q.get('theme') || 'dark'); } catch (e) {}
   if (q.get('s') !== '0') {
     await fetch('/api/session', {method: 'POST', credentials: 'same-origin',
       headers: {'Content-Type': 'application/json'},

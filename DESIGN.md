@@ -327,12 +327,17 @@ a glance -- and everything around it stays quiet.
 
 ### Name and mark
 
-Placeholder name **Margin** -- where the notes go, and the space this app keeps
-for the reading. The other two proposals: **Lectern** (the thing you read
-standing at), **Lamplight** (when it is used). The mark is a page with its
-margin rule: a rounded sheet, one vertical line near its left edge, and a short
-line of accent beside it. It is the favicon, the PWA icon and the sidebar's mark.
-`web/icon.svg` is the source; the PNGs are drawn from the same geometry.
+**Lectern** -- the desk you read at, standing, with the page held at an angle
+in front of you. Chosen 2026-10-02 from three proposals (Margin, Lectern,
+Lamplight); Margin was the placeholder for a week. The repository and the
+Python package keep their names: `classroom-agent` and `agent` are what the
+code is, and Lectern is what the screen says.
+
+The mark is a lectern: a sloped desk with a lip that holds the page, on a post
+and a foot -- paper on fountain-pen blue, the lip in highlighter amber. It is the
+favicon, the installed app's icon and the sidebar's mark. `tools/icons.py` holds
+the geometry once and draws `web/icon.svg` and the PNGs from it; `web/icons.js`
+draws the same shapes in the theme's own colours.
 
 ### Themes
 

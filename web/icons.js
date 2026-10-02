@@ -54,16 +54,19 @@ export function Icon({ name, label, class: extra = "" }) {
 }
 
 /**
- * The mark: a page with its margin rule. DESIGN.md section 8.
+ * The mark: a lectern. DESIGN.md section 8.
  *
- * Drawn from the theme's own tokens, so it is ink on paper by day and lit ink on
- * charcoal at night. web/icon.svg is the same geometry in fixed colours, for the
- * places a theme cannot reach -- the favicon and the installed app's icon.
+ * The geometry of tools/icons.py on a 32-unit grid, drawn from the theme's own
+ * tokens -- ink and paper by day, lit ink on charcoal at night -- with the lip
+ * in the first subject hue's amber. web/icon.svg is the same drawing in fixed
+ * colours, for the places a theme cannot reach: the favicon and the app icon.
  */
 export function Mark({ class: extra = "" }) {
   return html`<svg class=${`mark ${extra}`} viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-    <rect x="5" y="3" width="22" height="26" rx="4" fill="var(--raised)" stroke="var(--ink)" stroke-width="1.6" />
-    <path d="M11 3.8v24.4" stroke="var(--s0-fg)" stroke-width="1.8" />
-    <path d="M14.5 11h8M14.5 16h8M14.5 21h5" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" />
+    <rect x="14.5" y="16.5" width="3" height="7" fill="var(--ink)" />
+    <rect x="9.5" y="23" width="13" height="2.5" rx="1.25" fill="var(--ink)" />
+    <polygon points="6,13 24,7.5 26,11.5 8,17" fill="var(--raised)" stroke="var(--ink)" stroke-width="1.4" stroke-linejoin="round" />
+    <path d="M7.5 17.5L26.5 11.75" stroke="var(--s0-fg)" stroke-width="1.8" stroke-linecap="round" />
+    <path d="M10 13.25L20 10.25M11 15L18 12.9" stroke="var(--accent)" stroke-width="1.3" stroke-linecap="round" />
   </svg>`;
 }

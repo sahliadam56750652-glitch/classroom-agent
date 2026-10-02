@@ -11,7 +11,10 @@
 // it, and it keeps <meta name="theme-color"> in step so the phone's own chrome
 // matches.
 
-const KEY = "margin.theme";
+const KEY = "lectern.theme";
+// The key from the week the app was called Margin, read once so a choice made
+// then survives the rename, and cleared the next time a theme is chosen.
+const OLD_KEY = "margin.theme";
 export const CHOICES = ["system", "light", "dark"];
 
 // The page ground of each theme, for the browser's own chrome.
@@ -19,7 +22,7 @@ const GROUND = { light: "#f3efe7", dark: "#171512" };
 
 export function storedTheme() {
   try {
-    const found = localStorage.getItem(KEY);
+    const found = localStorage.getItem(KEY) || localStorage.getItem(OLD_KEY);
     return CHOICES.includes(found) ? found : "system";
   } catch {
     return "system";
@@ -42,6 +45,7 @@ export function applyTheme(choice) {
 export function setTheme(choice) {
   if (!CHOICES.includes(choice)) return;
   try {
+    localStorage.removeItem(OLD_KEY);
     if (choice === "system") localStorage.removeItem(KEY);
     else localStorage.setItem(KEY, choice);
   } catch {

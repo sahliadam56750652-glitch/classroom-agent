@@ -651,7 +651,7 @@ def test_a_deep_link_into_the_reader_serves_the_app(served):
     base, _ = served
     with urllib.request.urlopen(f"{base}/read/anything", timeout=30) as response:
         assert response.status == 200
-        assert b"<title>Margin</title>" in response.read()
+        assert b"<title>Lectern</title>" in response.read()
 
 
 @chrome_only
