@@ -55,12 +55,17 @@ LOCKOUT_WINDOW_SECONDS = 900
 LOCKOUT_SECONDS = 900
 
 
+def _clock() -> datetime:
+    """The one source of "now" for sessions here, so a test can freeze it."""
+    return datetime.now(timezone.utc)
+
+
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return _clock().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _expiry_iso(*, now: datetime | None = None) -> str:
-    moment = now or datetime.now(timezone.utc)
+    moment = now or _clock()
     return (moment + timedelta(days=SESSION_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

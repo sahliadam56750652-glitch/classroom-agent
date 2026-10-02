@@ -148,14 +148,25 @@ def test_an_expired_session_is_not_live(config, monkeypatch):
 
 
 def test_using_a_session_slides_its_expiry(config, monkeypatch):
+    """A request moves the expiry to SESSION_DAYS from now -- exactly.
+
+    The clock is frozen, both the API's and the store's, so this asserts one
+    instant rather than "later than some date". The first version pinned a fixed
+    date that later passed, and then failed for the wrong reason.
+    """
+    from agent.api import auth as api_auth
+
+    frozen = datetime(2026, 11, 1, 12, 0, 0, tzinfo=timezone.utc)
+    stamp = lambda moment: moment.strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+    monkeypatch.setattr(api_auth, "_clock", lambda: frozen)
+    monkeypatch.setattr(store, "_utc_now_iso", lambda: stamp(frozen))
+
     session = client(config, monkeypatch)
     conn = store.connect(config.db_path)
-    before = conn.execute("SELECT expires_at FROM api_sessions").fetchone()[0]
-    # Tomorrow, worked out from the clock: still live, but close enough to
-    # expiry that a slide is visible. A fixed date here went stale the day it
-    # passed and then failed for the wrong reason -- the session had expired.
-    soon = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    conn.execute("UPDATE api_sessions SET expires_at = ?", (soon,))
+    # A day from expiry: live, and near enough that the slide is visible.
+    conn.execute(
+        "UPDATE api_sessions SET expires_at = ?", (stamp(frozen + timedelta(days=1)),)
+    )
     conn.commit()
     conn.close()
 
@@ -164,8 +175,7 @@ def test_using_a_session_slides_its_expiry(config, monkeypatch):
     conn = store.connect(config.db_path)
     after = conn.execute("SELECT expires_at FROM api_sessions").fetchone()[0]
     conn.close()
-    assert after > soon
-    assert after >= before[:4] + before[4:]  # still ~90 days out, not shortened
+    assert after == stamp(frozen + timedelta(days=api_auth.SESSION_DAYS))
 
 
 def test_signing_in_sweeps_expired_rows(config, monkeypatch):
