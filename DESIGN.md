@@ -131,7 +131,8 @@ first.** Everything else is the exception.
   evening" -- and that greeting is the only thing in the app that reads the hour.
   It names the time of day and nothing else: no "it's late", no "still up", no
   change of colour, layout or wording anywhere else. At 23:00 it says "Good
-  evening", exactly as it did at 19:00.
+  evening", exactly as it did at 19:00 -- and at 01:30 too: midnight to 05:00 is
+  still the evening to someone still studying.
 - **It asks for the smallest true thing.** One window — roughly twenty pages,
   the ones tomorrow's session actually needs — never the 92-page chapter. This
   is what Phase 3d exists for, and until it ships the client shows the window

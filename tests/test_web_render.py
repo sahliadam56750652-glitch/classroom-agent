@@ -1028,3 +1028,30 @@ def test_study_holds_subjects_quizzes_and_library(served, tmp_path_factory):
     assert "Database" in found["text"]
     assert "%" not in found["text"]
     assert found["scroll"] <= found["client"]
+
+
+@chrome_only
+def test_the_greeting_stays_evening_until_five(served, tmp_path_factory):
+    """01:30 is still the evening to someone studying -- never "Good morning".
+
+    Run in a real browser against greeting.js itself, at fixed instants, so the
+    hours are the module's and not a copy of them.
+    """
+    base, _ = served
+    steps = """
+      const { greeting } = await import('/greeting.js');
+      const at = (h, m) => greeting(new Date(2026, 9, 2, h, m));
+      d().body.innerText = JSON.stringify({
+        '00:00': at(0, 0), '01:30': at(1, 30), '04:59': at(4, 59),
+        '05:00': at(5, 0), '11:59': at(11, 59), '12:00': at(12, 0),
+        '17:59': at(17, 59), '18:00': at(18, 0), '23:00': at(23, 0),
+      });
+    """
+    found = render(base, tmp_path_factory.mktemp("greet"), path="/", steps=steps)
+    said = json.loads(found["text"])
+    for clock in ("00:00", "01:30", "04:59", "18:00", "23:00"):
+        assert said[clock] == "Good evening", (clock, said[clock])
+    for clock in ("05:00", "11:59"):
+        assert said[clock] == "Good morning", (clock, said[clock])
+    for clock in ("12:00", "17:59"):
+        assert said[clock] == "Good afternoon", (clock, said[clock])

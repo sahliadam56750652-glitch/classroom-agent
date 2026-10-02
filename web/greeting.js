@@ -8,7 +8,13 @@
 // tests/test_web_assets.py allows getHours() in this module and in no other,
 // so the rule cannot spread by accident.
 
-/** "Good morning", "Good afternoon" or "Good evening". Never anything else. */
+/**
+ * "Good morning", "Good afternoon" or "Good evening". Never anything else.
+ *
+ * Midnight to 05:00 is still the evening. "Good morning" at 01:30 reads wrong to
+ * someone who has not stopped studying since dinner -- and it would be the app
+ * announcing that a new day has started on them. A browser test pins the hours.
+ */
 export function greeting(now) {
   const hour = now.getHours();
   if (hour >= 5 && hour < 12) return "Good morning";
