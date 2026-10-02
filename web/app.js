@@ -27,6 +27,7 @@ import { Timetable } from "/screens/timetable.js";
 import { Projects } from "/screens/projects.js";
 import { Add } from "/screens/add.js";
 import { More, SECONDARY } from "/screens/more.js";
+import { PastAttempt, Quiz, Quizzes } from "/screens/quiz.js";
 import { Icon } from "/icons.js";
 import { linkProps, match, navigate, useRoute } from "/router.js";
 import { flushWhenOnline } from "/queue.js";
@@ -229,6 +230,11 @@ function pick(route, status, onSignOut) {
   const path = route.path;
   const subject = match("/subjects/", path);
   if (subject) return ["subject", html`<${Subject} name=${subject} />`];
+  const past = match("/quiz/attempt/", path);
+  if (past) return ["quiz", html`<${PastAttempt} attemptId=${past} />`];
+  const quizItem = match("/quiz/", path);
+  if (quizItem) return ["quiz", html`<${Quiz} itemId=${quizItem} />`];
+  if (path === "/quizzes") return ["quizzes", html`<${Quizzes} />`];
   if (path === "/subjects") return ["subjects", html`<${Subjects} />`];
   if (path === "/library")
     return ["library", html`<${Library} course=${route.query.get("course")} />`];
@@ -254,6 +260,7 @@ const PRIMARY = [
 function placeOf(path) {
   if (path.startsWith("/subjects")) return "/subjects";
   if (path.startsWith("/library") || path.startsWith("/items")) return "/library";
+  if (path.startsWith("/quiz")) return "/quizzes";
   return path;
 }
 

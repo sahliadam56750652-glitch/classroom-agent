@@ -172,6 +172,23 @@ The reader's PDF rendering is the one thing NOT covered there, and the reason is
 the harness: `--virtual-time-budget` fast-forwards timers but not the network and
 starves a Web Worker. It is checked by looking; `web/VENDOR.md` says how.
 
+**Phase 5d — the quiz half built, pulled forward into the redesign.** Spec:
+`docs/superpowers/specs/2026-10-02-phase-5d-quiz-in-the-browser.md`.
+
+- `gate/quiz.py` split into a grading half (no provider) and
+  `gate/quizgen.py` (the prompt, generation, `begin`, `prepare`). The API
+  process loads the first and a guard asserts it never loads the second.
+- Read and Skip are back on the default screen, side by side, through
+  `gate/actions.py` -- the functions the bot's buttons now call too.
+- The quiz is sat in the browser and graded on the server; the API reaches
+  `verified` only through `quiz.settle`, in one file. One open attempt per item
+  is shared with Telegram.
+- Sets are written ahead by a new `quizzes` stage of `agent run`
+  (`quiz.prepare_limit`, 2 a run), and a quiz the browser asks for is a row in
+  `quiz_requests` that `agent bot` answers between polls.
+- Snooze is still Telegram-only. It belongs to the evening prompt, which the
+  web app does not send, so it has nothing to attach to there.
+
 **The term is running, and the gate has a real backlog. Measured 2026-09-25**,
 against the live database rather than estimated:
 
@@ -482,9 +499,13 @@ already is; the tap that changes state still happens in `agent bot`. That is one
 extra hop and it is honest about where the writer lives, which a button that
 silently does nothing would not be.
 
-`verified` is out of scope for 5d as much as for 5b. It has exactly one writer
-and is reached by passing a quiz, and the quiz stays where generation is already
-lazy and rate-limited.
+~~`verified` is out of scope for 5d as much as for 5b.~~ **Revised 2026-10-02,
+when the quiz was pulled into 5d.** `verified` still has exactly one writer and
+is still reached only by passing a quiz -- what moved is where the quiz can be
+SAT, not how it is graded or who writes it. The API sits it through the grading
+half of the quiz and settles through `quiz.settle`; generation stays in the
+processes already allowed to spend quota. See the settled decision "The browser
+sits the quiz; it never writes one".
 
 ### Phase 6 — manual entries
 
@@ -1135,6 +1156,34 @@ than behind it.
 
 ---
 
+### The browser sits the quiz; it never writes one (5d, 2026-10-02)
+
+Three things were true before 5d and stay true: `verified` has one writer,
+grading is an integer against an integer, and the API makes no model call. 5d
+had to put the quiz in the browser without loosening any of them, and did it by
+splitting the module rather than the rule.
+
+- **Grading and generation are different modules.** `gate/quiz.py` imports no
+  provider; `gate/quizgen.py` is the only module in `gate/` that does. The API
+  imports the first. A guard asserts the API process never loads the second,
+  and a second guard asserts `settle` is named in exactly one API file.
+- **A missing set is a request, not a failure.** The API records it in
+  `quiz_requests`; `agent bot` answers between polls, and `agent run`'s quizzes
+  stage answers requests before anything it chose itself. The screen says which
+  will happen, from the bot's heartbeat, and says why when a request closed
+  without a set.
+- **Writing ahead is bounded like OCR.** `quiz.prepare_limit` per run, counted
+  in requests spent rather than sets written, so a refusal still counts against
+  the day.
+- **Undelivered material can have a set but cannot be sat.** Writing tomorrow's
+  questions tonight changes nothing about the item; sitting them would make a
+  pass evidence of nothing. The refusal moved from generation to `quiz.start`.
+
+Declined: generating synchronously in the API behind a flag. It would have made
+"the API never calls a model" a configuration rather than a property, and the
+one-in-twenty request it saves is not worth the guarantee.
+
+
 ## Recurring lesson — misreporting is its own defect
 
 Four separate incidents in Phase 2 cost real time, and all four were failures
@@ -1247,8 +1296,14 @@ semester's scope.
   generic once the layout is finished, try one display face on the hero only and
   judge it by eye at 23:00. If they do not, close this.
 
-- **The default screen has ONE button, not two.** *Decided at 5c slice 1 with a
-  recommendation; overrule it if the reading is wrong.*
+- ~~**The default screen has ONE button, not two.**~~ **Closed 2026-10-02: both
+  are back.** Read and Skip sit side by side under the button that opens the
+  material, at equal weight, through `gate/actions.py`. Skip is one tap and is
+  logged on that tap; the optional reason is offered before it, folded away, so
+  honesty still costs exactly one tap. The reasoning below is kept as the record
+  of why the interim had one.
+
+  *Decided at 5c slice 1 with a recommendation; overrule it if the reading is wrong.*
 
   DESIGN.md section 4 wants Read and Skip side by side at equal weight, with Skip
   stating what it records and no confirmation. Neither is performable in 5c: the

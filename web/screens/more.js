@@ -10,6 +10,7 @@ import { linkProps } from "/router.js";
 import { ScreenHeader } from "/ui.js";
 
 export const SECONDARY = [
+  ["/quizzes", "Quizzes", "quiz", "Lectures read and not yet verified, and quizzes sat."],
   ["/deadlines", "Deadlines", "deadlines", "Everything with a due date, in date order."],
   ["/projects", "Projects", "projects", "Longer work, and its milestones."],
   ["/add", "Add", "add", "Something that never came through Classroom."],

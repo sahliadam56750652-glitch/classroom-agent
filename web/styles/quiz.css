@@ -1,0 +1,132 @@
+/*
+  The quiz. One question at a time, four options as whole tappable rows, and a
+  way to say a question is wrong that is always there and never in the way.
+
+  Answered options are not coloured right or wrong while the quiz is open --
+  the server has not said, and could not. The result says it in counts.
+*/
+
+.quiz {
+  max-width: 44rem;
+}
+
+.quiz-head {
+  margin-bottom: calc(var(--s4) * -1);
+}
+
+.quiz-card {
+  gap: var(--s5);
+}
+
+.quiz-question {
+  font-size: 21px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.quiz-options {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.quiz-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s4);
+  width: 100%;
+  min-height: 56px;
+  padding: var(--s3) var(--s4);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  color: var(--ink);
+  font-size: 17px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--quick) var(--ease), border-color var(--quick) var(--ease);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.quiz-option:hover:not(:disabled) {
+  border-color: var(--edge);
+  background: var(--pressed);
+}
+
+.quiz-option:active:not(:disabled) {
+  background: var(--pressed);
+}
+
+.quiz-option:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.quiz-letter {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-top: -1px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  color: var(--ink-2);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.quiz-flag {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line);
+}
+
+.quiz-flag .button {
+  align-self: flex-start;
+  margin-left: calc(var(--s3) * -1);
+}
+
+/* The door to a quiz, wherever an item is shown. */
+.quiz-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s2);
+}
+
+.quiz-entry.compact .button {
+  min-height: 44px;
+  font-size: 16px;
+}
+
+.quiz-sentence {
+  max-width: var(--measure);
+}
+
+/* The result. */
+.quiz-result .hero {
+  max-width: 44rem;
+}
+
+.review-card {
+  flex-direction: column;
+}
+
+.review-q {
+  font-weight: 500;
+}
+
+.review-right {
+  color: var(--ink);
+}
+
+.review-link {
+  align-self: flex-start;
+  margin-left: calc(var(--s3) * -1);
+}

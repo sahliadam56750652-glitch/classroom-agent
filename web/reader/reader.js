@@ -129,7 +129,11 @@ export function Reader({ driveId }) {
   const [scale, setScale] = useState(1);
 
   const scroller = useRef(null);
-  const restored = useRef(false);
+  // `?page=N` -- from a quiz result's "Open page N" -- wins over the stored
+  // position: I asked for that page by name, and where I last stopped is a
+  // different question. 1-based, as the question gave it.
+  const askedPage = Number(new URLSearchParams(location.search).get("page")) || 0;
+  const restored = useRef(askedPage || false);
   const lastWritten = useRef(null);
 
   // Metadata and the stored position, in parallel with the PDF itself.
@@ -146,7 +150,7 @@ export function Reader({ driveId }) {
         // fall back to page one would show me different material and look
         // exactly like it worked.
         if (position.note) setNote(position.note);
-        if (position.page) restored.current = position.page;
+        if (position.page && !askedPage) restored.current = position.page;
       })
       .catch((err) => {
         if (!live) return;

@@ -249,8 +249,57 @@ def _seed(data: Path) -> None:
     store.ensure_study_item(
         conn, course_id="842149328479",
         entity_type="coursework_material", entity_id="p-render")
+
+    # A second item, fully transcribed and already read, with its questions
+    # written -- in a course outside the timetable, so it changes nothing the
+    # other screens assert about Database and OS. Study item 2.
+    _seed_a_quiz(conn, data)
     conn.commit()
     conn.close()
+
+
+QUIZ_ITEM = 2
+
+
+def _seed_a_quiz(conn, data: Path) -> None:
+    import json as _json
+
+    from agent.gate import quiz as gate_quiz
+
+    store.upsert_course(conn, parse_course({"id": "c-quiz", "name": "Networks"}))
+    attachment = {"driveFile": {"driveFile": {
+        "id": "d-quiz", "title": "Lecture 2.pdf", "alternateLink": "x"}}}
+    material, _ = parse_coursework_material(
+        {"id": "p-quiz", "title": "Lecture 2 — the link layer",
+         "creationTime": "2026-09-10T09:00:00Z",
+         "updateTime": "2026-09-10T09:00:00Z", "materials": [attachment]},
+        "c-quiz",
+    )
+    store.upsert_coursework_material(conn, material)
+    store.upsert_materials(conn, parse_materials("coursework_material", "p-quiz", "c-quiz", [attachment]))
+    (data / "library" / "text" / "d-quiz.txt").write_text("Framing and error detection. " * 60, encoding="utf-8")
+    shutil.copy(data / "library" / "files" / "d-render.pdf", data / "library" / "files" / "d-quiz.pdf")
+    store.upsert_extraction(
+        conn, "d-quiz", status="ok", local_path="files/d-quiz.pdf",
+        text_path="text/d-quiz.txt", mime_type="application/pdf",
+        size_bytes=64, pages=92, chars=1800, scan_pages=0, ocr_pages=0,
+        method="pdf", md5_checksum="d-quiz",
+    )
+    store.ensure_study_item(
+        conn, course_id="c-quiz", entity_type="coursework_material",
+        entity_id="p-quiz", state="reviewed")
+    questions = [
+        {"question": f"Question {n + 1} about framing?",
+         "options": [f"first {n}", f"second {n}", f"third {n}", f"fourth {n}"],
+         "correct": n % 4, "explanation": f"SECRET-EXPLANATION-{n}",
+         "source_file": "Lecture 2.pdf", "source_page": n + 2}
+        for n in range(6)
+    ]
+    rows = store.study_item_sources(conn, "coursework_material", "p-quiz")
+    store.save_questions(
+        conn, item_id=QUIZ_ITEM, source_hash=gate_quiz.fingerprint_of(rows, 6),
+        model="stub", questions=_json.dumps(questions),
+    )
 
 
 PROBE = """<!DOCTYPE html><html><head><meta charset='utf-8'></head><body>
@@ -414,11 +463,13 @@ def test_the_waiting_state_says_what_design_md_asks_for(busy):
     assert "an evening is about pages 1-20" in text
     assert "This counts as read, not verified." in text
 
-    # Two doors that do two different things. Reading is something the app CAN
-    # do, so it is offered first; Read and Skip are writes to study_items and
-    # live in Telegram until 5d, below and at lower weight.
-    assert "Read pages 1-20" in text
-    assert "Read and Skip are in Telegram" in text
+    # Opening the material first, then the two answers section 4 asks for, at
+    # equal weight -- in the app since 5d, through the same functions the bot
+    # uses. Skip says on its face that it is logged.
+    assert "Open pages 1-20" in text
+    assert "I've read it" in text
+    assert "Skip — logged" in text
+    assert "Read and Skip are in Telegram" not in text
 
 
 @chrome_only
@@ -906,3 +957,42 @@ def test_no_screen_builds_raw_status_text():
             f"{module.name} prints err.message; use describe(err) so a user sees "
             f"a sentence rather than a status line"
         )
+
+
+@chrome_only
+def test_an_open_quiz_shows_the_question_and_never_the_answer(served, tmp_path_factory):
+    """Phase 5d: the browser sits the quiz, and the server grades it.
+
+    The explanation exists on the server and must not be anywhere in the page
+    until the attempt is finished.
+    """
+    base, _ = served
+    found = render(base, tmp_path_factory.mktemp("quiz"), path=f"/quiz/{QUIZ_ITEM}")
+    assert "Question 1 of 6" in found["text"], found["text"][:400]
+    assert "first 0" in found["text"]
+    assert "This question is wrong" in found["text"]
+    assert "SECRET-EXPLANATION" not in found["html"]
+    assert found["scroll"] <= found["client"]
+
+
+@chrome_only
+def test_a_finished_quiz_shows_counts_and_links_to_the_page(served, tmp_path_factory):
+    """Answer everything wrong; the result is counts and each miss links its page."""
+    base, _ = served
+    steps = """
+    for (let n = 0; n < 6; n++) {
+      const buttons = [...d().querySelectorAll('.quiz-option')];
+      if (!buttons.length) break;
+      // Always the last option: wrong for questions whose answer is not 3.
+      buttons[buttons.length - 1].click();
+      await sleep(700);
+    }
+    await sleep(800);
+    """
+    found = render(base, tmp_path_factory.mktemp("quizdone"), path=f"/quiz/{QUIZ_ITEM}", steps=steps)
+    text = found["text"]
+    assert " of 6" in text, text[:600]
+    assert "%" not in text
+    assert "What you missed" in text
+    assert "Open page" in text
+    assert "/read/d-quiz?page=" in found["html"]

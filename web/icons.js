@@ -25,6 +25,10 @@ const PATHS = {
   external: html`<path d="M13.5 4.5h6v6M19.5 4.5 11 13" /><path d="M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10" />`,
   search: html`<circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" />`,
   close: html`<path d="M6 6l12 12M18 6 6 18" />`,
+  quiz: html`<rect x="4.5" y="4.5" width="15" height="15" rx="3" /><path d="m8.5 12 2.5 2.5 4.5-5" />`,
+  flag: html`<path d="M6 20.5V4" /><path d="M6 4.5h11l-2.2 4 2.2 4H6" />`,
+  skip: html`<path d="m6 6.5 6 5.5-6 5.5z" /><path d="M13 6.5 19 12l-6 5.5" />`,
+  check: html`<path d="m5 12.5 4.5 4.5L19 7.5" />`,
 };
 
 /**

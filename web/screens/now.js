@@ -19,6 +19,7 @@ import { plural, relativeDay, sessionName } from "/format.js";
 import { linkProps } from "/router.js";
 import { Icon } from "/icons.js";
 import { Problem, Skeleton, SubjectName } from "/ui.js";
+import { QuizEntry } from "/screens/quiz.js";
 
 /**
  * The shape of the document, with tonight's range marked.
@@ -159,7 +160,7 @@ function forSession(subject, forDate) {
  * It looks identical at 23:00 and at 14:00, because the app knows nothing at
  * 23:00 that it did not know at 14:00.
  */
-function Waiting({ body, botUsername }) {
+function Waiting({ body, onNext }) {
   const { item, subject, windows } = body;
   const window = windows && windows.length ? windows[0] : null;
   const pages = item.pages || 0;
@@ -207,10 +208,11 @@ function Waiting({ body, botUsername }) {
             : null}
 
           <${Actions}
+            key=${item.item_id}
             item=${item}
             files=${body.files}
             windows=${windows}
-            botUsername=${botUsername}
+            onNext=${onNext}
           />
         </article>
 
@@ -294,26 +296,29 @@ function SessionCard({ session, departed = false }) {
 }
 
 /**
- * Two doors that do two different things.
+ * Three doors, and the two that record something are the same size.
  *
- * The primary one is READING, and that is the change the reader makes to this
- * screen: opening the material is something the app can actually do, so it is
- * the thing to offer first. Before slice 2 there was nothing here but a link out.
+ * Opening the material comes first and largest, because it is the thing the app
+ * can do for me right now. Then the two answers DESIGN.md section 4 asks for, side
+ * by side at equal weight: I read it, or I am skipping it. Skip is ONE tap and is
+ * logged on that tap -- "a second tap to be honest is a tax on honesty" -- so the
+ * optional reason is offered BEFORE it, folded away, never as a confirmation after.
  *
- * The second is Telegram, because DESIGN.md section 4's Read and Skip are writes
- * to `study_items` and the API is read-only over them until 5d. It sits below
- * and at lower weight -- it is where the state changes live, not the thing to do
- * first. Still ONE link rather than two: two buttons opening the same
- * conversation would be two doors that are one door, and the invariant section 4
- * protects is that the honest tap never costs more than the flattering one,
- * which holds when they are the same tap.
+ * Both go through the server's gate/actions.py, the functions the bot's buttons
+ * call. Neither can reach `verified`; only a passed quiz can, and the quiz door
+ * appears once the lecture is marked read.
  *
  * `files` comes from `/api/now` rather than a second request, because this is
  * the screen where a round trip is felt.
  */
-function Actions({ item, files, windows, botUsername }) {
+function Actions({ item, files, windows, onNext }) {
   const readable = (files || []).find((file) => file.readable);
   const window = windows && windows.length ? windows[0] : null;
+  const [done, setDone] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [reason, setReason] = useState("");
 
   // Tonight's document, kept for the radio being off. One file, a few MB, and
   // precisely the one I will want at 23:00 -- which is what DESIGN.md section 6
@@ -326,35 +331,90 @@ function Actions({ item, files, windows, botUsername }) {
     });
   }, [readable && readable.drive_id]);
 
+  async function record(verb, body) {
+    setBusy(true);
+    setProblem("");
+    try {
+      await api.post(`/api/study-items/${item.item_id}/${verb}`, body);
+      setDone(verb);
+    } catch (err) {
+      setProblem(describe(err));
+    }
+    setBusy(false);
+  }
+
+  const open = readable
+    ? html`<a
+        class="button primary-button now-open"
+        ...${linkProps(`/read/${encodeURIComponent(readable.drive_id)}`)}
+      >
+        <${Icon} name="document" />
+        ${window ? `Open ${window.label}` : "Open it"}
+      </a>`
+    : html`<p class="notice">
+        Nothing readable is held for this post yet. ${" "}
+        <code>agent fetch</code> and <code>agent extract</code> bring it here.
+      </p>`;
+
+  if (done) {
+    return html`<div class="now-done" role="status">
+      <p class="t-lead now-done-line">
+        <${Icon} name=${done === "read" ? "check" : "skip"} />
+        ${done === "read" ? "Marked as read." : "Logged as skipped."}
+      </p>
+      ${done === "skip"
+        ? html`<p class="t-meta">
+            ${reason.trim()
+              ? `Recorded with your reason: ${reason.trim()}`
+              : "Recorded as skipped in the web app. It is never counted as verified."}
+          </p>`
+        : html`<${QuizEntry} itemId=${item.item_id} />`}
+      <div class="hero-actions">
+        ${done === "read" ? open : null}
+        <button class="button quiet-button" type="button" onClick=${onNext}>
+          Show the next one
+        </button>
+      </div>
+    </div>`;
+  }
+
   return html`
-    <div class="hero-actions actions">
-      ${readable
-        ? html`<a
-            class="button primary-button"
-            ...${linkProps(`/read/${encodeURIComponent(readable.drive_id)}`)}
-          >
-            <${Icon} name="document" />
-            ${window ? `Read ${window.label}` : "Read it"}
-          </a>`
-        : html`<p class="notice">
-            Nothing readable is held for this post yet. ${" "}
-            <code>agent fetch</code> and <code>agent extract</code> bring it
-            here.
-          </p>`}
-      ${botUsername
-        ? html`<a
-            class="button secondary-button"
-            href=${`https://t.me/${botUsername}`}
-            rel="noopener"
-          >
-            <${Icon} name="send" />
-            Read and Skip are in Telegram
-          </a>`
-        : html`<p class="t-meta actions-note">
-            Read and Skip are in the Telegram conversation. Set
-            <code>telegram.bot_username</code> in <code>config.yaml</code> to
-            link to it from here.
-          </p>`}
+    <div class="now-actions">
+      ${open}
+      <div class="now-answers">
+        <button
+          class="button secondary-button"
+          type="button"
+          disabled=${busy}
+          onClick=${() => record("read")}
+        >
+          <${Icon} name="check" />
+          I've read it
+        </button>
+        <button
+          class="button secondary-button"
+          type="button"
+          disabled=${busy}
+          onClick=${() => record("skip", { reason })}
+        >
+          <${Icon} name="skip" />
+          Skip — logged
+        </button>
+      </div>
+      ${asking
+        ? html`<label class="field now-reason">
+            <span>Why skip it? <span class="hint">Optional, kept with the record.</span></span>
+            <input
+              type="text"
+              maxlength="280"
+              value=${reason}
+              onInput=${(e) => setReason(e.target.value)}
+            />
+          </label>`
+        : html`<button class="button quiet-button now-reason-toggle" type="button" onClick=${() => setAsking(true)}>
+            Add a reason before skipping
+          </button>`}
+      ${problem ? html`<p class="problem" role="alert">${problem}</p>` : null}
     </div>
   `;
 }
@@ -364,8 +424,11 @@ export function Now({ status }) {
   const [problem, setProblem] = useState("");
   const [offline, setOffline] = useState(false);
 
+  const [round, setRound] = useState(0);
+
   useEffect(() => {
     let live = true;
+    setBody(null);
     // `?date=` is passed straight through. DESIGN.md's test of this screen is
     // answerable by looking, and the empty state cannot be looked at on a day
     // that has material -- so a quiet date makes the rarer state inspectable.
@@ -381,7 +444,7 @@ export function Now({ status }) {
     return () => {
       live = false;
     };
-  }, []);
+  }, [round]);
 
   if (problem) {
     return html`<div class="screen"><${Problem}>${problem}</${Problem}></div>`;
@@ -410,10 +473,7 @@ export function Now({ status }) {
         </p>`
       : null}
     ${body.waiting
-      ? html`<${Waiting}
-          body=${body}
-          botUsername=${status && status.telegram_bot_username}
-        />`
+      ? html`<${Waiting} body=${body} onNext=${() => setRound((n) => n + 1)} />`
       : html`<${Clear} body=${body} />`}
   `;
 }

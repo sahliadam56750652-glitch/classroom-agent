@@ -114,3 +114,53 @@
 .nowrap {
   white-space: nowrap;
 }
+
+/* The three doors. Open first and full width; Read and Skip beneath it, side
+   by side and the same size, because section 4 says the honest tap must never
+   cost more than the flattering one. */
+.now-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  margin-top: var(--s2);
+}
+
+.now-open {
+  width: 100%;
+}
+
+.now-answers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s3);
+}
+
+.now-answers .button {
+  padding: 0 var(--s3);
+}
+
+.now-reason-toggle {
+  align-self: flex-start;
+  margin-left: calc(var(--s3) * -1);
+}
+
+.now-done {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  margin-top: var(--s2);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--line);
+}
+
+.now-done-line {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.now-done-line svg {
+  width: 22px;
+  height: 22px;
+  color: var(--accent);
+}

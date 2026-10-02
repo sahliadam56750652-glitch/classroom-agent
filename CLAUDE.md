@@ -70,7 +70,7 @@ src/agent/
   notify/      telegram.py  dispatch.py
   digest/      composer.py
   gate/        timetable.py  scheduler.py  messages.py  bot.py  quiz.py
-               sections.py  adjustments.py
+               quizgen.py  actions.py  sections.py  adjustments.py
 tests/
 deploy/        README.md  fingerprint.py  systemd/
 data/          academic.db  token.json  library/  logs/
@@ -134,15 +134,27 @@ decision in `PLAN.md`.
   `advance_study_item` cannot reach it however it is called. Grading is an
   integer compared against an integer; no model is consulted and there is no
   code path from `quiz.settle` to a provider.
+- **The quiz is two modules, and the split is a rule.** `gate/quiz.py` grades:
+  questions as data, the cache lookup, readiness, the attempt, `settle`. It
+  imports no provider. `gate/quizgen.py` writes questions -- the prompt,
+  `generate`, the bot's `begin`, and `prepare` for the scheduled run -- and is
+  the only module in `gate/` that imports `llm/provider.py`. The API imports
+  the first and a test asserts its process never loads the second.
+- **Read and Skip have one implementation**, `gate/actions.py`, called by the
+  bot's buttons and the API's routes alike. A skip always records where it came
+  from ("skipped in the web app", "skipped at delivery, gate run 41") and keeps
+  my reason, if I gave one, after that floor.
 - **A question set is cached against a hash of the text it came from**, not
   against a timestamp -- the same rule as invariant 2. A retry, a restart or a
   second look costs zero requests; a transcription landing changes the hash and
   correctly earns a new set. `PROMPT_VERSION` is part of that hash, so editing
   the prompt retires every stored set.
 - The free tier is ~20 requests a day and it binds. `ocr.run_limit` is 6 and
-  `agent run` fires twice, so OCR takes 12 and the gate has ~8. Raising the OCR
-  limit is spending the quiz's allowance; the arithmetic is written out in
-  `config.example.yaml` so that is a deliberate choice rather than a surprise.
+  `agent run` fires twice, so OCR takes 12; `quiz.prepare_limit` is 2, so sets
+  written ahead take 4; the bot has ~4 left for quizzes written on demand.
+  Raising either limit is spending the other's allowance; the arithmetic is
+  written out in `config.example.yaml` so that is a deliberate choice rather
+  than a surprise.
 - **Everything entered by hand carries the `manual-` id prefix**, and that is
   what makes it distinguishable from a Classroom row sitting in the same table.
   `manual.py` owns the namespace and the minting; `agent upload` writes a post,
@@ -193,10 +205,19 @@ decision in `PLAN.md`.
   `sqlite3` connection stays correct and the event loop is never blocked. One
   place commits -- the `get_db` dependency -- because store writes do not commit
   and a route that forgets returns 200 for a write that never landed.
-- **The API is read-only over `study_items` and never fires the gate.** It cannot
-  reach `verified`, `advance_study_item` or `quiz`, and it never writes a
-  `gate_runs` row: computing a plan and recording that a prompt was sent are
-  different acts. All three are pinned by tests, not by convention.
+- **The API moves a study item only the ways the bot does, and never fires the
+  gate.** Since 5d it calls `gate/actions.py` for Read and Skip, and reaches
+  `verified` through `quiz.settle` on an attempt rebuilt from its row -- in
+  `routes/quiz.py` and nowhere else. It never names `verify_study_item` or
+  `advance_study_item`, never imports `quizgen` or a provider, and never writes
+  a `gate_runs` row: computing a plan and recording that a prompt was sent are
+  different acts. All of it is pinned by tests, not by convention.
+- **The API never writes a question.** A quiz whose set does not exist yet is a
+  row in `quiz_requests`. `agent bot` answers it between polls; the quizzes
+  stage of `agent run` answers it first if the bot is not running. The screen
+  says which, from the bot's heartbeat in `bot_state` -- measured, not assumed.
+  An open attempt is sent without its answers or explanations; those exist only
+  in the review of a finished one.
 - Every external call has explicit retry with exponential backoff on 429 and
   5xx. Never a bare `except:`.
 - Both SQLite pragmas that matter are connection-scoped, so both are set in
@@ -219,7 +240,7 @@ them must not inherit another's.
 
 | when | how | command | why |
 |---|---|---|---|
-| 07:30, 19:30 | Task Scheduler | `agent run` | sync → fetch → extract → ocr → studyitems → packs → deadlines → notify |
+| 07:30, 19:30 | Task Scheduler | `agent run` | sync → fetch → extract → ocr → studyitems → quizzes → packs → deadlines → notify |
 | 20:00 | Task Scheduler | `agent gate` | tomorrow's revision prompt, after the 19:30 sync has pulled the day's material |
 | at logon | Startup `.vbs` → `pythonw.exe` | `agent bot` | the long-poll listener; restart-safe, so killing it is harmless |
 | at logon | Startup `.vbs` → `pythonw.exe` | `agent serve` | the HTTP API behind the web client; holds no state a restart could lose |
@@ -238,9 +259,13 @@ file: `Persistent=true` on the run timer because the sync is catch-up safe, and
 `Persistent=false` on the gate timer because it deliberately is not -- a box
 that boots at 06:00 must not send last night's prompt. See `deploy/README.md`.
 
-The quiz has no entry of its own. It is reached by tapping a button, so it
-lives inside `agent bot` -- and generation is lazy, at the moment the button is
-pressed, which is what keeps it to one or two requests an evening.
+The quiz has no entry of its own. It is sat from a button -- in Telegram or in
+the web app, one open attempt per item shared by both -- and its questions are
+written three ways, all inside the shared quota: ahead of time by the quizzes
+stage of `agent run` (requests first, then tomorrow's subjects, at most
+`quiz.prepare_limit` per run), on demand by `agent bot` when a Telegram button
+needs one, and between polls by `agent bot` for a request the web app left. The
+API writes none of them.
 `agent quiz --item N --dry-run` prints a set to stdout for judging by eye, and
 `agent flagged` lists everything I have marked as a bad question.
 
