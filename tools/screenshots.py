@@ -70,26 +70,13 @@ SCREENS = [
 # derived, so it has to be looked at as much as dark does.
 THEMES = ("light", "dark")
 
-# The state DESIGN.md section 4 says to design first: 23:00, nothing done, a
-# lecture in the morning. Taken with the page's clock genuinely reading 23:xx --
-# its time zone set over DevTools (tools/cdp.py) to one where it is 23:00 right
-# now -- so the picture is of 23:00 and not a claim about it. Setting the clock
-# itself was tried and dropped: virtual time "advance" skips every idle moment
-# and the page's clock ran weeks ahead during the load.
+# The state DESIGN.md section 4 says to design first: 23:00 the night before an
+# 08:30 lecture, nothing done. The page's clock is FROZEN at that instant over
+# DevTools (tools/cdp.py) and the time zone is left alone, so every due time on
+# the screen is the one I would actually see. 2026-10-04T22:00:00Z is 23:00 in
+# Africa/Tunis on the Sunday before BUSY_DAY's Monday.
 LATE = ("today-2300", f"/?date={BUSY_DAY}")
-
-
-def zone_at_23() -> str:
-    """A time zone whose local hour is 23 at this moment."""
-    from datetime import datetime, timezone
-    from zoneinfo import ZoneInfo, available_timezones
-
-    now = datetime.now(timezone.utc)
-    for name in sorted(available_timezones()):
-        if "/" in name and not name.startswith(("Etc/", "SystemV/")):
-            if now.astimezone(ZoneInfo(name)).hour == 23:
-                return name
-    return "Etc/GMT"
+LATE_AT_MS = 1791151200000
 
 
 IDS: dict[str, int] = {}
@@ -302,7 +289,10 @@ def seed(root: Path) -> Path:
     # a fixed date, and the only way Today's third section can be looked at.
     from datetime import datetime, timedelta, timezone
 
-    soon = (datetime.now(timezone.utc) + timedelta(days=2)).replace(hour=21, minute=59, second=0)
+    # Two days after whichever is later, today or the frozen 23:00 evening, so
+    # both the ordinary shots and the late one have something due this week.
+    base_day = max(datetime.now(timezone.utc), datetime(2026, 10, 4, 22, tzinfo=timezone.utc))
+    soon = (base_day + timedelta(days=2)).replace(hour=21, minute=59, second=0)
     store.add_manual_task(conn, course_id="manual-calculus-iii",
                           title="Série 3 — line integrals", kind="exercise_sheet",
                           due_at=soon.strftime("%Y-%m-%dT%H:%M:%SZ"))
@@ -419,7 +409,7 @@ const q = new URLSearchParams(location.search);
 
 
 def capture_late(base: str, out: Path, name: str, path: str, theme: str) -> None:
-    """The same capture, with the page's clock reading 23:00-something."""
+    """The same capture, with the page's clock frozen at 23:00 Tunis time."""
     from cdp import screenshot_at
 
     for label, (width, height) in WIDTHS.items():
@@ -431,9 +421,7 @@ def capture_late(base: str, out: Path, name: str, path: str, theme: str) -> None
         raw = out / f".{name}-{label}-{theme}.raw.png"
         url = f"{base}/__shot.html?t={TOKEN}&theme={theme}&p={urllib.request.quote(path, safe='/?=&')}"
         try:
-            clock = screenshot_at(
-                CHROME, url, (max(width, 520), height), raw, timezone=zone_at_23(),
-            )
+            clock = screenshot_at(CHROME, url, (max(width, 520), height), raw, at_ms=LATE_AT_MS)
         finally:
             probe.unlink(missing_ok=True)
         if clock is None or not raw.is_file():

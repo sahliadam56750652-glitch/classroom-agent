@@ -1,15 +1,20 @@
 """Just enough of the Chrome DevTools Protocol to take one screenshot at a set time.
 
     from cdp import screenshot_at
-    screenshot_at(chrome, url, (width, height), out_png,
-                  epoch=..., timezone="Africa/Tunis")
+    screenshot_at(chrome, url, (width, height), out_png, at_ms=...)
 
 Why it exists: DESIGN.md section 4 says the 23:00 state must look exactly like
 every other state, and the redesign brief asks for a screenshot of it. Headless
-Chrome's command line cannot set the clock, and on Windows it ignores `TZ`, so a
-"23:00" screenshot taken at 16:00 would be a claim rather than a picture. Over
-DevTools the page's clock and zone can be set: `Emulation.setTimezoneOverride`
-and `Emulation.setVirtualTimePolicy` with an `initialVirtualTime`.
+Chrome's command line cannot set the clock, so a "23:00" screenshot taken at
+16:00 would be a claim rather than a picture.
+
+The clock is FROZEN, the same rule as the auth test: the page's Date starts at
+the instant asked for and runs on from there, and the time zone is never
+touched. Moving the zone instead was tried first and was wrong -- every due time
+on the page then rendered in that zone, so the screenshot showed times I would
+never see. Virtual time was tried before that and raced weeks ahead while the
+page idled. A script installed into every frame before its own scripts run
+replaces Date with one offset to the instant; nothing else changes.
 
 Standard library only -- a tool for this repository should not add a
 dependency -- so the WebSocket here is the minimum: one connection, text frames,
@@ -113,6 +118,27 @@ class Page:
                 return reply.get("result", {})
 
 
+# A Date whose "now" is offset to the asked-for instant and then runs normally.
+# Explicit dates (new Date(2026, 9, 5)) are untouched, so formatting a stored
+# instant still gives the real local time for it.
+_FROZEN = """
+(() => {
+  const Real = Date;
+  const shift = __AT__ - Real.now();
+  class Frozen extends Real {
+    constructor(...args) {
+      if (args.length === 0) super(Real.now() + shift);
+      else super(...args);
+    }
+    static now() {
+      return Real.now() + shift;
+    }
+  }
+  globalThis.Date = Frozen;
+})();
+"""
+
+
 def _free_port() -> int:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
@@ -125,11 +151,10 @@ def screenshot_at(
     window: tuple[int, int],
     out: Path,
     *,
-    epoch: float | None = None,
-    timezone: str | None = None,
+    at_ms: int | None = None,
     settle: float = 7.0,
 ) -> str | None:
-    """Load `url` with the page's clock at `epoch` in `timezone`, and save a PNG.
+    """Load `url` with the page's clock starting at `at_ms`, and save a PNG.
 
     Returns what the page itself said the time was, read back from it after the
     load -- so the caller can print evidence rather than trust the setting -- or
@@ -159,12 +184,13 @@ def screenshot_at(
         if target is None:
             return None
         page = Page(target)
-        if timezone:
-            page.call("Emulation.setTimezoneOverride", timezoneId=timezone)
-        if epoch is not None:
-            # "advance": the clock starts at `epoch` and moves forward on its own,
-            # skipping idle waits -- the page sees 23:00:00, then 23:00:01, ...
-            page.call("Emulation.setVirtualTimePolicy", policy="advance", initialVirtualTime=epoch)
+        if at_ms is not None:
+            # Into every frame, before the frame's own scripts: the probe and the
+            # app inside its iframe both see the frozen instant.
+            page.call(
+                "Page.addScriptToEvaluateOnNewDocument",
+                source=_FROZEN.replace("__AT__", str(int(at_ms))),
+            )
         # The window size on the command line is not the viewport over DevTools;
         # without this the page laid out at 800x600 and the bottom was black.
         page.call(
@@ -174,9 +200,15 @@ def screenshot_at(
         page.call("Page.enable")
         page.call("Page.navigate", url=url)
         time.sleep(settle)
+        # Read back from the APP's frame, not the probe around it: that is the
+        # clock the screen was drawn by.
         clock = page.call(
             "Runtime.evaluate",
-            expression="new Date().toString()",
+            expression=(
+                "(() => { const f = document.getElementById('f');"
+                " const w = f ? f.contentWindow : window;"
+                " return new w.Date().toString(); })()"
+            ),
             returnByValue=True,
         ).get("result", {}).get("value", "")
         shot = page.call("Page.captureScreenshot", format="png")
