@@ -127,6 +127,11 @@ first.** Everything else is the exception.
 - **It looks the same as any other state.** No alarm colour, no countdown, no
   change in tone. The app has no information at 23:00 that it lacked at 19:00;
   behaving differently is theatre.
+  *(Amended 2026-10-02.)* Today opens with the date and a greeting -- "Good
+  evening" -- and that greeting is the only thing in the app that reads the hour.
+  It names the time of day and nothing else: no "it's late", no "still up", no
+  change of colour, layout or wording anywhere else. At 23:00 it says "Good
+  evening", exactly as it did at 19:00.
 - **It asks for the smallest true thing.** One window — roughly twenty pages,
   the ones tomorrow's session actually needs — never the 92-page chapter. This
   is what Phase 3d exists for, and until it ships the client shows the window
@@ -152,8 +157,12 @@ Short. Specific. The material is the subject. No exclamation marks anywhere in
 this app.
 
 **A clear day**
-> Nothing waiting.
+> Nothing to review.
 > Next session: OS lab, tomorrow 08:30.
+
+*(Was "Nothing waiting" until 2026-10-02. Today also lists what is due, so
+"nothing waiting" above a homework due on Thursday said two contradictory
+things. What is empty is the reading queue, so that is what it says.)*
 
 *No praise.* An empty queue is a fact about what the professors posted, not
 something I achieved — and praising it makes every other day a reproach.
@@ -208,10 +217,14 @@ attention", no icon that means worry.
 Most of my time here is dense PDFs, on a phone, at night. The reader is the
 product; everything else is navigation.
 
-- **Dark is the default, not a toggle.** Not pure white on pure black — an
-  off-white on a near-black ground. Maximum contrast haloes text at 23:00 and
-  makes a 40-page sitting physically tiring.
-- **The page is never inverted.** App chrome is dark; the PDF renders exactly as
+- **The chrome follows the theme; neither theme is pure.** *(Amended
+  2026-10-02: was "dark is the default, not a toggle".)* Light, dark or the
+  system's choice, per device. Neither is pure white on pure black: the dark
+  theme is off-white on warm charcoal, the light one ink on paper. Maximum
+  contrast haloes text at 23:00 and makes a 40-page sitting physically tiring,
+  in either.
+- **The page is never inverted.** In either theme the chrome around it follows
+  the theme and the PDF renders exactly as
   the professor made it. Inverting a slide deck destroys diagrams, code
   screenshots and photographed boards — which is precisely the content the vision
   OCR exists to preserve, and losing it visually after paying to read it would be
@@ -295,142 +308,169 @@ product; everything else is navigation.
 
 Everything above says what the app may say. This says how it looks, and every
 rule above wins where the two meet. Measured rather than chosen by eye: the
-contrast figures below are computed, and `tests/test_web_assets.py` recomputes
-them from `app.css` so a token cannot drift below AA unnoticed.
+contrast figures are computed, and `tests/test_web_assets.py` recomputes them
+from `app.css` -- in both themes -- so a token cannot drift below AA unnoticed.
+
+*Rewritten 2026-10-02 after the first checkpoint: the structure was right and
+the look was not. Dark-only, colour confined to a 6px dot, a terminal's slashed
+zeros on every time, a narrow column in a wide window, and no name.*
+
+### The idea
+
+**A desk with a timetable pinned above it.** By day it is paper: warm, matte,
+printed, the subject colours of a highlighter run over a timetable. By night it
+is the same desk under a lamp: warm charcoal, never blue-black, the same colours
+dimmed rather than inverted. The one memorable thing is the subject colour,
+used the way a student actually uses it -- to find Database on a crowded week at
+a glance -- and everything around it stays quiet.
+
+### Name and mark
+
+Placeholder name **Margin** -- where the notes go, and the space this app keeps
+for the reading. The other two proposals: **Lectern** (the thing you read
+standing at), **Lamplight** (when it is used). The mark is a page with its
+margin rule: a rounded sheet, one vertical line near its left edge, and a short
+line of accent beside it. It is the favicon, the PWA icon and the sidebar's mark.
+`web/icon.svg` is the source; the PNGs are drawn from the same geometry.
+
+### Themes
+
+Light, dark and System, chosen in More and remembered per device
+(`localStorage`, never synced -- it is a fact about a screen, not about me).
+System is the default and follows the OS. Each theme is designed, not derived:
+every colour token is one `light-dark()` pair in `app.css`, so a token that has
+a light value has a dark one chosen beside it.
+
+The reader's chrome follows the theme. **The PDF page itself is never inverted,
+in either theme** -- section 6.
 
 ### Type
 
-**Atkinson Hyperlegible Next**, one family for everything, self-hosted in
-`web/fonts/` (variable weight, Latin and Latin-Extended, 53 KB together, OFL)
-and precached by the service worker so it works offline from the second open.
-`font-display: swap` over the system stack, so text paints at once on the first
-load and nothing waits for a font at 23:00 on mobile data.
+Two families, both self-hosted in `web/fonts/` (OFL, about 110 KB together),
+precached, and swapped in over the system stack so text never waits.
 
-Chosen for what it was made for rather than for its looks: the Braille
-Institute drew it for readers with low vision, and its letterforms are built to
-be told apart -- `l I 1`, `0 O`, `rn m` -- which is what code screenshots,
-complexity expressions and lecture titles like "TP3 : Graphes" need from a face
-read tired. It is also not the default every other app reaches for, which the
-first screenshots made obvious was costing this one an identity. Hierarchy comes
-from size, weight and colour, not from a second family.
+- **Bricolage Grotesque** for headings, the hero, and every time and count that
+  is read as a figure. A grotesque with a hand in it -- ink-trapped joins, a warm
+  `a` -- and tabular figures with a plain zero, so `08:30` reads as a time and
+  not as terminal output.
+- **Atkinson Hyperlegible Next** for everything read as prose: designed by the
+  Braille Institute for legibility, with letterforms built to be told apart.
 
-| role | size / line | weight | colour | used for |
+| role | face | size / line | weight | used for |
 |---|---|---|---|---|
-| hero | 30 / 1.2 (38 at ≥1024) | 600 | ink | the one item on `/` |
-| title | 24 / 1.25 | 600 | ink | a screen's name |
-| lead | 19 / 1.35 | 500 | ink | a card's name: subject, post, project |
-| body | 17 / 1.55 | 400 | ink | the floor for anything read as prose |
-| state | 17 / 1.45 | 400 | ink-2 | what a card's thing is doing |
-| meta | 15 / 1.45 | 400 | ink-3 | when, how many pages, which room |
+| greeting | Bricolage | 15 / 1.4 | 500 | the date and greeting above Today |
+| hero | Bricolage | 32 / 1.12 (42 at ≥1024) | 650 | the one item on Today |
+| title | Bricolage | 28 / 1.15 | 650 | a screen's name |
+| lead | Bricolage | 19 / 1.3 | 600 | a card's name: subject, post, session |
+| body | Atkinson | 17 / 1.55 | 400 | the floor for anything read as prose |
+| state | Atkinson | 17 / 1.45 | 400 | what a card's thing is doing |
+| meta | Atkinson | 15 / 1.45 | 400 | which room, how many pages |
+| time | Bricolage | as context | 500 | every clock time, tabular |
 
-Counts and times are `tabular-nums`. No weight below 400. No all-caps labels, no
-tracked-out eyebrows: a label that needs shouting is a label in the wrong place.
+Headings track tight (-0.02em). No weight below 400 for text, no all-caps
+labels, no tracked-out eyebrows.
 
 ### Colour
 
-| token | value | on ground | on card | on raised | role |
-|---|---|---|---|---|---|
-| ground | `#0f1216` | | | | the page |
-| card | `#161a20` | | | | a tappable thing |
-| raised | `#1c2129` | | | | the hero, a hovered card |
-| pressed | `#232933` | | | | a pressed or selected thing |
-| ink | `#e8e5df` | 14.9 | 13.9 | 12.9 | names, titles, body |
-| ink-2 | `#b3aea6` | 8.5 | 7.9 | 7.3 | state |
-| ink-3 | `#969189` | 6.0 | 5.6 | 5.2 | metadata |
-| accent | `#8ab4dc` | 8.6 | 8.0 | 7.4 | focus, the primary action, "here" |
-| passed | `#e3837a` | 7.0 | 6.5 | 6.0 | a deadline that has already gone — nothing else |
-| edge | `#646e7c` | 3.6 | 3.4 | 3.1 | a control's border (WCAG 1.4.11 wants 3:1) |
-| line | `#2a313b` | | | | a divider, never a boundary that carries meaning |
+| token | light | dark | role |
+|---|---|---|---|
+| ground | `#f3efe7` paper | `#171512` charcoal | the page |
+| card | `#fbf9f5` | `#211e1a` | a sheet on it |
+| raised | `#ffffff` | `#2a2621` | the hero, a hovered card |
+| pressed | `#ebe5d9` | `#34302a` | pressed, selected |
+| ink | `#211d18` (16:1 on card) | `#eee7db` (13.5:1) | names, titles, body |
+| ink-2 | `#524b42` (8.2:1) | `#c3baab` (8.6:1) | state |
+| ink-3 | `#6b6358` (5.6:1) | `#a0978a` (5.8:1) | metadata |
+| accent | `#2a4f93` ink blue (7.6:1) | `#a9c1f2` (9.2:1) | focus, the primary action, "here" |
+| passed | `#a8271d` (6.7:1) | `#f0958b` (7.4:1) | a deadline already gone -- nothing else |
+| edge | `#8f8676` (3.4:1) | `#766d60` (3.3:1) | a control's border |
+| line | `#e3ddd1` | `#35302a` | dividers |
 
-Off-white on near-black, as section 6 asks, and warm rather than blue-white so a
-40-page sitting does not glare. **There is one warm alarm and it is `passed`.**
-Unreviewed, behind, blocked and not-yet-transcribed are all neutral ink, because
-they are the resting state of most material most of the time.
+The accent is fountain-pen blue on paper and the same ink lit on the desk at
+night -- deliberately not the terracotta or the acid green every generated page
+reaches for. **There is still exactly one alarm and it is `passed`.**
 
-### Subject colour
+### Subject colour, with intent
 
-Each subject has one colour, the same on every screen: a pip before its name and
-the left edge of anything that belongs to it. It is a pure function of the name —
-FNV-1a over the UTF-8 bytes, modulo twelve — into twelve swatches at hues 88°
-to 330° in 22° steps, alternating between two OKLCH steps (lightness 0.80 /
-chroma 0.085, and 0.69 / 0.115):
+Each subject has one hue, a pure function of its name (FNV-1a over UTF-8, mod
+twelve, hues 88°-330° in 22° steps -- no red, no orange, so no subject can read
+as an alarm). Each hue has three values per theme:
 
-`#d5bb7d` `#a0a146` `#aaca91` `#5cb07a` `#7fd0bc` `#12b1b5`
-`#7ccbe4` `#53a3dc` `#a2bef5` `#9590df` `#cdafe8` `#c380bd`
+| value | light | dark | used for |
+|---|---|---|---|
+| `fg` | OKLCH L .47 | L .82 | the subject's name, its chip text, an edge |
+| `tint` | L .955 | L .265 | the surface of anything that belongs to it -- a card, a page header |
+| `fill` | L .865 / .82 alternating | L .40 / .34 alternating | a timetable block, a chip, the Today timeline |
 
-The alternation is measured, not decorative. At one lightness, hues 22° apart
-were indistinguishable on the first screenshots — three of four sessions on one
-day read as the same teal — and with twelve subjects on the timetable, neighbours
-are guaranteed. Alternating lightness makes every neighbouring pair differ in two
-dimensions instead of one.
+Every pairing is AA in both themes (`fg` on `tint` at least 5.5:1, `ink` on
+`fill` at least 7:1), and the test checks them all. The colour is never alone:
+twelve hues for any number of subjects means two can share one, so the name is
+always beside it.
 
-All sit between 5.9:1 and 9.7:1 on a card. **No swatch is red or orange** — hues
-0°–80° are excluded so that no subject can ever look like the passed-deadline
-colour, and a subject's identity can never read as its state. Twelve names into
-twelve swatches will sometimes share one; that is harmless because **a subject's
-colour never appears without its name**, which is also what keeps it from being
-the only carrier of meaning for anyone who cannot tell the swatches apart.
+Where it shows: a subject's card is tinted its colour; its name is a filled
+chip; on the timetable each session is a filled block; on Today the day's
+schedule is a column of filled blocks. A subject should be findable on a crowded
+week by colour before it is read.
 
 ### Space, radius, surface
 
-Spacing steps are 4 · 8 · 12 · 16 · 24 · 32 · 48 · 64. Cards pad 16, sections
-separate 32, the hero pads 24 (32 at ≥1024).
-
-Radius says what a thing is: 10 for a control, 14 for a card, 20 for the hero,
-fully round for a pill. Not one radius on everything.
-
-Depth is surface lightness and a 1px line, never a drop shadow — a shadow on a
-near-black ground is invisible, and pretending otherwise is decoration.
+Spacing 4 · 8 · 12 · 16 · 24 · 32 · 48 · 64. Radius says what a thing is: 10 a
+control, 16 a card, 24 the hero, round for a chip. Depth is surface and a 1px
+line; no drop shadows, in either theme.
 
 ### Motion
 
-140ms, ease-out, and only in answer to something I did: a press, a hover, a
-disclosure opening. Nothing moves on its own. No entrance animation, no shimmer
-on a skeleton — a skeleton is a static shape, because a loop is not an answer to
-anything. `prefers-reduced-motion` turns all of it off.
+Only in answer to something I did, and every bit of it off under
+`prefers-reduced-motion`:
+
+- a card press: 120ms scale to .985;
+- a page change: 180ms cross-fade, through the View Transitions API where the
+  browser has it, and nothing where it does not;
+- choosing a quiz answer: the option fills with the accent for 220ms before
+  the next question arrives, so the choice is seen to land;
+- the quiz result: the count rises into place over 260ms, once.
+
+Nothing loops, nothing moves on its own, no skeleton shimmers. The reader keeps
+section 6's ceiling of 150ms.
 
 ### Layout
 
-Five places, the same at every width:
-
 | place | holds |
 |---|---|
-| Today | the one next action (sections 2 and 4), then today's sessions, then what is due in the next few days |
-| Study | subjects in the order of their next session; a subject's material, items and quizzes; Quizzes; Library |
+| Today | date and greeting; the one next action (sections 2 and 4) beside today's schedule as a timeline; then what is due in the next few days |
+| Study | subjects grouped by the day of their next session; a subject's material, items and quizzes; Quizzes; Library |
 | Work | homework (Classroom and hand-entered) and projects |
-| Timetable | the week, and recording a moved or cancelled session |
-| More | add, status, sign out |
+| Timetable | the week as a grid on a wide screen, a day at a time on a phone; one menu per session to record a move or a cancellation |
+| More | the theme, add, status, sign out |
 
-Below 1024px: one column, and a tab bar at the bottom within reach of a thumb
-with exactly those five, and no counts on it (section 7: no badge that counts
-what I have not done). At 1024px and above: a sidebar with every destination,
-and the width used — two columns wherever the content has two parts, never a
-phone column stranded in a wide window. Content never exceeds 72 characters a
-line. The reader has no tab bar and no sidebar: it owns the screen, per
-section 6.
-
-Study's three parts -- Subjects, Quizzes, Library -- are a row of links under its
-title, the current one marked. Subjects with a session coming are grouped by
-the day of it ("Tomorrow", "Thursday 8 Oct", "Later"), because the order is the
-point and a heading per day makes the order readable at a glance.
+Below 1024px: one column and a tab bar with those five, no counts. At 1024px and
+above: a sidebar, and the width used -- Today in two columns, the timetable as a
+full week grid, the quiz beside its own context. Prose never exceeds 72
+characters a line.
 
 ### Components
 
 | component | what it is |
 |---|---|
-| shell | the tab bar or the sidebar, and the content beside it |
-| screen header | a title, and at most one line of ink-2 beneath it |
-| card | a whole tappable surface, 56px minimum, a chevron when it goes somewhere |
-| hero | the one next action on `/` — raised surface, subject edge, the primary button |
-| pip / edge | the subject's colour, never alone |
-| notice | a neutral block that states a fact: not transcribed, offline, a problem |
-| fact list | label and value, tabular numbers, nothing summarised |
-| section links | a screen's own parts, as a row of links; the current one has the accent underline |
-| day group | a heading naming a day, over the cards that belong to it |
-| quiz option | a whole row per option, 56px, its letter in a square; never coloured right or wrong while the quiz is open |
-| skeleton | static blocks in the shape of what is loading |
-| button | primary (accent fill), secondary (edge outline), quiet (text) — all 44px |
-| field | a visible label above a 44px input; an error beside it, in words |
+| shell | sidebar (mark, name, places, their parts) or tab bar |
+| screen header | Bricolage title, and at most one line beneath |
+| card | a whole tappable sheet; tinted when it belongs to a subject; presses in |
+| chip | a subject's name on its fill, round |
+| hero | the one next action: raised sheet, subject chip, Bricolage title |
+| timeline | a day's sessions as filled blocks against their times |
+| week grid | days across, hours down, sessions as filled blocks placed by time |
+| session menu | one button per session opening Cancel and Move; never a row of buttons per line |
+| quiz option | a whole row per option, its letter in a square; fills with the accent when chosen |
+| empty state | the mark, small, above one line that says what is true |
+| notice | a neutral block stating a fact; never alarm-coloured |
+| theme choice | three options, the current one marked |
+
+### Words
+
+Section 5's voice, applied to the interface's own sentences: short, the
+material as the subject, never the system describing its plumbing. Zero values
+are not shown -- "0 pages not transcribed" is not a fact anyone needs. Figures
+are one readable line or a few chips, never a key-value table.
 
 ---
 
