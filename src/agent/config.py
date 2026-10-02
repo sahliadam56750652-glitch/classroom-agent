@@ -128,6 +128,13 @@ class Config:
     # ones -- and the whole set costs one request whatever its length.
     quiz_question_count: int = 6
 
+    # config.yaml's quiz.prepare_limit: how many question sets the quizzes stage
+    # of `agent run` may write ahead of time, per run. Two, so four a day: with
+    # OCR's 12 that is 16 of ~20, which leaves ~4 for the quizzes the bot writes
+    # on demand -- including the ones the web app asks for. 0 turns the stage off
+    # and leaves every set to be written when first wanted, as before 5d.
+    quiz_prepare_limit: int = 2
+
     # config.yaml's api.secure_cookie. True everywhere it can be, which is
     # everywhere the client reaches the API over HTTPS -- and on the box that is
     # always, because Caddy terminates TLS in front of it. Configurable for one
@@ -469,8 +476,8 @@ def _ocr_run_limit(raw: dict[str, Any], config_path: Path) -> int:
     return value
 
 
-def _quiz_settings(raw: dict[str, Any], config_path: Path) -> tuple[float, int]:
-    """(pass threshold, questions per quiz), validated rather than trusted.
+def _quiz_settings(raw: dict[str, Any], config_path: Path) -> tuple[float, int, int]:
+    """(pass threshold, questions per quiz, sets per run), validated rather than trusted.
 
     Both are checked here because both fail quietly if they are wrong. A
     pass_threshold of 75 instead of 0.75 makes every quiz unpassable and looks
@@ -480,7 +487,7 @@ def _quiz_settings(raw: dict[str, Any], config_path: Path) -> tuple[float, int]:
     """
     section = raw.get("quiz")
     if section is None:
-        return Config.quiz_pass_threshold, Config.quiz_question_count
+        return Config.quiz_pass_threshold, Config.quiz_question_count, Config.quiz_prepare_limit
     if not isinstance(section, dict):
         raise ConfigError(
             f"{config_path}: 'quiz' must be a mapping, got {type(section).__name__}."
@@ -516,7 +523,16 @@ def _quiz_settings(raw: dict[str, Any], config_path: Path) -> tuple[float, int]:
             f"one question at a time on a phone stops getting finished."
         )
 
-    return float(threshold), int(count)
+    prepare = section.get("prepare_limit")
+    if prepare is None:
+        prepare = Config.quiz_prepare_limit
+    elif isinstance(prepare, bool) or not isinstance(prepare, int) or prepare < 0:
+        raise ConfigError(
+            f"{config_path}: 'quiz.prepare_limit' must be a whole number of "
+            f"model requests per run, 0 or more, got {prepare!r}."
+        )
+
+    return float(threshold), int(count), int(prepare)
 
 
 def _resolve_data_dir(configured: Any, config_path: Path) -> Path:
@@ -571,7 +587,7 @@ def load_config(config_path: Path | None = None) -> Config:
             f"'ignored' lists, got {type(courses).__name__}."
         )
 
-    pass_threshold, question_count = _quiz_settings(raw, config_path)
+    pass_threshold, question_count, prepare_limit = _quiz_settings(raw, config_path)
 
     data_dir = _resolve_data_dir(raw.get("data_dir"), config_path)
     for directory in (data_dir, data_dir / "library", data_dir / "logs"):
@@ -589,6 +605,7 @@ def load_config(config_path: Path | None = None) -> Config:
         ocr_run_limit=_ocr_run_limit(raw, config_path),
         quiz_pass_threshold=pass_threshold,
         quiz_question_count=question_count,
+        quiz_prepare_limit=prepare_limit,
         api_secure_cookie=_api_secure_cookie(raw, config_path),
         api_origin=_api_origin(raw, config_path),
         telegram_bot_username=_telegram_bot_username(raw, config_path),

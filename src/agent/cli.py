@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from .gate import adjustments as gate_adjust
 from .gate import bot as gate_bot
 from .gate import messages as gate_messages
 from .gate import quiz as gate_quiz
+from .gate import quizgen as gate_quizgen
 from .gate import scheduler as gate_scheduler
 from .gate import sections as gate_sections
 from .gate import timetable as timetable_mod
@@ -2990,7 +2992,7 @@ def _print_questions(generated: gate_quiz.Generated, config: Config) -> None:
     if generated.note:
         print(f"  the model noted: {generated.note}")
     if generated.truncated:
-        print(f"  material was trimmed at {gate_quiz.MAX_SOURCE_CHARS} characters")
+        print(f"  material was trimmed at {gate_quizgen.MAX_SOURCE_CHARS} characters")
     total = len(generated.questions)
     # The smallest score that clears the threshold, worked out the same way
     # Attempt.passed does it rather than by rounding -- 0.75 of six is five, not
@@ -3053,7 +3055,7 @@ def cmd_quiz(config: Config, args: argparse.Namespace) -> int:
         print()
 
         if args.dry_run:
-            generated = gate_quiz.generate(conn, config, item, course=name)
+            generated = gate_quizgen.generate(conn, config, item, course=name)
             _print_questions(generated, config)
             print("  dry run -- no attempt started, nothing sent, nothing marked.")
             if not generated.cached:
@@ -3224,6 +3226,29 @@ def cmd_bot(config: Config, args: argparse.Namespace) -> int:
     def report(event: gate_bot.Handled) -> None:
         print(f"  {event.kind}: {event.detail}")
 
+    # A quiz the web app asked for, written between long polls. One request per
+    # pass at most, and after a failure that would repeat -- quota, a bad key --
+    # nothing more for half an hour, because asking again in thirty seconds
+    # spends time and changes no answer.
+    quiet_until = [0.0]
+
+    def between() -> None:
+        store.set_bot_state(conn, gate_bot.HEARTBEAT_KEY, gate_bot._now_iso())
+        conn.commit()
+        if time.monotonic() < quiet_until[0]:
+            return
+        try:
+            done = gate_quizgen.serve_requests(conn, config, limit=1)
+        except Exception as err:  # never allowed to stop the listener
+            print(f"  quiz request failed: {err}", file=sys.stderr)
+            quiet_until[0] = time.monotonic() + 1800
+            return
+        for item_id, label in done.written:
+            print(f"  wrote the requested quiz for item {item_id}: {label}")
+        if done.stopped:
+            print(f"  quiz requests paused: {done.stopped}")
+            quiet_until[0] = time.monotonic() + 1800
+
     if not args.once:
         print(f"listening as {config.account} -- ctrl-c to stop")
     try:
@@ -3236,6 +3261,7 @@ def cmd_bot(config: Config, args: argparse.Namespace) -> int:
             once=args.once,
             on_event=report,
             resend=resend,
+            between=between,
         )
     except KeyboardInterrupt:
         print()
@@ -3621,6 +3647,43 @@ def _stage(name: str, work, *, report=None) -> bool:
     return True
 
 
+def _do_prepare_quizzes(config: Config, conn, *, dry_run: bool):
+    """Write question sets ahead of time: requests first, then tomorrow's subjects.
+
+    A dry run lists what would be written and spends nothing.
+    """
+    table = _timetable_or_none(config)
+    local = scope_mod.local(config, table)
+    found = gate_quizgen.candidates(
+        conn, config, local, table, today=date.today()
+    )
+    if dry_run:
+        return ("dry-run", found[: config.quiz_prepare_limit * 3], config.quiz_prepare_limit)
+    return gate_quizgen.prepare(conn, config, found, limit=config.quiz_prepare_limit)
+
+
+def _print_prepared(result) -> None:
+    if isinstance(result, tuple):
+        _, head, limit = result
+        print(f"  dry run -- would spend at most {limit} request(s), in this order:")
+        for item, course in head:
+            ready = "" if item.ready else f"  (skipped: {item.blocked_reason})"
+            print(f"    item {item.item_id}  {course}: {item.label}{ready}")
+        if not head:
+            print("    nothing to prepare")
+        return
+    for item_id, label in result.written:
+        print(f"  wrote a set for item {item_id}: {label}")
+    if result.already:
+        print(f"  {result.already} already had a set (no request spent)")
+    for item_id, why in result.skipped:
+        print(f"  item {item_id} skipped: {why}")
+    if result.stopped:
+        print(f"  stopped: {result.stopped}")
+    if not (result.written or result.already or result.skipped or result.stopped):
+        print("  nothing to prepare")
+
+
 def cmd_run(config: Config, args: argparse.Namespace) -> int:
     """The whole pipeline, in the order each stage feeds the next.
 
@@ -3705,6 +3768,20 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
             ),
             report=lambda result: _print_studyitems_stage(result, dry_run=args.dry_run),
         )
+        # After OCR and study items, because a set can only be written over text
+        # that is fully transcribed, and only for items that exist. Bounded by
+        # quiz.prepare_limit for the same reason OCR is bounded: see
+        # config.example.yaml for the day's arithmetic.
+        if config.quiz_prepare_limit:
+            _stage(
+                "quizzes",
+                lambda: _do_prepare_quizzes(config, conn, dry_run=args.dry_run),
+                report=_print_prepared,
+            )
+        else:
+            print()
+            print("== quizzes ==")
+            print("  skipped: quiz.prepare_limit is 0 in config.yaml")
         _stage(
             "packs",
             lambda: _do_packs(config, conn, dry_run=args.dry_run),

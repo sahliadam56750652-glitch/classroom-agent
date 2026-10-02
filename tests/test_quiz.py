@@ -23,7 +23,7 @@ import pytest
 from agent.classroom.models import Course, Material
 from agent.config import Config
 from agent.db import store
-from agent.gate import bot, messages, quiz
+from agent.gate import bot, messages, quiz, quizgen
 from agent.gate import scheduler
 from agent.gate import timetable as tt
 from agent.llm import provider as llm
@@ -233,7 +233,7 @@ def test_an_item_with_pending_ocr_refuses_generation(conn, config):
     model = StubModel()
 
     with pytest.raises(quiz.QuizUnavailable) as err:
-        quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+        quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
 
     assert err.value.kind == "not-readable"
     assert "not transcribed yet" in str(err.value)
@@ -245,14 +245,14 @@ def test_a_partly_transcribed_item_is_still_refused(conn, config):
     most want to ask about."""
     item_id = post(conn, scan=26, ocr=25, pages=41)
     with pytest.raises(quiz.QuizUnavailable) as err:
-        quiz.generate(conn, config, item_of(conn, item_id), provider=StubModel())
+        quizgen.generate(conn, config, item_of(conn, item_id), provider=StubModel())
     assert err.value.kind == "not-readable"
 
 
 def test_a_post_with_almost_no_text_is_refused(conn, config):
     item_id = post(conn, chars=120)
     with pytest.raises(quiz.QuizUnavailable) as err:
-        quiz.generate(conn, config, item_of(conn, item_id), provider=StubModel())
+        quizgen.generate(conn, config, item_of(conn, item_id), provider=StubModel())
     assert err.value.kind == "not-readable"
 
 
@@ -279,7 +279,7 @@ def test_an_undelivered_item_is_refused_before_the_model(conn, config):
     model = StubModel()
 
     with pytest.raises(quiz.QuizUnavailable) as err:
-        quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+        quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
 
     assert err.value.kind == "not-delivered"
     assert model.calls == []
@@ -290,7 +290,7 @@ def test_a_skipped_item_is_refused_too(conn, config):
     store.advance_study_item(conn, item_id, "skipped", skip_reason="not now")
     conn.commit()
     with pytest.raises(quiz.QuizUnavailable) as err:
-        quiz.generate(conn, config, item_of(conn, item_id), provider=StubModel())
+        quizgen.generate(conn, config, item_of(conn, item_id), provider=StubModel())
     assert err.value.kind == "not-delivered"
 
 
@@ -325,11 +325,11 @@ def test_a_cached_quiz_costs_zero_model_calls(conn, config):
     item_id = post(conn)
     model = StubModel()
 
-    first = quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    first = quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
     assert first.cached is False
     assert len(model.calls) == 1
 
-    second = quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    second = quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
     assert second.cached is True
     assert len(model.calls) == 1, "the second look must not reach the model"
     assert [q.question for q in second.questions] == [q.question for q in first.questions]
@@ -340,11 +340,11 @@ def test_a_transcription_landing_changes_the_hash_and_regenerates(conn, config):
     were written over less than the lecture now contains."""
     item_id = post(conn, scan=20, ocr=20)
     model = StubModel(four_questions("A"), four_questions("B"))
-    first = quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    first = quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
 
     store.upsert_extraction(conn, "d1", scan_pages=24, ocr_pages=24)
     conn.commit()
-    second = quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    second = quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
 
     assert second.source_hash != first.source_hash
     assert second.cached is False
@@ -355,20 +355,20 @@ def test_an_unchanged_timestamp_does_not_regenerate(conn, config):
     """Invariant 2's instinct: regenerate on the content, not on the clock."""
     item_id = post(conn)
     model = StubModel()
-    quiz.generate(conn, config, item_of(conn, item_id), provider=model)
-    quiz.generate(conn, config, item_of(conn, item_id), provider=model)
-    quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
+    quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
+    quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
     assert len(model.calls) == 1
 
 
 def test_a_flagged_set_is_never_served_again(conn, config):
     item_id = post(conn)
     model = StubModel(four_questions("A"), four_questions("B"))
-    generated = quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    generated = quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
     store.flag_question_set(conn, item_id, generated.source_hash)
     conn.commit()
 
-    again = quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    again = quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
 
     assert again.cached is False
     assert again.questions[0].question.startswith("B0")
@@ -379,10 +379,10 @@ def test_the_prompt_version_is_part_of_the_cache_key(conn, config, monkeypatch):
     this version of the code would ask."""
     item_id = post(conn)
     model = StubModel(four_questions("A"), four_questions("B"))
-    first = quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    first = quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
 
     monkeypatch.setattr(quiz, "PROMPT_VERSION", quiz.PROMPT_VERSION + 1)
-    second = quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    second = quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
 
     assert second.source_hash != first.source_hash
     assert second.cached is False
@@ -392,8 +392,8 @@ def test_a_different_question_count_is_a_different_cache_entry(conn, config):
     """Changing quiz.question_count must not serve back a set of the old length."""
     item_id = post(conn)
     model = StubModel(four_questions("A"), four_questions("B"))
-    quiz.generate(conn, config, item_of(conn, item_id), provider=model, count=6)
-    quiz.generate(conn, config, item_of(conn, item_id), provider=model, count=4)
+    quizgen.generate(conn, config, item_of(conn, item_id), provider=model, count=6)
+    quizgen.generate(conn, config, item_of(conn, item_id), provider=model, count=4)
     assert len(model.calls) == 2
 
 
@@ -402,7 +402,7 @@ def test_a_different_question_count_is_a_different_cache_entry(conn, config):
 def test_the_prompt_carries_the_lecture_text(conn, config):
     item_id = post(conn)
     model = StubModel()
-    quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
     prompt = model.calls[0]
 
     assert "binary search tree" in prompt
@@ -419,7 +419,7 @@ def test_only_this_post_s_attachments_reach_the_prompt(conn, config):
     post(conn, parent_id="p2", drive_id="d2")
 
     model = StubModel()
-    quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
 
     assert "quicksort" not in model.calls[0]
 
@@ -435,7 +435,7 @@ def test_a_transcribed_page_is_offered_as_fair_material(conn, config):
     )
     conn.commit()
     model = StubModel()
-    quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
 
     assert "transcribed from an image" in model.calls[0]
     assert "fair to ask about" in model.calls[0]
@@ -448,7 +448,7 @@ def test_the_prompt_says_not_to_build_on_a_bad_transcription(conn, config):
     instruction is to skip such a passage, and never to guess at what it meant."""
     item_id = post(conn)
     model = StubModel()
-    quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
     prompt = model.calls[0]
 
     assert "transcription error" in prompt
@@ -461,11 +461,11 @@ def test_changing_the_prompt_retires_every_cached_set(conn, config):
     questions that were already generated under the old instructions."""
     item_id = post(conn)
     model = StubModel(four_questions("A"), four_questions("B"))
-    quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(quiz, "PROMPT_VERSION", quiz.PROMPT_VERSION + 1)
-        after = quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+        after = quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
 
     assert after.cached is False
     assert len(model.calls) == 2
@@ -481,7 +481,7 @@ def test_study_item_sources_excludes_a_deleted_attachment(conn, config):
 
     assert store.study_item_sources(conn, "coursework_material", "p1") == []
     with pytest.raises(quiz.QuizUnavailable) as err:
-        quiz.generate(conn, config, item_of(conn, item_id), provider=StubModel())
+        quizgen.generate(conn, config, item_of(conn, item_id), provider=StubModel())
     assert err.value.kind == "not-readable"
 
 
@@ -492,7 +492,7 @@ def test_text_the_row_promises_and_the_disk_does_not_have_is_a_refusal(conn, con
     (config.library_dir / "text" / "d1.txt").unlink()
 
     with pytest.raises(quiz.QuizUnavailable) as err:
-        quiz.generate(conn, config, item_of(conn, item_id), provider=StubModel())
+        quizgen.generate(conn, config, item_of(conn, item_id), provider=StubModel())
     assert err.value.kind == "no-text"
 
 
@@ -521,7 +521,7 @@ def test_text_the_row_promises_and_the_disk_does_not_have_is_a_refusal(conn, con
 def test_an_unusable_answer_is_refused_rather_than_repaired(conn, config, payload, why):
     item_id = post(conn)
     with pytest.raises(quiz.QuizUnavailable) as err:
-        quiz.generate(conn, config, item_of(conn, item_id), provider=StubModel(payload))
+        quizgen.generate(conn, config, item_of(conn, item_id), provider=StubModel(payload))
     assert err.value.kind == "refused", why
 
 
@@ -529,7 +529,7 @@ def test_a_refused_set_is_not_cached(conn, config):
     item_id = post(conn)
     bad = {"questions": [{"question": "q", "options": ["a", "b"], "correct_index": 0}]}
     with pytest.raises(quiz.QuizUnavailable):
-        quiz.generate(conn, config, item_of(conn, item_id), provider=StubModel(bad))
+        quizgen.generate(conn, config, item_of(conn, item_id), provider=StubModel(bad))
     assert conn.execute("SELECT count(*) AS n FROM quiz_questions").fetchone()["n"] == 0
 
 
@@ -541,7 +541,7 @@ def test_fewer_honest_questions_are_accepted(conn, config):
         "note": "the lecture is mostly a reading list",
     }
     item_id = post(conn)
-    generated = quiz.generate(conn, config, item_of(conn, item_id), provider=StubModel(short))
+    generated = quizgen.generate(conn, config, item_of(conn, item_id), provider=StubModel(short))
 
     assert len(generated.questions) == 2
     assert "reading list" in generated.note
@@ -552,7 +552,7 @@ def test_more_questions_than_asked_for_are_trimmed_to_what_was_asked(conn, confi
     against, which is the one number here that has to mean what config says."""
     many = {"questions": four_questions()["questions"] * 3}
     item_id = post(conn)
-    generated = quiz.generate(conn, config, item_of(conn, item_id), provider=StubModel(many))
+    generated = quizgen.generate(conn, config, item_of(conn, item_id), provider=StubModel(many))
     assert len(generated.questions) == config.quiz_question_count == 6
 
 
@@ -576,7 +576,7 @@ def test_every_provider_failure_says_something_different(conn, config, error, ki
     are three different instructions."""
     item_id = post(conn)
     with pytest.raises(quiz.QuizUnavailable) as err:
-        quiz.generate(conn, config, item_of(conn, item_id), provider=StubModel(error))
+        quizgen.generate(conn, config, item_of(conn, item_id), provider=StubModel(error))
 
     assert err.value.kind == kind
     assert says in str(err.value)
@@ -660,7 +660,7 @@ def test_grading_consults_no_model(conn, config):
     """There is no code path from settle() to a provider, and this pins it."""
     item_id = post(conn)
     model = StubModel()
-    attempt, _ = quiz.begin(conn, config, item_of(conn, item_id), provider=model, now=EVENING)
+    attempt, _ = quizgen.begin(conn, config, item_of(conn, item_id), provider=model, now=EVENING)
     before = len(model.calls)
     for index, correct in enumerate(correct_answers(conn, attempt.attempt_id)):
         quiz.record_answer(conn, attempt, index, correct)
@@ -800,7 +800,7 @@ def test_no_button_anywhere_reaches_verified_without_answering(conn, config, tab
 
 def test_every_question_carries_a_flag_button(conn, config):
     item_id = post(conn)
-    attempt, _ = quiz.begin(conn, config, item_of(conn, item_id),
+    attempt, _ = quizgen.begin(conn, config, item_of(conn, item_id),
                             provider=StubModel(), now=EVENING)
     for index in range(attempt.total):
         attempt.index = index
@@ -846,7 +846,7 @@ def test_flagging_retires_the_set_so_the_next_attempt_regenerates(conn, config):
     assert conn.execute("SELECT flagged FROM quiz_questions").fetchone()["flagged"] == 1
     assert store.cached_questions(conn, item_id, source_hash) is None
 
-    fresh = quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    fresh = quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
     assert fresh.cached is False
     assert fresh.questions[0].question.startswith("B0")
 
@@ -1174,7 +1174,7 @@ def test_the_dry_run_prints_the_answers_and_starts_nothing(conn, config, capsys,
     item_id = post(conn)
     monkeypatch.setattr(cli.store, "open_db", lambda _config: conn)
     monkeypatch.setattr(
-        cli.gate_quiz, "generate",
+        cli.gate_quizgen, "generate",
         lambda *a, **kw: quiz.Generated(
             questions=[quiz.Question(question="What is the worst case?",
                                      options=("O(1)", "O(n)", "O(n^2)", "O(log n)"),
@@ -1289,7 +1289,7 @@ def test_generation_never_asks_for_a_transcription(conn, config):
     """StubModel raises on transcribe_image. A quiz that reached for the vision
     path would fail loudly rather than quietly spending the OCR allowance."""
     item_id = post(conn)
-    quiz.generate(conn, config, item_of(conn, item_id), provider=StubModel())
+    quizgen.generate(conn, config, item_of(conn, item_id), provider=StubModel())
 
 
 def test_the_gate_prompt_costs_no_model_call(conn, config, table):
@@ -1310,7 +1310,7 @@ def test_the_gate_prompt_costs_no_model_call(conn, config, table):
 def test_the_default_quiz_is_six_questions(conn, config):
     item_id = post(conn)
     model = StubModel()
-    generated = quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    generated = quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
 
     assert len(generated.questions) == 6
     assert "Write 6 multiple-choice questions" in model.calls[0]
@@ -1320,14 +1320,14 @@ def test_six_questions_still_cost_one_request(conn, config):
     """The point of the change: the length is paid for in my time, not quota."""
     item_id = post(conn)
     model = StubModel()
-    quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
     assert len(model.calls) == 1
 
 
 def test_the_configured_count_reaches_the_prompt(conn, config):
     item_id = post(conn)
     model = StubModel(four_questions(count=3))
-    generated = quiz.generate(
+    generated = quizgen.generate(
         conn, config, item_of(conn, item_id), provider=model, count=3
     )
 
@@ -1381,7 +1381,7 @@ def test_the_threshold_is_read_from_config_when_a_quiz_starts(conn, config):
 
     strict = replace(config, quiz_pass_threshold=1.0)
     item_id = post(conn)
-    attempt, _ = quiz.begin(
+    attempt, _ = quizgen.begin(
         conn, strict, item_of(conn, item_id), provider=StubModel(), now=EVENING
     )
     assert attempt.pass_ratio == 1.0
@@ -1390,7 +1390,7 @@ def test_the_threshold_is_read_from_config_when_a_quiz_starts(conn, config):
 def test_a_quiz_keeps_the_threshold_it_started_under(conn, config):
     """Changing config mid-quiz must not move the bar under a half-answered one."""
     item_id = post(conn)
-    attempt, _ = quiz.begin(
+    attempt, _ = quizgen.begin(
         conn, config, item_of(conn, item_id), provider=StubModel(), now=EVENING
     )
     reloaded = quiz.attempt_from_row(store.get_quiz_attempt(conn, attempt.attempt_id))
@@ -1405,10 +1405,10 @@ def test_the_prompt_version_bump_retires_the_four_question_sets(conn, config):
     model = StubModel(four_questions("A", count=4), four_questions("B"))
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(quiz, "PROMPT_VERSION", 2)
-        old = quiz.generate(conn, config, item_of(conn, item_id), provider=model, count=4)
+        old = quizgen.generate(conn, config, item_of(conn, item_id), provider=model, count=4)
     assert len(old.questions) == 4
 
-    fresh = quiz.generate(conn, config, item_of(conn, item_id), provider=model)
+    fresh = quizgen.generate(conn, config, item_of(conn, item_id), provider=model)
 
     assert fresh.cached is False
     assert len(fresh.questions) == 6
@@ -1417,7 +1417,7 @@ def test_the_prompt_version_bump_retires_the_four_question_sets(conn, config):
 
 def test_six_questions_fit_one_message_each(conn, config):
     item_id = post(conn)
-    attempt, _ = quiz.begin(
+    attempt, _ = quizgen.begin(
         conn, config, item_of(conn, item_id), provider=StubModel(), now=EVENING
     )
     for index in range(attempt.total):

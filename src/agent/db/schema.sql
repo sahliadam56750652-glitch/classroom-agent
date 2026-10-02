@@ -584,6 +584,36 @@ CREATE TABLE IF NOT EXISTS quiz_flags (
 CREATE INDEX IF NOT EXISTS ix_quiz_flags_item ON quiz_flags (study_item_id);
 
 
+-- ---------------------------------------------------------- quiz_requests
+
+-- A quiz I asked for in the browser whose questions are not written yet.
+--
+-- The API never calls a model -- that is a guarantee pinned by a test, not a
+-- habit -- so a tap on "take the quiz" for an item with no cached set cannot
+-- write the set. It records that I asked, here, and the two processes that ARE
+-- allowed to spend quota answer it: `agent bot`, which checks this table on its
+-- loop, and the quizzes stage of `agent run`, which serves requests before
+-- anything it chose for itself.
+--
+-- One open request per item, by the partial unique index: asking twice is the
+-- same request. `outcome` says how it closed -- "written", or the sentence a
+-- refusal produced -- so the screen can say why a request did not turn into a
+-- quiz instead of waiting forever.
+--
+-- Not on the irreplaceable list and not in the backup. It is a queue, not a
+-- record: losing it costs one more tap.
+CREATE TABLE IF NOT EXISTS quiz_requests (
+    id            INTEGER PRIMARY KEY,
+    study_item_id INTEGER NOT NULL REFERENCES study_items (id) ON DELETE CASCADE,
+    requested_at  TEXT NOT NULL,
+    closed_at     TEXT,
+    outcome       TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_quiz_requests_open ON quiz_requests (study_item_id)
+    WHERE closed_at IS NULL;
+
+
 -- --------------------------------------------------------------- gate_runs
 
 -- One row per evening the gate prepared for a day. This is what makes the

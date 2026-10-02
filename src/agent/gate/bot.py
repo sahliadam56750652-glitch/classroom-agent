@@ -31,10 +31,16 @@ from ..config import Config
 from ..db import store
 from ..llm import provider as llm
 from ..notify.telegram import DocumentTooLarge, Telegram, TelegramError
-from . import messages, quiz
+from . import actions, messages, quiz, quizgen
 from .scheduler import Item, Subject, item_by_id, items_for, stored_subjects
 
 OFFSET_KEY = "last_update_id"
+
+# Stamped on every pass of the poll loop. The API reads it to say whether a
+# requested quiz will be written in a minute or two (the bot is listening) or at
+# the next scheduled run (it is not). A claim about another process, so it is
+# measured rather than assumed.
+HEARTBEAT_KEY = "heartbeat_at"
 
 SNOOZE = timedelta(hours=2)
 
@@ -263,7 +269,7 @@ def start_quiz(
     course = store.get_course(conn, course_id)
 
     try:
-        attempt, _ = quiz.begin(
+        attempt, _ = quizgen.begin(
             conn, config, item,
             run_id=run_id,
             course=str(course["name"]) if course else "",
@@ -347,7 +353,12 @@ def _handle_quiz(conn, config, telegram, parts, ack, *, provider, stamp) -> Hand
             ack("That quiz is already finished.")
             return Handled("repeat", f"quiz {attempt_id}")
         if not quiz.record_answer(conn, attempt, index, int(verb)):
+            # Usually a double tap. Since 5d it can also be a question already
+            # answered in the browser, so the message is brought up to date
+            # rather than left showing a question that is no longer current.
             ack("Already answered.")
+            if not attempt.complete:
+                _show_question(conn, telegram, attempt)
             return Handled("repeat", f"quiz {attempt_id} q{index}")
         ack()
         if attempt.complete:
@@ -568,19 +579,19 @@ def _handle_item(conn, config, telegram, parts, ack, *, tz, stamp, provider=None
         )
 
     if verb == "r":
-        moved = store.advance_study_item(conn, item_id, "reviewed", now=stamp)
+        # The same function the web app's Read button calls. See gate/actions.py.
+        done = actions.mark_read(conn, item_id, now=stamp)
         conn.commit()
-        ack("Marked as read." if moved else f"Already {row['state']}.")
-        return Handled("reviewed" if moved else "repeat", str(item_id))
+        ack("Marked as read." if done.moved else f"Already {row['state']}.")
+        return Handled("reviewed" if done.moved else "repeat", str(item_id))
 
     if verb == "k":
-        reason = f"skipped at delivery, gate run {run_id}"
-        moved = store.advance_study_item(
-            conn, item_id, "skipped", skip_reason=reason, now=stamp
+        done = actions.skip_item(
+            conn, item_id, source="telegram", context=f"gate run {run_id}", now=stamp
         )
         conn.commit()
-        ack("Logged as skipped." if moved else f"Already {row['state']}.")
-        return Handled("skipped" if moved else "repeat", str(item_id))
+        ack("Logged as skipped." if done.moved else f"Already {row['state']}.")
+        return Handled("skipped" if done.moved else "repeat", str(item_id))
 
     if verb == "z":
         run = store.get_gate_run(conn, run_id)
@@ -630,6 +641,7 @@ def poll(
     on_event: Callable[[Handled], None] | None = None,
     resend: Callable[[sqlite3.Row], None] | None = None,
     provider: llm.LLMProvider | None = None,
+    between: Callable[[], None] | None = None,
 ) -> list[Handled]:
     """Long-poll and route, until stopped.
 
@@ -646,6 +658,10 @@ def poll(
     while True:
         if resend is not None:
             resend_due(conn, telegram, resend)
+        if between is not None:
+            # Work the bot does while nothing is being tapped: since 5d, writing
+            # the quiz a browser asked for. Never allowed to stop the listener.
+            between()
 
         updates = telegram.get_updates(offset, timeout=timeout)
         for update in updates:

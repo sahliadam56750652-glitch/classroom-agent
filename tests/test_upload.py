@@ -20,7 +20,7 @@ from agent.classroom.models import parse_course
 from agent.config import Config
 from agent.db import store
 from agent.files import extract, ocr, upload as upload_mod
-from agent.gate import quiz, timetable as tt
+from agent.gate import quiz, quizgen, timetable as tt
 
 MANUAL = "manual-calculus-iii"
 
@@ -397,7 +397,7 @@ def test_a_photographed_board_reaches_the_quiz(config, conn, monkeypatch, tmp_pa
     # 6. And a quiz can be generated from it: the transcription is the source.
     row = store.backlog_item(conn, int(item_row["id"]))
     assert row is not None
-    sources = quiz.collect(
+    sources = quizgen.collect(
         conn, config, _as_item(row), questions=config.quiz_question_count
     )
     assert "Cauchy sequence converges" in sources.text

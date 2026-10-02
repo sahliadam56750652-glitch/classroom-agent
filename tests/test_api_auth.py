@@ -9,6 +9,8 @@ its own right.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import time
 
 import pytest
@@ -149,7 +151,11 @@ def test_using_a_session_slides_its_expiry(config, monkeypatch):
     session = client(config, monkeypatch)
     conn = store.connect(config.db_path)
     before = conn.execute("SELECT expires_at FROM api_sessions").fetchone()[0]
-    conn.execute("UPDATE api_sessions SET expires_at = '2026-10-01T00:00:00Z'")
+    # Tomorrow, worked out from the clock: still live, but close enough to
+    # expiry that a slide is visible. A fixed date here went stale the day it
+    # passed and then failed for the wrong reason -- the session had expired.
+    soon = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn.execute("UPDATE api_sessions SET expires_at = ?", (soon,))
     conn.commit()
     conn.close()
 
@@ -158,7 +164,7 @@ def test_using_a_session_slides_its_expiry(config, monkeypatch):
     conn = store.connect(config.db_path)
     after = conn.execute("SELECT expires_at FROM api_sessions").fetchone()[0]
     conn.close()
-    assert after > "2026-10-01T00:00:00Z"
+    assert after > soon
     assert after >= before[:4] + before[4:]  # still ~90 days out, not shortened
 
 

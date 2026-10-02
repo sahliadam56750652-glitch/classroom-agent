@@ -239,6 +239,7 @@ def test_config_type_is_exported():
         "ocr_run_limit",
         "quiz_pass_threshold",
         "quiz_question_count",
+        "quiz_prepare_limit",
         "api_secure_cookie",
         "api_origin",
         "telegram_bot_username",
@@ -549,3 +550,17 @@ def test_the_example_config_is_what_the_defaults_say(tmp_path):
 def test_the_ocr_run_limit_leaves_room_for_the_quiz():
     """12 pages a day of a ~20 request allowance, so the gate can still ask."""
     assert Config.ocr_run_limit * 2 <= 12
+
+
+def test_the_prepare_limit_defaults_to_two_and_can_be_turned_off(tmp_path):
+    assert load_config(write_config(tmp_path, COMPLETE)).quiz_prepare_limit == 2
+    path = write_config(tmp_path, COMPLETE + "\nquiz:\n  prepare_limit: 0\n")
+    assert load_config(path).quiz_prepare_limit == 0
+
+
+@pytest.mark.parametrize("value", ["-1", "1.5", "true", "lots"])
+def test_a_prepare_limit_that_is_not_a_count_is_refused(tmp_path, value):
+    path = write_config(tmp_path, COMPLETE + f"\nquiz:\n  prepare_limit: {value}\n")
+    with pytest.raises(ConfigError) as err:
+        load_config(path)
+    assert "prepare_limit" in str(err.value)

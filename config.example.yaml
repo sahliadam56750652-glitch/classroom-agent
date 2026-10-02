@@ -114,6 +114,22 @@ quiz:
   # making every quiz silently unpassable.
   pass_threshold: 0.75
 
+  # How many question sets `agent run` may write AHEAD OF TIME, per run, so a
+  # quiz is ready the moment I tap it -- in Telegram or in the web app, which
+  # cannot write one itself (the API never calls a model).
+  #
+  # The day's arithmetic, all of it from one free tier of ~20 requests:
+  #
+  #     ocr.run_limit 6  x 2 runs  = 12
+  #     prepare_limit 2  x 2 runs  =  4
+  #     left for quizzes written on demand by `agent bot`   ~4
+  #
+  # Order: quizzes I asked for in the web app first, then the next item of each
+  # subject tomorrow, then the rest of the week, then anything read and not yet
+  # verified. A set costs one request once; it is cached against the text.
+  # 0 leaves every set to be written when first wanted.
+  prepare_limit: 2
+
 
 # ---------------------------------------------------------------------------
 # api -- the HTTP API behind the web client (Phase 5b)

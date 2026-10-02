@@ -35,20 +35,25 @@ seven states, seven things to say, because a summary that cannot distinguish
 two states is a defect in itself. In all of them the item stays `reviewed`: the
 lecture was still delivered and I still said I read it, and suppressing that
 because a model was unavailable would break invariant 4.
+
+**Two halves.** This module is the half that grades: questions as data, the
+cache lookup, the attempt, the arithmetic, and `settle` -- the one path to
+`store.verify_study_item`. It imports no model provider, and that is a rule
+rather than a tidiness: the HTTP API takes quizzes in the browser through this
+module, and tests/test_api_guards.py asserts the API process never loads
+`agent.llm.provider`. Writing questions is gate/quizgen.py, which only the bot,
+the CLI and the scheduled pipeline import.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 
 from ..classroom.models import content_hash
 from ..config import Config
 from ..db import store
-from ..files import packs
-from ..llm import provider as llm
 from .scheduler import Item
 
 # Bumped when the prompt or the shape of a question changes. It is part of the
@@ -107,11 +112,6 @@ MAX_QUESTIONS = 10
 # answer there is that three questions is not much evidence either.
 DEFAULT_PASS_RATIO = 0.75
 
-# One post can carry a whole term of handouts. Past this the prompt is trimmed
-# from the end and the trim is recorded, never silent -- a quiz that quietly
-# ignored the second half of a lecture would look exactly like one that did not.
-MAX_SOURCE_CHARS = 40_000
-
 # After this many failed attempts the result message stops leading with Retry
 # and starts suggesting the questions themselves may be wrong. A loop I cannot
 # leave is a gate I will mute.
@@ -121,80 +121,6 @@ REPEATED_FAILURES = 3
 # material was never sent, so there is nothing a pass could be evidence of --
 # and a quiz that runs but can never count is worse than one that refuses.
 QUIZZABLE_STATES = frozenset({"delivered", "reviewed", "verified"})
-
-# What the API is told to return. Constrained decoding, so the answer arrives
-# as JSON rather than as prose that has to be repaired -- see
-# provider.generate_json.
-RESPONSE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "questions": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "question": {"type": "string"},
-                    "options": {"type": "array", "items": {"type": "string"}},
-                    "correct_index": {"type": "integer"},
-                    "explanation": {"type": "string"},
-                    "source_file": {"type": "string"},
-                    "source_page": {"type": "integer"},
-                },
-                "required": [
-                    "question",
-                    "options",
-                    "correct_index",
-                    "explanation",
-                    "source_file",
-                ],
-            },
-        },
-        "note": {"type": "string"},
-    },
-    "required": ["questions"],
-}
-
-PROMPT = """You are setting a short revision quiz for a student on ONE lecture \
-from their own course. The lecture's material is reproduced in full below.
-
-Rules, all of them strict:
-
-1. Every question must be answerable from the material below and from nothing \
-else. Do not use outside knowledge, even where you are confident it is correct. \
-If the material defines a term unusually, the material is right.
-2. Write {count} multiple-choice questions, each with exactly {options} options, \
-exactly one of which is correct. The wrong options must be plausible to someone \
-who skimmed the lecture and wrong to someone who read it -- not obviously absurd, \
-and not so close to correct that two answers could be defended.
-3. Passages marked "transcribed from an image" were read out of a diagram, a \
-photographed board or a code screenshot by a vision model. They are part of the \
-lecture and are fair to ask about.
-4. Passages marked as not yet transcribed are holes in what has been read. Never \
-write a question that depends on one.
-5. Some of the material was read out of images and the reading is not always \
-right. Where a passage looks like a transcription error -- malformed notation, \
-garbled symbols, mangled mathematics, nonsense tokens, an identifier that is not \
-quite a word -- do not build a question on it, and never quote it as an option. \
-Prefer passages that read cleanly. Do not try to guess what the broken text was \
-meant to say: there is plenty of material here, so move to a passage you can \
-trust instead.
-6. Name the file and the page each question came from, so a wrong answer can be \
-looked up.
-7. Give a one-line explanation of the correct answer, in the material's own \
-terms.
-8. If the material is too thin to write {count} grounded questions -- including \
-when too much of it is unreliably transcribed -- write fewer and say why in \
-`note`. Fewer honest questions is a better answer than inventing one, and the \
-pass mark is a ratio.
-
-Lecture: {title}
-Course: {course}
-
---- material begins ---
-{material}
---- material ends ---
-"""
-
 
 class QuizError(Exception):
     """Something is wrong with the quiz itself, not with the interaction."""
@@ -338,28 +264,19 @@ def _load_questions(stored: str) -> list[Question]:
 
 
 # --------------------------------------------------------------------------
-# the material a question may rest on
+# which set belongs to which text
 # --------------------------------------------------------------------------
 
-@dataclass
-class Sources:
-    text: str
-    fingerprint: str
-    files: list[str] = field(default_factory=list)
-    truncated: bool = False
+def fingerprint_of(rows, questions: int) -> str:
+    """The cache key for a question set: what the questions were written from.
 
-
-def collect(conn, config: Config, item: Item, *, questions: int) -> Sources:
-    """One post's extracted text, spliced with its transcriptions.
-
-    The fingerprint covers the identity of every source plus the prompt version
-    and the question count -- everything that would change the questions. It
-    does NOT cover the text itself, which would mean reading every file to
-    decide whether to read every file; `chars`, `ocr_pages` and `extracted_at`
-    already move whenever the text does.
+    The identity of every source plus the prompt version and the question count
+    -- everything that would change the questions. It does NOT cover the text
+    itself, which would mean reading every file to decide whether to read every
+    file; `chars`, `ocr_pages` and `extracted_at` already move whenever the text
+    does.
     """
-    rows = store.study_item_sources(conn, item.entity_type, item.entity_id)
-    fingerprint = content_hash(
+    return content_hash(
         {
             "prompt": PROMPT_VERSION,
             "questions": questions,
@@ -377,48 +294,12 @@ def collect(conn, config: Config, item: Item, *, questions: int) -> Sources:
         }
     )
 
-    parts: list[str] = []
-    names: list[str] = []
-    used = 0
-    truncated = False
 
-    for row in rows:
-        title = str(row["file_title"] or row["drive_id"])
-        path = Path(config.library_dir) / str(row["text_path"])
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except OSError:
-            # The row says there is text and the disk disagrees. Skipped rather
-            # than guessed at, and the caller notices because `files` is short.
-            continue
-        body, _, _ = packs.render_pages(
-            raw, store.ocr_pages_for(conn, str(row["drive_id"])), int(row["scan_pages"] or 0)
-        )
-        if not body.strip():
-            continue
+def fingerprint(conn, config: Config, item: Item) -> str:
+    """This item's cache key as of now, at the configured question count."""
+    rows = store.study_item_sources(conn, item.entity_type, item.entity_id)
+    return fingerprint_of(rows, config.quiz_question_count)
 
-        room = MAX_SOURCE_CHARS - used
-        if room <= 0:
-            truncated = True
-            break
-        names.append(title)
-        if len(body) > room:
-            body = body[:room]
-            truncated = True
-        used += len(body)
-        parts.append(f"### {title}\n\n{body}")
-        if used >= MAX_SOURCE_CHARS:
-            truncated = truncated or len(rows) > len(names)
-            break
-
-    return Sources(
-        text="\n\n".join(parts), fingerprint=fingerprint, files=names, truncated=truncated
-    )
-
-
-# --------------------------------------------------------------------------
-# generation
-# --------------------------------------------------------------------------
 
 @dataclass
 class Generated:
@@ -430,132 +311,55 @@ class Generated:
     truncated: bool = False
 
 
-def generate(
-    conn,
-    config: Config,
-    item: Item,
-    *,
-    course: str = "",
-    provider: llm.LLMProvider | None = None,
-    count: int | None = None,
-    now: str | None = None,
-) -> Generated:
-    """Questions for one item -- from the cache when possible, the model when not.
+def cached_set(conn, item_id: int, source_hash: str) -> Generated | None:
+    """The stored, unflagged set for exactly this text, or None."""
+    hit = store.cached_questions(conn, item_id, source_hash)
+    if hit is None:
+        return None
+    return Generated(
+        questions=_load_questions(str(hit["questions"])),
+        model=str(hit["model"]),
+        source_hash=source_hash,
+        cached=True,
+    )
 
-    Refuses before it spends anything on an item the agent cannot fully read.
-    That refusal is the point of the whole phase: `verified` has to mean the
-    quiz covered the lecture, and a quiz generated over untranscribed pages
-    would be a quiz about the parts that happen to be legible.
+
+@dataclass(frozen=True)
+class Readiness:
+    """Whether a quiz can be sat now, and if not, why -- in words.
+
+    `kind` is what a client branches on; `reason` is the sentence it shows.
     """
+
+    kind: str  # open | ready | not-generated | not-delivered | not-readable
+    reason: str = ""
+
+    @property
+    def can_start(self) -> bool:
+        return self.kind in ("open", "ready")
+
+
+def readiness(conn, config: Config, item: Item) -> Readiness:
+    """Whether this item's quiz can be sat now, without writing or generating.
+
+    The order matters. An open attempt is resumable whatever else is true -- it
+    was started on material that was readable then. After that, undelivered and
+    untranscribed are refusals no request could fix, so they are said before
+    "not written yet", which a request does fix.
+    """
+    if store.open_quiz_attempt(conn, item.item_id) is not None:
+        return Readiness("open")
     if item.state not in QUIZZABLE_STATES:
-        raise QuizUnavailable(
-            f"this item is {item.state} — the material has not been delivered, "
-            f"so a pass would not be evidence of anything",
-            kind="not-delivered",
+        return Readiness(
+            "not-delivered",
+            "Mark it read first. A quiz on material that was never opened would "
+            "not be evidence of anything.",
         )
     if not item.ready:
-        raise QuizUnavailable(item.blocked_reason or "nothing readable here", kind="not-readable")
-
-    wanted = count or config.quiz_question_count
-    sources = collect(conn, config, item, questions=wanted)
-    if not sources.text.strip():
-        raise QuizUnavailable(
-            "there is no extracted text on this post to ask about", kind="no-text"
-        )
-
-    hit = store.cached_questions(conn, item.item_id, sources.fingerprint)
-    if hit is not None:
-        return Generated(
-            questions=_load_questions(str(hit["questions"])),
-            model=str(hit["model"]),
-            source_hash=sources.fingerprint,
-            cached=True,
-            truncated=sources.truncated,
-        )
-
-    try:
-        model = provider if provider is not None else llm.from_env()
-    except llm.LLMError as err:
-        # A missing or malformed key is a configuration fault, but it must not
-        # crash a button press: it degrades like every other model failure and
-        # says which one it was.
-        raise _translate(err) from err
-
-    prompt = PROMPT.format(
-        count=wanted,
-        options=OPTIONS,
-        title=item.label,
-        course=course or "(not named)",
-        material=sources.text,
-    )
-
-    try:
-        payload = model.generate_json(prompt, RESPONSE_SCHEMA)
-    except llm.LLMError as err:
-        raise _translate(err) from err
-
-    questions, note = parse_questions(payload, wanted)
-    # Cached even from `agent quiz --dry-run`. The expensive, irreversible thing
-    # is the request, not the row: a dry run that threw its answer away and let
-    # the real quiz ask again would spend 10% of the day's allowance on looking
-    # at the same four questions twice. The command says so on stdout.
-    store.save_questions(
-        conn,
-        item_id=item.item_id,
-        source_hash=sources.fingerprint,
-        model=model.name,
-        questions=json.dumps([q.as_dict() for q in questions]),
-        now=now,
-    )
-    conn.commit()
-
-    return Generated(
-        questions=questions,
-        model=model.name,
-        source_hash=sources.fingerprint,
-        cached=False,
-        note=note,
-        truncated=sources.truncated,
-    )
-
-
-def _translate(err: llm.LLMError) -> QuizUnavailable:
-    """One provider failure, one thing to say about it.
-
-    Seven distinguishable provider failures rather than "the quiz failed". The
-    recurring
-    lesson in PLAN.md is that a summary which cannot separate two states is a
-    defect of its own -- and here the difference between "come back tomorrow",
-    "wait a minute", "the key is wrong" and "the model was retired" is the
-    difference between waiting and going to fix something.
-    """
-    if isinstance(err, llm.LLMQuotaError):
-        return QuizUnavailable(
-            "the day's model quota is spent, so there is no quiz until tomorrow",
-            kind="quota",
-        )
-    if isinstance(err, llm.LLMRateLimited):
-        return QuizUnavailable(
-            "the model is rate limited this minute — try again shortly",
-            kind="rate-limited",
-        )
-    if isinstance(err, llm.LLMTimeout):
-        return QuizUnavailable("the model did not answer in time", kind="timeout")
-    if isinstance(err, llm.LLMModelUnavailable):
-        return QuizUnavailable(
-            f"the configured model is not available — {err}", kind="model"
-        )
-    if isinstance(err, llm.LLMAuthError):
-        return QuizUnavailable(
-            "the model API key is missing or rejected, so no quiz can run at all",
-            kind="auth",
-        )
-    if isinstance(err, llm.LLMRefused):
-        return QuizUnavailable(
-            f"the model would not write questions for this lecture: {err}",
-            kind="refused",
-        )
-    return QuizUnavailable(f"the model could not be reached: {err}", kind="unavailable")
+        return Readiness("not-readable", item.blocked_reason or "Nothing readable here yet.")
+    if cached_set(conn, item.item_id, fingerprint(conn, config, item)) is None:
+        return Readiness("not-generated", "The questions have not been written yet.")
+    return Readiness("ready")
 
 
 # --------------------------------------------------------------------------
@@ -676,30 +480,27 @@ def attempt_from_row(row) -> Attempt:
     )
 
 
-def begin(
+def start(
     conn,
     config: Config,
     item: Item,
+    generated: Generated,
     *,
     run_id: int = 0,
-    course: str = "",
-    provider: llm.LLMProvider | None = None,
     now: str | None = None,
-) -> tuple[Attempt, Generated | None]:
-    """Resume the open attempt on this item, or start a new one.
+) -> Attempt:
+    """Open an attempt on a set that already exists. Writes the attempt row.
 
-    Resuming first is not an optimisation. Telegram redelivers, an old button
-    works forever, and the bot may have been restarted between the tap that
-    started this quiz and the tap that answers it -- so "start a quiz" has to
-    mean "make sure a quiz is running", or a second tap would silently discard
-    the answers already given.
+    The refusal on undelivered material lives here rather than in generation: a
+    set may be written ahead of time for tomorrow's lecture, but SITTING it before
+    the material was delivered would make a pass evidence of nothing.
     """
-    open_row = store.open_quiz_attempt(conn, item.item_id)
-    if open_row is not None:
-        return attempt_from_row(open_row), None
-
-    generated = generate(conn, config, item, course=course, provider=provider, now=now)
-
+    if item.state not in QUIZZABLE_STATES:
+        raise QuizUnavailable(
+            f"this item is {item.state} — the material has not been delivered, "
+            f"so a pass would not be evidence of anything",
+            kind="not-delivered",
+        )
     attempt = Attempt(
         attempt_id=0,
         item_id=item.item_id,
@@ -719,7 +520,32 @@ def begin(
     # already `delivered`; this is the other legal way into `reviewed`.
     store.advance_study_item(conn, item.item_id, "reviewed", now=now)
     conn.commit()
-    return attempt, generated
+    return attempt
+
+
+def begin_cached(
+    conn, config: Config, item: Item, *, run_id: int = 0, now: str | None = None
+) -> Attempt:
+    """Resume the open attempt, or start one from a set already written.
+
+    The browser's entry point, and the reason this module stands apart from the
+    generation half: it never asks a model. A set not written yet is a refusal
+    with kind "not-generated", which the caller answers by recording a request
+    for the bot or the next scheduled run to fulfil.
+
+    One open attempt per item, shared with Telegram: whichever surface started
+    it, the other resumes it, because both read the same row.
+    """
+    open_row = store.open_quiz_attempt(conn, item.item_id)
+    if open_row is not None:
+        return attempt_from_row(open_row)
+
+    found = readiness(conn, config, item)
+    if found.kind != "ready":
+        raise QuizUnavailable(found.reason, kind=found.kind)
+    generated = cached_set(conn, item.item_id, fingerprint(conn, config, item))
+    assert generated is not None  # readiness said so, in this transaction
+    return start(conn, config, item, generated, run_id=run_id, now=now)
 
 
 def record_answer(conn, attempt: Attempt, index: int, chosen: int) -> bool:

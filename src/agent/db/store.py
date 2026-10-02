@@ -1610,6 +1610,87 @@ def count_failed_attempts(conn: sqlite3.Connection, item_id: int) -> int:
     return int(row["n"])
 
 
+def request_quiz(conn: sqlite3.Connection, item_id: int, *, now: str | None = None) -> bool:
+    """Record that I asked for this item's quiz. True when the request is new.
+
+    Asking twice is one request -- the partial unique index on open rows makes
+    that a property of the table rather than of the caller.
+    """
+    cursor = conn.execute(
+        "INSERT OR IGNORE INTO quiz_requests (study_item_id, requested_at) VALUES (?, ?)",
+        (item_id, now or _utc_now_iso()),
+    )
+    return cursor.rowcount == 1
+
+
+def open_quiz_request(conn: sqlite3.Connection, item_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM quiz_requests WHERE study_item_id = ? AND closed_at IS NULL",
+        (item_id,),
+    ).fetchone()
+
+
+def last_quiz_request(conn: sqlite3.Connection, item_id: int) -> sqlite3.Row | None:
+    """The most recent request for this item, open or closed."""
+    return conn.execute(
+        "SELECT * FROM quiz_requests WHERE study_item_id = ? ORDER BY id DESC LIMIT 1",
+        (item_id,),
+    ).fetchone()
+
+
+def open_quiz_requests(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every request still waiting, oldest first -- the order they are served in."""
+    return conn.execute(
+        "SELECT * FROM quiz_requests WHERE closed_at IS NULL ORDER BY requested_at, id"
+    ).fetchall()
+
+
+def close_quiz_requests(
+    conn: sqlite3.Connection,
+    item_id: int,
+    *,
+    outcome: str = "written",
+    now: str | None = None,
+) -> None:
+    conn.execute(
+        "UPDATE quiz_requests SET closed_at = ?, outcome = ? "
+        " WHERE study_item_id = ? AND closed_at IS NULL",
+        (now or _utc_now_iso(), outcome, item_id),
+    )
+
+
+def read_unverified_items(conn: sqlite3.Connection, course_ids: list[str]) -> list[sqlite3.Row]:
+    """Items I have opened or said I read, and not yet verified, oldest first.
+
+    `delivered` and `reviewed` are the two states a quiz can be sat from on the
+    way to `verified` -- what the Quizzes screen calls "ready to verify", once a
+    set exists and every page is transcribed.
+    """
+    if not course_ids:
+        return []
+    marks = ", ".join("?" for _ in course_ids)
+    return conn.execute(
+        f"SELECT id, course_id, state FROM study_items "
+        f" WHERE state IN ('delivered', 'reviewed') AND course_id IN ({marks}) "
+        f" ORDER BY COALESCE(reviewed_at, delivered_at, created_at), id",
+        course_ids,
+    ).fetchall()
+
+
+def finished_quiz_attempts(conn: sqlite3.Connection, limit: int = 50) -> list[sqlite3.Row]:
+    """Past attempts, newest first, with the item and course they were about."""
+    return conn.execute(
+        "SELECT a.id, a.study_item_id, a.started_at, a.finished_at, a.score, a.passed, "
+        "       a.flagged, a.questions, si.course_id, c.name AS course_name "
+        "  FROM quiz_attempts a "
+        "  JOIN study_items si ON si.id = a.study_item_id "
+        "  LEFT JOIN courses c ON c.id = si.course_id "
+        " WHERE a.finished_at IS NOT NULL "
+        " ORDER BY a.finished_at DESC, a.id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+
+
 def verify_study_item(
     conn: sqlite3.Connection, item_id: int, attempt_id: int, *, now: str | None = None
 ) -> bool:
