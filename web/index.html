@@ -10,14 +10,32 @@
 -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>classroom-agent</title>
+<title>Margin</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#0f1216">
+<meta name="theme-color" content="#f3efe7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171512" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f3efe7">
+<!--
+  The theme chosen in More, applied before anything paints, so a dark-theme
+  phone never flashes paper at 23:00. Same key as web/theme.js. Inline because a
+  module would run after the first paint; no external script, nothing fetched.
+-->
+<script>
+  try {
+    var chosen = localStorage.getItem("margin.theme");
+    if (chosen === "light" || chosen === "dark") {
+      document.documentElement.dataset.theme = chosen;
+      document.querySelector('meta[name="theme-color"]:not([media])')
+        .setAttribute("content", chosen === "dark" ? "#171512" : "#f3efe7");
+    }
+  } catch (e) {}
+</script>
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icon-192.png">
 <!-- The Latin subset, asked for before the stylesheet asks, so the swap from the
      system stack happens on the first paint rather than a moment after it. -->
 <link rel="preload" href="/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/bricolage-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/app.css">
 <!-- One stylesheet per screen, so one screen's redesign reverts on its own. -->
 <link rel="stylesheet" href="/styles/legacy.css">
@@ -25,6 +43,7 @@
 <link rel="stylesheet" href="/styles/now.css">
 <link rel="stylesheet" href="/styles/subjects.css">
 <link rel="stylesheet" href="/styles/quiz.css">
+<link rel="stylesheet" href="/styles/timetable.css">
 <!--
   Load-bearing. `preact-hooks.module.js` imports "preact" as a bare specifier,
   which a browser cannot resolve on its own; without this the app fails at parse

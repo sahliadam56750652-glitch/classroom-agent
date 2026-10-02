@@ -2,30 +2,21 @@
 //
 // Derived rather than stored, so it needs no table, no setting and no sync: the
 // same name is the same colour on every screen, on every device, after every
-// restart. DESIGN.md section 8 has the swatches and why there are twelve.
+// restart, in both themes. DESIGN.md section 8 has the hues and why there are
+// twelve.
 //
-// Twelve colours for any number of subjects means two can share one -- with
-// twelve subjects that is more likely than not. That is acceptable only because
-// a colour never appears without the name beside it: the name identifies, the
-// colour only helps the eye find the same subject again on the next screen.
+// What this returns is not a colour but an INDEX into twelve sets of tokens in
+// app.css -- --s0-fg, --s0-tint, --s0-fill and so on -- each a light-dark()
+// pair. So a theme change recolours everything at once without a re-render, and
+// the values that have to pass contrast live in the one file the test reads.
 //
-// No red, no orange. The one warm alarm in this app is a passed deadline, and a
-// subject that happened to hash to red would read as a subject in trouble.
+// Twelve hues for any number of subjects means two can share one. That is
+// acceptable only because the colour never appears without the name in it.
+//
+// No red, no orange. The one alarm in this app is a passed deadline, and a
+// subject that hashed to red would read as a subject in trouble.
 
-export const SWATCHES = [
-  "#d5bb7d",
-  "#a0a146",
-  "#aaca91",
-  "#5cb07a",
-  "#7fd0bc",
-  "#12b1b5",
-  "#7ccbe4",
-  "#53a3dc",
-  "#a2bef5",
-  "#9590df",
-  "#cdafe8",
-  "#c380bd",
-];
+export const HUES = 12;
 
 /**
  * FNV-1a over the name's UTF-8 bytes.
@@ -42,13 +33,19 @@ function fnv1a(text) {
   return hash >>> 0;
 }
 
-/** The swatch for a subject name; neutral for none. */
-export function subjectColor(name) {
-  if (!name) return "var(--edge)";
-  return SWATCHES[fnv1a(String(name).trim()) % SWATCHES.length];
+/** Which of the twelve a subject is; null for none. */
+export function subjectIndex(name) {
+  if (!name) return null;
+  return fnv1a(String(name).trim()) % HUES;
 }
 
-/** A style object that sets --subject, for any element that carries one. */
+/** The three custom properties anything belonging to a subject sets. */
 export function subjectStyle(name) {
-  return { "--subject": subjectColor(name) };
+  const index = subjectIndex(name);
+  if (index == null) return {};
+  return {
+    "--subject": `var(--s${index}-fg)`,
+    "--subject-tint": `var(--s${index}-tint)`,
+    "--subject-fill": `var(--s${index}-fill)`,
+  };
 }

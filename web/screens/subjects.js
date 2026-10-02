@@ -24,7 +24,7 @@ import { Offline, api, describe } from "/api.js";
 import { age, plural, relativeDay } from "/format.js";
 import { subjectStyle as subjectStyleOf } from "/subject-color.js";
 import { linkProps } from "/router.js";
-import { Card, Problem, ScreenHeader, SectionLinks, Skeleton, STUDY_PARTS, SubjectName } from "/ui.js";
+import { Card, Chip, Empty, Problem, ScreenHeader, SectionLinks, Skeleton, STUDY_PARTS, SubjectName } from "/ui.js";
 import { QuizEntry } from "/screens/quiz.js";
 import { Icon } from "/icons.js";
 import { navigate } from "/router.js";
@@ -59,9 +59,12 @@ function standing(subject) {
         : "")
     );
   }
-  return subject.blocked
+  // "6 unreviewed, 2 ready" is section 3's own example. With none ready the
+  // zero is not said: "none ready yet" is the same fact in words.
+  if (!subject.blocked) return plural(subject.unreviewed, "unreviewed", "unreviewed");
+  return subject.ready
     ? `${subject.unreviewed} unreviewed, ${subject.ready} ready`
-    : plural(subject.unreviewed, "unreviewed", "unreviewed");
+    : `${subject.unreviewed} unreviewed, none ready yet`;
 }
 
 /** "Mon 5 Oct 08:30" -- when a session is, as the instant it is. */
@@ -128,9 +131,8 @@ function order(rows, next) {
 function Standing({ subject, next }) {
   const item = subject.next_item;
   const meta = [
-    next ? `${kindOf(next.session)} at ${next.start}` : "",
     subject.state === "behind" && subject.oldest_posted_at
-      ? `oldest posted ${age(subject.oldest_posted_at)}`
+      ? `oldest from ${age(subject.oldest_posted_at)}`
       : "",
   ].filter(Boolean);
 
@@ -139,12 +141,17 @@ function Standing({ subject, next }) {
       to=${`/study/${encodeURIComponent(subject.name)}`}
       subject=${subject.name}
     >
-      <span class="t-lead"><${SubjectName} name=${subject.name} /></span>
+      <span class="subject-top">
+        <${Chip} name=${subject.name} />
+        ${next
+          ? html`<span class="subject-when"><span class="time">${next.start}</span> ${kindOf(next.session)}</span>`
+          : null}
+      </span>
       <span class="t-state subject-said">${standing(subject)}</span>
       ${subject.state === "behind" && item
-        ? html`<span class="subject-next">${`Next: ${item.label}`}</span>`
+        ? html`<span class="t-lead subject-next">${item.label}</span>`
         : null}
-      ${meta.length ? html`<span class="t-meta">${meta.join(" · ")}</span>` : null}
+      ${meta.length ? html`<span class="t-meta">${meta.join(", ")}</span>` : null}
     </${Card}>
   </li>`;
 }
@@ -256,12 +263,53 @@ function kindOf(session) {
 
 /** What a study item's state means, in words. */
 const ITEM_STATE = {
-  pending: "not opened yet",
-  delivered: "opened, not marked read",
-  reviewed: "read, not verified",
-  verified: "verified",
-  skipped: "skipped",
+  pending: "Not opened yet",
+  delivered: "Opened, not marked read",
+  reviewed: "Read, not verified",
+  verified: "Verified",
+  skipped: "Skipped",
 };
+
+function capital(text) {
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+}
+
+function dateOf(day) {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function weekdayOf(day) {
+  return dateOf(day).toLocaleDateString(undefined, { weekday: "short" });
+}
+
+function monthDayOf(day) {
+  return dateOf(day).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+/**
+ * A subject's figures as a few chips, and never a zero.
+ *
+ * "0 pages not transcribed" is not a fact anyone needs: a figure is shown only
+ * when it is something, and in words a person would use. Rule 1 of section 1
+ * still holds -- the material, with its doors, is right beneath.
+ */
+function Figures({ subject }) {
+  const found = [
+    [subject.unreviewed, "to review"],
+    [subject.ready, "ready to quiz"],
+    [subject.unread_pages, subject.unread_pages === 1 ? "page still to transcribe" : "pages still to transcribe"],
+  ].filter(([count]) => count);
+  if (!found.length && !subject.oldest_posted_at) return null;
+  return html`<ul class="figures">
+    ${found.map(
+      ([count, words]) => html`<li key=${words} class="figure"><span class="num">${count}</span>${words}</li>`
+    )}
+    ${subject.state === "behind" && subject.oldest_posted_at
+      ? html`<li class="figure">oldest from ${age(subject.oldest_posted_at)}</li>`
+      : null}
+  </ul>`;
+}
 
 /**
  * One post of this subject's: what it is, where I am with it, and the doors.
@@ -297,7 +345,7 @@ function Post({ post, subject }) {
       <div class="card-body">
         <span class="t-lead">${post.title}</span>
         ${state ? html`<span class="t-state">${ITEM_STATE[state] || state}</span>` : null}
-        <span class="t-meta num">${meta.join(" · ")}</span>
+        <span class="t-meta">${meta.join(" · ")}</span>
         <div class="post-doors">
           ${post.study_item_id
             ? html`<button class="button quiet-button" type="button" onClick=${open}>
@@ -353,62 +401,51 @@ export function Subject({ name }) {
 
 
   return html`
-    <div class="screen subject-page">
-      <header class="screen-header">
+    <div class="screen subject-page" style=${subjectStyleOf(subject.name)}>
+      <header class="subject-band">
         <a class="back-link t-meta" ...${linkProps("/study")}>Study</a>
-        <h1 class="t-title"><${SubjectName} name=${subject.name} /></h1>
-        <p class="t-state">${standing(subject)}</p>
+        <h1 class="t-title subject-title">${subject.name}</h1>
+        ${subject.state === "behind"
+          ? null
+          : html`<p class="t-state">${capital(standing(subject))}</p>`}
+        <${Figures} subject=${subject} />
       </header>
 
       <div class="split">
-        <div class="section">
-          ${subject.state === "behind"
-            ? html`
-                <dl class="card fact-list subject-facts">
-                  <dt>unreviewed</dt>
-                  <dd class="num">${subject.unreviewed}</dd>
-                  <dt>ready to quiz</dt>
-                  <dd class="num">${subject.ready}</dd>
-                  <dt>pages not transcribed</dt>
-                  <dd class="num">${subject.unread_pages}</dd>
-                  ${subject.oldest_posted_at
-                    ? html`<dt>oldest posted</dt>
-                        <dd>${age(subject.oldest_posted_at)}</dd>`
-                    : null}
-                </dl>
-              `
-            : null}
-
-          <section class="section">
-            <h2 class="section-title">Material</h2>
-            ${posts === null
-              ? html`<${Skeleton} rows=${2} />`
-              : posts.length
-              ? html`<ul class="list">
-                  ${posts.map((post) => html`<${Post} key=${post.entity_id} post=${post} subject=${subject.name} />`)}
-                </ul>`
-              : html`<p class="t-state">Nothing held for this subject yet.</p>`}
-          </section>
-        </div>
+        <section class="section">
+          <h2 class="section-title">Material</h2>
+          ${posts === null
+            ? html`<${Skeleton} rows=${2} />`
+            : posts.length
+            ? html`<ul class="list">
+                ${posts.map((post) => html`<${Post} key=${post.entity_id} post=${post} subject=${subject.name} />`)}
+              </ul>`
+            : html`<${Empty} title="Nothing here yet.">Material appears once it is posted or uploaded.</${Empty}>`}
+        </section>
 
         ${sessions && sessions.length
           ? html`<section class="section">
-              <h2 class="section-title">Sessions, next two weeks</h2>
-              <ul class="list">
+              <h2 class="section-title">Coming up</h2>
+              <ol class="timeline">
                 ${sessions.map(
-                  ({ date, session }) => html`<li key=${`${date}-${session.start}`}>
-                    <div class="card subject-session">
-                      <span class="t-meta num session-at">${`${relativeDay(date)} ${session.start}`}</span>
-                      <div class="card-body">
-                        <span>${[kindOf(session), session.parts[0] && session.parts[0].room]
-                          .filter(Boolean)
-                          .join(", ")}</span>
-                        ${session.note ? html`<span class="t-meta">${session.note}</span>` : null}
-                      </div>
-                    </div>
+                  ({ date, session }) => html`<li
+                    key=${`${date}-${session.start}`}
+                    class="slot slot-dated"
+                  >
+                    <span class="slot-time">
+                      <span class="slot-day">${weekdayOf(date)}</span>
+                      <span class="time slot-start">${session.start}</span>
+                    </span>
+                    <span class="slot-block">
+                      <span class="slot-name">${capital(kindOf(session))}</span>
+                      <span class="slot-where">${[monthDayOf(date), session.parts[0] && session.parts[0].room]
+                        .filter(Boolean)
+                        .join(" · ")}</span>
+                      ${session.note ? html`<span class="slot-where">${session.note}</span>` : null}
+                    </span>
                   </li>`
                 )}
-              </ul>
+              </ol>
             </section>`
           : null}
       </div>

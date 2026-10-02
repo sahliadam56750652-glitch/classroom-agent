@@ -188,7 +188,7 @@ def test_no_set_yet_says_so_and_a_request_says_when(config, monkeypatch):
     asked = session.post(f"/api/study-items/{item_id}/quiz/request").json()
     assert asked["kind"] == "requested"
     # No heartbeat: the bot is not listening, so the next scheduled run does it.
-    assert "next scheduled sync" in asked["when"]
+    assert "at the next sync" in asked["when"]
 
 
 def test_a_fresh_heartbeat_says_the_bot_will_write_it(config, monkeypatch):
@@ -212,7 +212,7 @@ def test_a_stale_heartbeat_is_not_a_listening_bot(config, monkeypatch):
     conn.commit()
     conn.close()
     asked = session.post(f"/api/study-items/{item_id}/quiz/request").json()
-    assert "not running" in asked["when"]
+    assert "at the next sync" in asked["when"]
 
 
 def test_asking_spends_nothing(config, monkeypatch):

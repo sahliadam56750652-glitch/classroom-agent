@@ -157,3 +157,78 @@
   flex-wrap: wrap;
   align-items: center;
 }
+
+/* ------------------------------------------------------------- 2026-10-02
+   Colour with intent: a subject's card is tinted its colour, its name is a
+   filled chip, and its page opens on a band of its colour. */
+
+.subject-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  margin-bottom: var(--s1);
+}
+
+.subject-when {
+  color: var(--ink-2);
+  font-size: 15px;
+}
+
+.subject-when .time {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.subject .subject-next {
+  font-size: 17px;
+}
+
+.subject-band {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s5);
+  margin: calc(var(--s2) * -1) 0 0;
+  background: var(--subject-tint);
+  border: 1px solid color-mix(in oklab, var(--subject) 25%, var(--line));
+  border-radius: var(--r-hero);
+}
+
+.subject-band .back-link {
+  margin-top: calc(var(--s2) * -1);
+}
+
+.subject-title {
+  font-size: 34px;
+  color: var(--subject);
+}
+
+@media (min-width: 1024px) {
+  .subject-band {
+    padding: var(--s6);
+  }
+
+  .subject-title {
+    font-size: 44px;
+  }
+}
+
+.subject-band .figures {
+  margin-top: var(--s2);
+}
+
+.subject-band .figure {
+  background: var(--raised);
+}
+
+.slot-dated .slot-time {
+  padding-top: var(--s2);
+}
+
+.slot-day {
+  font-size: 13px;
+  color: var(--ink-3);
+}

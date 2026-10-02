@@ -303,7 +303,7 @@ def _seed_a_quiz(conn, data: Path) -> None:
 
 
 PROBE = """<!DOCTYPE html><html><head><meta charset='utf-8'></head><body>
-<iframe id=f style='width:__WIDTH__px;height:900px;border:0'></iframe>
+<iframe id=f style='width:__WIDTH__px;height:2400px;border:0'></iframe>
 <pre id=o></pre><script>
 const q = new URLSearchParams(location.search);
 const TOKEN = q.get('t');
@@ -457,7 +457,11 @@ def test_the_waiting_state_says_what_design_md_asks_for(busy):
     """DESIGN.md section 2: subject, title, the window, how much is readable."""
     text = busy["text"]
 
-    assert "Database · 1 unreviewed" in text
+    # The deficit line, as a screen reader and DESIGN.md say it. The subject is
+    # a chip now, so the line is read from its text rather than from layout.
+    line = re.search(r'class="t-state deficit">(.*?)</p>', busy["html"], re.S).group(1)
+    words = " ".join(re.sub(r"<[^>]+>", " ", line).split())
+    assert words == "Database · 1 unreviewed", words
     assert "Chapter 4 — SQL joins" in text
     assert "92 pages" in text
     assert "an evening is about pages 1-20" in text
@@ -496,7 +500,9 @@ def test_the_empty_state_says_almost_nothing(clear):
     """DESIGN.md section 4: one line, then get out of the way."""
     text = clear["text"]
 
-    assert "Nothing waiting." in text
+    # "Nothing to review", not "Nothing waiting": Today also lists what is due.
+    assert "Nothing to review." in text
+    assert "Nothing waiting" not in text
     assert "Next session: OS lab" in text
     # No praise, no backfill, no suggestion of something else to do.
     for forbidden in ("Great", "Well done", "streak", "Nice", "!"):
@@ -645,7 +651,7 @@ def test_a_deep_link_into_the_reader_serves_the_app(served):
     base, _ = served
     with urllib.request.urlopen(f"{base}/read/anything", timeout=30) as response:
         assert response.status == 200
-        assert b"<title>classroom-agent</title>" in response.read()
+        assert b"<title>Margin</title>" in response.read()
 
 
 @chrome_only
@@ -739,8 +745,19 @@ def test_the_whole_picture_is_one_tap_away(busy):
 
 @pytest.fixture(scope="module")
 def timetable(served, tmp_path_factory):
+    """The timetable with the first session's menu opened, as a thumb would."""
     base, _ = served
-    return render(base, tmp_path_factory.mktemp("tt"), path="/timetable")
+    steps = """
+      // A phone shows one day, opening on today; Monday is the day that has
+      // a session in this fixture, so choose it first.
+      const monday = d().querySelector('.tt-day-chip');
+      if (monday) monday.click();
+      await sleep(400);
+      const first = d().querySelector('.session-menu-button:not([disabled])');
+      if (first) first.click();
+      await sleep(600);
+    """
+    return render(base, tmp_path_factory.mktemp("tt"), path="/timetable", steps=steps)
 
 
 @chrome_only
@@ -750,8 +767,11 @@ def test_the_timetable_offers_to_record_what_happened(timetable):
     On a phone at 22:00 hand-editing timetable.yaml does not happen, so the gate
     prepares me for a lecture that is not taking place.
     """
-    assert "Cancel" in timetable["text"]
-    assert "Move" in timetable["text"]
+    # One menu per session, opened from the session: Cancel and Move are in it,
+    # and there is no row of buttons repeated on every line.
+    assert "Cancel this session" in timetable["text"]
+    assert "Move it to another time" in timetable["text"]
+    assert timetable["html"].count('role="menu"') == 1
 
 
 @chrome_only

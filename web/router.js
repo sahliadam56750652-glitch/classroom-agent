@@ -40,9 +40,39 @@ function read() {
 
 /** Go somewhere, adding a history entry. */
 export function navigate(to, { replace = false } = {}) {
-  if (replace) history.replaceState(null, "", to);
-  else history.pushState(null, "", to);
-  dispatchEvent(new Event("agent:navigate"));
+  const go = () => {
+    if (replace) history.replaceState(null, "", to);
+    else history.pushState(null, "", to);
+    dispatchEvent(new Event("agent:navigate"));
+  };
+  // A short cross-fade between screens, where the browser has View Transitions
+  // and I have not asked for less motion. Everywhere else, the move is instant
+  // -- the transition is a courtesy, never a dependency. A replace is a
+  // correction (signed out, signed in), not a move, so it never animates.
+  //
+  // And a transition must never be what stands between a tap and the screen.
+  // Where the browser declines to run the update -- a hidden document, a
+  // headless one -- the move happens anyway after 120ms, exactly once.
+  if (
+    !replace &&
+    document.startViewTransition &&
+    !matchMedia("(prefers-reduced-motion: reduce)").matches
+  ) {
+    let moved = false;
+    const once = () => {
+      if (moved) return;
+      moved = true;
+      go();
+    };
+    try {
+      document.startViewTransition(once);
+    } catch {
+      once();
+    }
+    setTimeout(once, 120);
+  } else {
+    go();
+  }
 }
 
 /**

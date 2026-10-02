@@ -103,11 +103,11 @@ def _next_run(config: Config) -> str:
 
 
 def _when(conn: sqlite3.Connection, config: Config) -> str:
+    # Said in DESIGN.md section 5's voice: what will happen and when, and not
+    # the plumbing that makes it happen.
     if _bot_listening(conn):
-        return "The bot is listening, so it should be written within a few minutes."
-    return (
-        f"The bot is not running, so the next scheduled sync writes it, {_next_run(config)}."
-    )
+        return "Being written now. Usually ready within a few minutes."
+    return f"Will be written at the next sync, {_next_run(config)}."
 
 
 def _status(conn: sqlite3.Connection, config: Config, item: gate_scheduler.Item) -> schemas.QuizStatusOut:
@@ -125,7 +125,7 @@ def _status(conn: sqlite3.Connection, config: Config, item: gate_scheduler.Item)
     request = store.open_quiz_request(conn, item.item_id)
     if request is not None:
         out.kind = "requested"
-        out.reason = "Asked for. The questions are being written."
+        out.reason = "Asked for."
         out.requested_at = str(request["requested_at"])
         out.when = _when(conn, config)
         return out
@@ -133,10 +133,6 @@ def _status(conn: sqlite3.Connection, config: Config, item: gate_scheduler.Item)
     last = store.last_quiz_request(conn, item.item_id)
     if last is not None and last["outcome"] and last["outcome"] != "written":
         out.request_outcome = str(last["outcome"])
-    out.when = (
-        "Asking costs one of the day's model requests, once; the set is then kept "
-        "for every retry."
-    )
     return out
 
 

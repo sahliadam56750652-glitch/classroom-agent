@@ -2,7 +2,7 @@
 //
 // Two states, and the app is in the second one most of the time:
 //
-//   Nothing waiting -- one line, then get out of the way.
+//   Nothing to review -- one line, then get out of the way.
 //   23:00, nothing done, a lecture at 08:30 -- identical in tone, colour and
 //   layout to any other state. The app has no information at 23:00 that it
 //   lacked at 19:00, so behaving differently would be theatre.
@@ -18,7 +18,9 @@ import { Offline, api, describe } from "/api.js";
 import { localTime, plural, relativeDay, sessionName, shortDate } from "/format.js";
 import { linkProps } from "/router.js";
 import { Icon } from "/icons.js";
-import { Card, Problem, Skeleton, SubjectName, useSubjectNames } from "/ui.js";
+import { Card, Chip, Empty, Problem, Skeleton, useSubjectNames } from "/ui.js";
+import { subjectStyle } from "/subject-color.js";
+import { greeting, longDate } from "/greeting.js";
 import { QuizEntry } from "/screens/quiz.js";
 
 /**
@@ -74,32 +76,30 @@ function PageRuler({ windows, first }) {
 }
 
 /**
- * Nothing waiting. One line, then nothing -- a quiet card rather than the hero,
- * because there is no action to make large, and nothing backfilled beside it on
- * a wide screen either.
+ * Nothing to review. One line, then nothing -- the empty state, not the hero,
+ * because there is no action to make large.
+ *
+ * "Nothing to review" rather than "Nothing waiting": Today also lists what is
+ * due, and "nothing waiting" above a homework due on Thursday said two
+ * contradictory things. What is empty is the reading queue.
  */
 function Clear({ body }) {
   const session = body.next_session;
-  return html`
-      <div class="card now-clear">
-        <div class="card-body">
-          <p class="t-lead">Nothing waiting.</p>
-          ${session
-            ? html`<p class="t-state">
-                ${`Next session: ${sessionName(session)}, ${relativeDay(
-                  body.for_date
-                )} ${session.start}.`}
-              </p>`
-            : /*
-               * No session to name. Said, rather than left as an unexplained
-               * blank: a holiday, a date no timetable version covers and a day
-               * whose sessions were all moved away are three different facts,
-               * and the server already distinguishes them.
-               */
-              html`<p class="t-state">${body.silent_because || "Nothing scheduled."}</p>`}
-        </div>
-      </div>
-  `;
+  return html`<${Empty} title="Nothing to review.">
+    ${session
+      ? `Next session: ${sessionName(session)}, ${relativeDay(body.for_date)} ${session.start}.`
+      : /*
+         * No session to name. Said, rather than left as an unexplained blank: a
+         * holiday, a date no timetable version covers and a day whose sessions
+         * were all moved away are three different facts, and the server already
+         * distinguishes them.
+         */
+        capitalised(body.silent_because || "Nothing scheduled.")}
+  </${Empty}>`;
+}
+
+function capitalised(text) {
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
 
 /**
@@ -171,14 +171,17 @@ function Waiting({ body, onNext }) {
   ].filter(Boolean);
 
   return html`
-        <article class="hero now-hero" aria-labelledby="now-title">
-          <!-- The deficit. One subordinate line, above the item, and nowhere else. -->
+        <article
+          class="hero has-subject now-hero"
+          style=${subjectStyle(subject.name)}
+          aria-labelledby="now-title"
+        >
+          <!-- The deficit. One subordinate line, above the item, and nowhere
+               else. The separator is for a screen reader, which reads the line
+               the way DESIGN.md writes it: "Database · 6 unreviewed". -->
           <p class="t-state deficit">
-            <${SubjectName} name=${subject.name} />${` · ${plural(
-              subject.unreviewed,
-              "unreviewed",
-              "unreviewed"
-            )}`}
+            <${Chip} name=${subject.name} /><span class="visually-hidden"> · </span>
+            <span>${plural(subject.unreviewed, "unreviewed", "unreviewed")}</span>
           </p>
 
           <div class="now-what">
@@ -197,7 +200,7 @@ function Waiting({ body, onNext }) {
 
           <${PageRuler} windows=${windows} first=${window ? window.index : 0} />
 
-          ${why ? html`<p class="t-meta">${why}</p>` : null}
+          ${why ? html`<p class="t-meta now-why">${why}</p>` : null}
 
           ${item.unread
             ? html`<p class="notice not-read">${notRead(item, windows)}</p>`
@@ -227,9 +230,10 @@ function localToday() {
 const DUE_DAYS = 4;
 
 /**
- * Today's sessions. A fact about the day, not about me: no counts, no standing
- * (section 2 keeps the whole picture off the front door, and this is not it).
- * A session that moved or was cancelled is shown, crossed out, with why.
+ * Today's schedule, as a timeline: each session a block in its subject's
+ * colour against its time. A fact about the day, not about me -- no counts, no
+ * standing (section 2 keeps the whole picture off the front door, and this is
+ * not it). A session that moved or was cancelled stays, crossed out, with why.
  */
 function TodaySessions() {
   const [day, setDay] = useState(null);
@@ -248,27 +252,44 @@ function TodaySessions() {
     };
   }, []);
 
-  if (!day || !(day.sessions.length || day.departed.length)) return null;
+  if (!day) return null;
+  const items = [
+    ...day.sessions.map((session) => [session, false]),
+    ...day.departed.map((session) => [session, true]),
+  ].sort((a, b) => (a[0].start < b[0].start ? -1 : a[0].start > b[0].start ? 1 : 0));
 
   return html`
     <section class="section today-part" aria-labelledby="today-sessions">
-      <h2 class="section-title" id="today-sessions">
-        Today<span class="t-meta today-date">${shortDate(day.date)}</span>
-      </h2>
-      <ul class="list">
-        ${day.sessions.map(
-          (session) => html`<li key=${`${session.start}-${sessionName(session)}`}>
-            <${SessionCard} session=${session} />
-          </li>`
-        )}
-        ${day.departed.map(
-          (session) => html`<li key=${`gone-${session.start}-${sessionName(session)}`}>
-            <${SessionCard} session=${session} departed=${true} />
-          </li>`
-        )}
-      </ul>
+      <h2 class="section-title" id="today-sessions">Today's schedule</h2>
+      ${items.length
+        ? html`<ol class="timeline">
+            ${items.map(([session, departed]) => html`<${Slot}
+              key=${`${session.start}-${sessionName(session)}-${departed}`}
+              session=${session}
+              departed=${departed}
+            />`)}
+          </ol>`
+        : html`<p class="t-state">${capitalised(day.exception || "No sessions today.")}</p>`}
     </section>
   `;
+}
+
+/** One session on the timeline. */
+function Slot({ session, departed }) {
+  const parts = session.parts || [];
+  const names = parts.map((part) => part.subject);
+  const where = [capitalised(kindOf(session)), parts[0] && parts[0].room].filter(Boolean).join(" · ");
+  return html`<li class=${`slot ${departed ? "departed" : ""}`} style=${subjectStyle(names[0])}>
+    <span class="slot-time">
+      <span class="time slot-start">${session.start}</span>
+      <span class="time slot-end">${session.end}</span>
+    </span>
+    <span class="slot-block">
+      <span class="slot-name">${names.join(" + ")}</span>
+      ${where ? html`<span class="slot-where">${where}</span>` : null}
+      ${session.note ? html`<span class="slot-where">${session.note}</span>` : null}
+    </span>
+  </li>`;
 }
 
 /**
@@ -303,15 +324,15 @@ function DueSoon() {
 
   return html`
     <section class="section today-part" aria-labelledby="today-due">
-      <h2 class="section-title" id="today-due">Due in the next ${DUE_DAYS} days</h2>
+      <h2 class="section-title" id="today-due">Due this week</h2>
       <ul class="list">
         ${soon.map((row) => {
           const subject = names[row.course_id] || "";
           return html`<li key=${`${row.entity_type}-${row.entity_id}`}>
             <${Card} to="/work" subject=${subject || null}>
-              ${subject ? html`<span class="t-meta"><${SubjectName} name=${subject} /></span>` : null}
+              <${Chip} name=${subject} />
               <span class="t-body due-title">${row.title}</span>
-              <span class="t-meta num">${localTime(row.due_at)}${row.label ? ` · ${row.label}` : ""}</span>
+              <span class="t-meta"><span class="time">${dueAt(row.due_at)}</span>${row.label ? `, ${row.label}` : ""}</span>
             </${Card}>
           </li>`;
         })}
@@ -320,28 +341,18 @@ function DueSoon() {
   `;
 }
 
+/** "Sun 4 Oct, 22:59" -- the instant, in the display face. Never a countdown. */
+function dueAt(stamp) {
+  const at = new Date(stamp);
+  const day = at.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  const clock = at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${day}, ${clock}`;
+}
+
 /** The kind of session in words: "lecture", "lab". */
 function kindOf(session) {
   const kind = (session.kind || "").toLowerCase();
   return { lec: "lecture", tut: "tutorial", lab: "lab" }[kind] || kind;
-}
-
-function SessionCard({ session, departed = false }) {
-  const parts = session.parts || [];
-  const where = [kindOf(session), parts[0] && parts[0].room].filter(Boolean).join(", ");
-  return html`<div class=${`card now-session ${departed ? "departed" : ""}`}>
-    <span class="t-meta num now-time">${session.start}</span>
-    <div class="card-body">
-      <span class="now-session-name">
-        ${parts.map(
-          (part, n) =>
-            html`<span key=${n}>${n ? " + " : ""}<${SubjectName} name=${part.subject} /></span>`
-        )}
-      </span>
-      ${where ? html`<span class="t-meta">${where}</span>` : null}
-      ${session.note ? html`<span class="t-meta">${session.note}</span>` : null}
-    </div>
-  </div>`;
 }
 
 /**
@@ -524,7 +535,11 @@ export function Now({ status }) {
         </p>`
       : null}
     <div class="screen today">
-      <div class="split">
+      <header class="today-head">
+        <p class="t-greeting">${longDate(new Date())}</p>
+        <p class="t-title today-greeting">${greeting(new Date())}</p>
+      </header>
+      <div class="today-split">
         <div class="today-main">
           ${body.waiting
             ? html`<${Waiting} body=${body} onNext=${() => setRound((n) => n + 1)} />`

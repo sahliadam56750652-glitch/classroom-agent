@@ -52,3 +52,18 @@ export function Icon({ name, label, class: extra = "" }) {
     ${PATHS[name] || null}
   </svg>`;
 }
+
+/**
+ * The mark: a page with its margin rule. DESIGN.md section 8.
+ *
+ * Drawn from the theme's own tokens, so it is ink on paper by day and lit ink on
+ * charcoal at night. web/icon.svg is the same geometry in fixed colours, for the
+ * places a theme cannot reach -- the favicon and the installed app's icon.
+ */
+export function Mark({ class: extra = "" }) {
+  return html`<svg class=${`mark ${extra}`} viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+    <rect x="5" y="3" width="22" height="26" rx="4" fill="var(--raised)" stroke="var(--ink)" stroke-width="1.6" />
+    <path d="M11 3.8v24.4" stroke="var(--s0-fg)" stroke-width="1.8" />
+    <path d="M14.5 11h8M14.5 16h8M14.5 21h5" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" />
+  </svg>`;
+}

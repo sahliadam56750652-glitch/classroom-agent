@@ -29,7 +29,7 @@ import { Add } from "/screens/add.js";
 import { More, SECONDARY } from "/screens/more.js";
 import { PastAttempt, Quiz, Quizzes } from "/screens/quiz.js";
 import { Icon } from "/icons.js";
-import { ScreenHeader, SectionLinks, STUDY_PARTS } from "/ui.js";
+import { Brand, ScreenHeader, SectionLinks, STUDY_PARTS } from "/ui.js";
 import { linkProps, match, navigate, useRoute } from "/router.js";
 import { flushWhenOnline } from "/queue.js";
 
@@ -93,7 +93,7 @@ function SignIn({ onDone }) {
   return html`
     <main class="signin">
       <div class="signin-card">
-        <h1>classroom-agent</h1>
+        <${Brand} />
         <p class="quiet">
           Paste <code>WEB_API_TOKEN</code> from <code>.env</code>. Once every 90
           days.
@@ -215,7 +215,6 @@ function Shell({ onSignOut, offline }) {
 const LEGACY = new Set([
   "library",
   "deadlines",
-  "timetable",
   "projects",
   "add",
   "status",
@@ -342,7 +341,7 @@ function Sidebar({ here, onSignOut }) {
   </a>`;
   return html`
     <nav class="sidebar" aria-label="All places">
-      <p class="sidebar-name">classroom-agent</p>
+      <${Brand} />
       <div class="sidebar-group">
         ${PLACES.map(
           (place) => html`${link(place)}${(PARTS[place[0]] || []).map((part) => link(part, true))}`

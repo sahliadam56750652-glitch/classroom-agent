@@ -111,7 +111,7 @@ never. Streaks, never.**
 
 One line, then get out of the way.
 
-> Nothing waiting.
+> Nothing to review.
 > Next session: OS lab, tomorrow 08:30.
 
 No charts backfilled to occupy the space, no "great work", no suggestion of
@@ -364,7 +364,7 @@ precached, and swapped in over the system stack so text never waits.
 | lead | Bricolage | 19 / 1.3 | 600 | a card's name: subject, post, session |
 | body | Atkinson | 17 / 1.55 | 400 | the floor for anything read as prose |
 | state | Atkinson | 17 / 1.45 | 400 | what a card's thing is doing |
-| meta | Atkinson | 15 / 1.45 | 400 | which room, how many pages |
+| meta | Bricolage | 15 / 1.45 | 400 | which room, how many pages -- short and full of figures, so the plain zero |
 | time | Bricolage | as context | 500 | every clock time, tabular |
 
 Headings track tight (-0.02em). No weight below 400 for text, no all-caps

@@ -60,18 +60,15 @@ SCREENS = [
     ("study", "/study", True),
     ("subject", "/study/Database", True),
     ("subject-quiz", "/study/Computer%20Networks", True),
-    ("quizzes", "/quizzes", True),
     ("quiz-result", "/quiz/attempt/{attempt}", True),
     ("timetable", "/timetable", True),
-    ("library", "/library", True),
-    ("work", "/work", True),
-    ("projects", "/projects", True),
-    ("add", "/add", True),
-    ("status", "/status", True),
     ("more", "/more", True),
-    ("reader", "/read/d-db-ch4", True),
     ("quiz", "/quiz/{net}", True),
 ]
+
+# Every screen in both themes, DESIGN.md section 8: light is designed, not
+# derived, so it has to be looked at as much as dark does.
+THEMES = ("light", "dark")
 
 # The state DESIGN.md section 4 says to design first: 23:00, nothing done, a
 # lecture in the morning. Taken with the page's clock genuinely reading 23:xx --
@@ -410,6 +407,7 @@ PROBE = """<!DOCTYPE html><html><head><meta charset='utf-8'>
 <script>
 const q = new URLSearchParams(location.search);
 (async () => {
+  try { localStorage.setItem('margin.theme', q.get('theme') || 'dark'); } catch (e) {}
   if (q.get('s') !== '0') {
     await fetch('/api/session', {method: 'POST', credentials: 'same-origin',
       headers: {'Content-Type': 'application/json'},
@@ -420,7 +418,7 @@ const q = new URLSearchParams(location.search);
 </script></body></html>"""
 
 
-def capture_late(base: str, out: Path, name: str, path: str) -> None:
+def capture_late(base: str, out: Path, name: str, path: str, theme: str) -> None:
     """The same capture, with the page's clock reading 23:00-something."""
     from cdp import screenshot_at
 
@@ -430,8 +428,8 @@ def capture_late(base: str, out: Path, name: str, path: str) -> None:
             PROBE.replace("__W__", str(width)).replace("__H__", str(height)),
             encoding="utf-8",
         )
-        raw = out / f".{name}-{label}.raw.png"
-        url = f"{base}/__shot.html?t={TOKEN}&p={urllib.request.quote(path, safe='/?=&')}"
+        raw = out / f".{name}-{label}-{theme}.raw.png"
+        url = f"{base}/__shot.html?t={TOKEN}&theme={theme}&p={urllib.request.quote(path, safe='/?=&')}"
         try:
             clock = screenshot_at(
                 CHROME, url, (max(width, 520), height), raw, timezone=zone_at_23(),
@@ -439,16 +437,16 @@ def capture_late(base: str, out: Path, name: str, path: str) -> None:
         finally:
             probe.unlink(missing_ok=True)
         if clock is None or not raw.is_file():
-            print(f"  ! {name} at {label}px: no screenshot")
+            print(f"  ! {name} at {label}px ({theme}): no screenshot")
             continue
         with Image.open(raw) as image:
-            image.crop((0, 0, width, height)).save(out / f"{name}-{label}.png")
+            image.crop((0, 0, width, height)).save(out / f"{name}-{label}-{theme}.png")
         raw.unlink()
         # The page's own word for the time, so the label is evidence.
-        print(f"  {name}-{label}.png  (the page said: {clock})")
+        print(f"  {name}-{label}-{theme}.png  (the page said: {clock})")
 
 
-def capture(base: str, out: Path, name: str, path: str, signed_in: bool) -> None:
+def capture(base: str, out: Path, name: str, path: str, signed_in: bool, theme: str) -> None:
     for label, (width, height) in WIDTHS.items():
         probe = REPO / "web" / "__shot.html"
         probe.write_text(
@@ -456,9 +454,9 @@ def capture(base: str, out: Path, name: str, path: str, signed_in: bool) -> None
             encoding="utf-8",
         )
         profile = Path(tempfile.mkdtemp(prefix="shot-"))
-        raw = out / f".{name}-{label}.raw.png"
+        raw = out / f".{name}-{label}-{theme}.raw.png"
         window = (max(width, 520), height)
-        url = f"{base}/__shot.html?t={TOKEN}&p={urllib.request.quote(path, safe='/?=&')}"
+        url = f"{base}/__shot.html?t={TOKEN}&theme={theme}&p={urllib.request.quote(path, safe='/?=&')}"
         if not signed_in:
             url += "&s=0"
         try:
@@ -474,12 +472,12 @@ def capture(base: str, out: Path, name: str, path: str, signed_in: bool) -> None
             probe.unlink(missing_ok=True)
             shutil.rmtree(profile, ignore_errors=True)
         if not raw.is_file():
-            print(f"  ! {name} at {label}px: no screenshot")
+            print(f"  ! {name} at {label}px ({theme}): no screenshot")
             continue
         with Image.open(raw) as image:
-            image.crop((0, 0, width, height)).save(out / f"{name}-{label}.png")
+            image.crop((0, 0, width, height)).save(out / f"{name}-{label}-{theme}.png")
         raw.unlink()
-        print(f"  {name}-{label}.png")
+        print(f"  {name}-{label}-{theme}.png")
 
 
 def main() -> int:
@@ -515,12 +513,13 @@ def main() -> int:
             print((root / "serve.log").read_text(errors="replace")[-2000:])
             return 1
         print(f"writing {out}")
-        for name, path, signed_in in SCREENS:
-            if only and name not in only:
-                continue
-            capture(base, out, name, path.format(**IDS), signed_in)
-        if not only or LATE[0] in only:
-            capture_late(base, out, *LATE)
+        for theme in THEMES:
+            for name, path, signed_in in SCREENS:
+                if only and name not in only:
+                    continue
+                capture(base, out, name, path.format(**IDS), signed_in, theme)
+            if not only or LATE[0] in only:
+                capture_late(base, out, *LATE, theme)
     finally:
         server.kill()
         server.wait(timeout=10)

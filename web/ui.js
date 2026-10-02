@@ -7,7 +7,7 @@ import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { api } from "/api.js";
 import { linkProps } from "/router.js";
-import { Icon } from "/icons.js";
+import { Icon, Mark } from "/icons.js";
 import { subjectStyle } from "/subject-color.js";
 
 /** The top of a screen: its name, and one sentence about its state. */
@@ -37,6 +37,32 @@ export const STUDY_PARTS = [
   ["/quizzes", "Quizzes"],
   ["/library", "Library"],
 ];
+
+/** A subject's name on its fill: the chip. The colour is never alone. */
+export function Chip({ name, class: extra = "" }) {
+  if (!name) return null;
+  return html`<span class=${`chip ${extra}`} style=${subjectStyle(name)}>${name}</span>`;
+}
+
+/** The mark and the name, linking home. */
+export function Brand() {
+  return html`<a class="brand" ...${linkProps("/")} aria-label="Margin, Today">
+    <${Mark} />
+    <span class="brand-name">Margin</span>
+  </a>`;
+}
+
+/**
+ * An empty state: the mark, small, above one line that says what is true, and
+ * at most one more. Not a mood -- section 4 -- just the fact, designed.
+ */
+export function Empty({ title, children }) {
+  return html`<div class="empty">
+    <${Mark} />
+    <p class="t-lead">${title}</p>
+    ${children ? html`<p class="t-state">${children}</p>` : null}
+  </div>`;
+}
 
 /** A subject's name with its colour beside it. The colour is never alone. */
 export function SubjectName({ name, class: extra = "" }) {

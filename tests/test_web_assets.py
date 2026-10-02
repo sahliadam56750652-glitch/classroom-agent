@@ -456,10 +456,26 @@ def test_precaching_bypasses_the_http_cache():
 # cannot quietly fall below WCAG AA.
 
 
-def _tokens():
+THEMES = ("light", "dark")
+
+
+def _tokens(theme: str) -> dict[str, str]:
+    """Every colour token in :root, resolved for one theme.
+
+    Tokens are `light-dark(#light, #dark)` pairs (DESIGN.md section 8), so the
+    light value is the first and the dark the second. A plain hex counts for
+    both.
+    """
     css = (WEB / "app.css").read_text(encoding="utf-8")
     root = re.search(r":root\s*\{(.*?)\n\}", css, re.S).group(1)
-    return dict(re.findall(r"--([a-z0-9-]+):\s*(#[0-9a-fA-F]{6})\s*;", root))
+    found = {}
+    for name, value in re.findall(r"--([a-z0-9-]+):\s*([^;]+);", root):
+        pair = re.fullmatch(r"light-dark\((#[0-9a-fA-F]{6}),\s*(#[0-9a-fA-F]{6})\)", value.strip())
+        if pair:
+            found[name] = pair.group(1 if theme == "light" else 2)
+        elif re.fullmatch(r"#[0-9a-fA-F]{6}", value.strip()):
+            found[name] = value.strip()
+    return found
 
 
 def _luminance(hex_colour):
@@ -476,54 +492,119 @@ def _contrast(a, b):
 SURFACES = ("ground", "card", "raised")
 
 
+def test_both_themes_define_the_same_tokens():
+    """A token with a light value and no dark one is a theme half designed."""
+    light, dark = _tokens("light"), _tokens("dark")
+    assert light.keys() == dark.keys()
+    assert {"ground", "card", "ink", "accent", "passed", "s0-fg", "s11-fill"} <= light.keys()
+    # And they differ: the dark theme is not the light one with a new name.
+    assert light["ground"] != dark["ground"] and light["ink"] != dark["ink"]
+
+
+@pytest.mark.parametrize("theme", THEMES)
 @pytest.mark.parametrize("ink", ["ink", "ink-2", "ink-3", "accent", "passed"])
 @pytest.mark.parametrize("surface", SURFACES)
-def test_text_tokens_clear_aa_on_every_surface(ink, surface):
-    tokens = _tokens()
+def test_text_tokens_clear_aa_on_every_surface(theme, ink, surface):
+    tokens = _tokens(theme)
     ratio = _contrast(tokens[ink], tokens[surface])
-    assert ratio >= 4.5, f"--{ink} on --{surface} is {ratio:.2f}:1"
+    assert ratio >= 4.5, f"{theme}: --{ink} on --{surface} is {ratio:.2f}:1"
 
 
-@pytest.mark.parametrize("surface", SURFACES)
-def test_control_edges_clear_three_to_one(surface):
+@pytest.mark.parametrize("theme", THEMES)
+@pytest.mark.parametrize("surface", ("ground", "card"))
+def test_control_edges_clear_three_to_one(theme, surface):
     """WCAG 1.4.11: a control's boundary has to be findable."""
-    tokens = _tokens()
+    tokens = _tokens(theme)
     ratio = _contrast(tokens["edge"], tokens[surface])
-    assert ratio >= 3, f"--edge on --{surface} is {ratio:.2f}:1"
+    assert ratio >= 3, f"{theme}: --edge on --{surface} is {ratio:.2f}:1"
 
 
-def test_the_primary_button_label_is_readable():
-    tokens = _tokens()
+@pytest.mark.parametrize("theme", THEMES)
+def test_the_primary_button_label_is_readable(theme):
+    tokens = _tokens(theme)
     assert _contrast(tokens["accent-ink"], tokens["accent"]) >= 4.5
     assert _contrast(tokens["accent-ink"], tokens["accent-hover"]) >= 4.5
 
 
-def test_every_subject_swatch_is_readable_and_none_is_red():
-    """Subject colours sit beside names on cards; none may read as the alarm."""
+@pytest.mark.parametrize("theme", THEMES)
+@pytest.mark.parametrize("index", range(12))
+def test_every_subject_colour_is_readable_in_both_themes(theme, index):
+    """Each hue's three values, used the way section 8 says, all clear AA.
+
+    fg is text on its own tint and on a plain card; fill carries ink (a chip, a
+    timetable block); tint carries ink (a tinted card's body text).
+    """
+    tokens = _tokens(theme)
+    fg, tint, fill = (tokens[f"s{index}-{part}"] for part in ("fg", "tint", "fill"))
+    for name, a, b in (
+        ("fg on tint", fg, tint),
+        ("fg on card", fg, tokens["card"]),
+        ("ink on fill", tokens["ink"], fill),
+        ("ink on tint", tokens["ink"], tint),
+        ("ink-2 on tint", tokens["ink-2"], tint),
+    ):
+        ratio = _contrast(a, b)
+        assert ratio >= 4.5, f"{theme} s{index}: {name} is {ratio:.2f}:1"
+
+
+@pytest.mark.parametrize("index", range(12))
+def test_no_subject_colour_is_red_or_orange(index):
+    """A subject that read as the alarm would read as a subject in trouble."""
     import colorsys
 
-    body = (WEB / "subject-color.js").read_text(encoding="utf-8")
-    swatches = re.findall(r'"(#[0-9a-f]{6})"', body)
-    assert len(swatches) == 12
-    card = _tokens()["card"]
-    for swatch in swatches:
-        assert _contrast(swatch, card) >= 4.5, swatch
-        r, g, b = (int(swatch[i : i + 2], 16) / 255 for i in (1, 3, 5))
+    for theme in THEMES:
+        colour = _tokens(theme)[f"s{index}-fg"]
+        r, g, b = (int(colour[i : i + 2], 16) / 255 for i in (1, 3, 5))
         hue = colorsys.rgb_to_hls(r, g, b)[0] * 360
-        # Red and orange, where the passed-deadline colour lives.
-        assert not (hue < 38 or hue > 345), f"{swatch} is hue {hue:.0f}"
+        assert not (hue < 38 or hue > 345), f"{theme} s{index} {colour} is hue {hue:.0f}"
 
 
-def test_nothing_in_the_client_reads_the_hour():
-    """The 23:00 state must look exactly like every other state.
+def test_the_client_reads_the_hour_in_exactly_one_place():
+    """The 23:00 state must look like every other state.
 
-    A screen that styled itself by the clock -- a night tint, a "late" warning --
-    would be the app deciding I am behind because of what time it is. Dates are
-    read (tomorrow is a wall-clock fact); the hour of the day is not.
+    DESIGN.md section 4, as amended: the greeting on Today is the only thing
+    allowed to know the hour, and it changes a word. Any other module reading
+    the clock's hour could start styling itself by it -- a night tint, a "late"
+    warning -- which would be the app deciding I am behind because of the time.
+    Dates are read (tomorrow is a wall-clock fact); the hour is read once.
     """
+    readers = []
     for module in WEB.rglob("*.js"):
         if "vendor" in module.parts:
             continue
         body = re.sub(r"//[^\n]*|/\*.*?\*/", "", module.read_text(encoding="utf-8"), flags=re.S)
-        assert "getHours" not in body, module.name
-        assert "getUTCHours" not in body, module.name
+        if "getHours" in body or "getUTCHours" in body:
+            readers.append(module.name)
+    assert readers == ["greeting.js"], readers
+
+
+def test_the_greeting_only_ever_says_three_things():
+    """Never "late", never "still up": the time of day, and nothing else."""
+    body = (WEB / "greeting.js").read_text(encoding="utf-8")
+    code = re.sub(r"//[^\n]*|/\*.*?\*/", "", body, flags=re.S)
+    said = set(re.findall(r'return "([^"]+)"', code))
+    assert said == {"Good morning", "Good afternoon", "Good evening"}, said
+
+
+def test_every_module_stylesheet_and_font_is_precached():
+    """Offline means the whole shell, not most of it.
+
+    A module missing from SHELL_FILES works online and fails only with the
+    radio off -- found once already, for greeting.js, by reading the list.
+    """
+    from agent.api import contract as contract_mod
+
+    precached = set(contract_mod.shell_files(WEB))
+    shipped = [
+        path
+        for pattern in ("*.js", "screens/*.js", "reader/*.js", "styles/*.css", "fonts/*.woff2", "*.css")
+        for path in WEB.glob(pattern)
+        if path.name not in ("sw.js",) and not path.name.startswith("__")
+    ]
+    assert shipped, "found nothing to check"
+    missing = sorted(
+        "/" + path.relative_to(WEB).as_posix()
+        for path in shipped
+        if "/" + path.relative_to(WEB).as_posix() not in precached
+    )
+    assert not missing, f"not precached: {missing}"

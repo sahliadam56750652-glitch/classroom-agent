@@ -1,0 +1,348 @@
+/*
+  The timetable. A week grid at 1024px and above -- days across, hours down,
+  sessions as blocks filled with their subject's colour -- and one day at a time
+  below it. Each session opens its own menu; there is no row of buttons per line.
+*/
+
+.tt-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s3) var(--s5);
+}
+
+.tt-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+}
+
+.tt-nav .quiet-button svg {
+  width: 20px;
+  height: 20px;
+}
+
+.tt-range {
+  min-width: 9.5em;
+  text-align: center;
+}
+
+.tt-this-week {
+  min-height: 44px;
+  margin-left: var(--s2);
+}
+
+/* ------------------------------------------------------------ the week grid */
+
+.tt-grid {
+  display: grid;
+  grid-template-columns: 56px repeat(var(--days), minmax(0, 1fr));
+  column-gap: var(--s2);
+  row-gap: var(--s3);
+}
+
+.tt-corner {
+  min-height: 1px;
+}
+
+.tt-day-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-control);
+}
+
+.tt-day-head.today {
+  background: var(--accent-tint);
+}
+
+.tt-weekday {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--ink-2);
+}
+
+.tt-date {
+  font-size: 26px;
+  font-weight: 650;
+  line-height: 1.05;
+  color: var(--ink);
+}
+
+.tt-day-head.today .tt-weekday,
+.tt-day-head.today .tt-date {
+  color: var(--accent);
+}
+
+.tt-exception {
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.tt-hours {
+  position: relative;
+}
+
+.tt-hour {
+  position: absolute;
+  right: 0;
+  transform: translateY(-50%);
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+/* Each column is a sheet ruled at every hour, like the printed one. */
+.tt-column {
+  position: relative;
+  border-radius: var(--r-card);
+  background-color: var(--card);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--line) 0,
+    var(--line) 1px,
+    transparent 1px,
+    transparent var(--hour)
+  );
+  border: 1px solid var(--line);
+}
+
+.tt-column.today {
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--line));
+}
+
+.tt-column .tt-block {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+}
+
+/* ------------------------------------------------------------- a block */
+
+.tt-block {
+  border-radius: 12px;
+  background: var(--subject-fill);
+  color: var(--ink);
+  border-left: 4px solid var(--subject);
+}
+
+.tt-block.open {
+  z-index: 5;
+}
+
+.tt-block-button {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  height: 100%;
+  min-height: 44px;
+  padding: var(--s2) var(--s3);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  border-radius: inherit;
+  transition: transform var(--t-press) var(--ease);
+}
+
+.tt-block-button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.tt-block-button:disabled {
+  cursor: default;
+}
+
+.tt-name {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.tt-time {
+  font-size: 14px;
+}
+
+.tt-where,
+.tt-note {
+  font-family: var(--font-display);
+  font-size: 14px;
+  color: color-mix(in oklab, var(--ink) 78%, var(--subject-fill));
+  line-height: 1.35;
+}
+
+/* A session that moved away or was cancelled: still there, struck through, and
+   saying why. */
+.tt-block.departed {
+  background: transparent;
+  border: 1.5px dashed var(--edge);
+  border-left-width: 4px;
+  border-left-style: solid;
+  border-left-color: var(--edge);
+}
+
+.tt-block.departed .tt-name {
+  text-decoration: line-through;
+  text-decoration-color: var(--ink-3);
+  color: var(--ink-2);
+}
+
+/* --------------------------------------------------------- the session menu */
+
+.session-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s2);
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-card);
+  color: var(--ink);
+}
+
+.tt-column .session-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: max(100%, 240px);
+}
+
+.tt-day .session-menu {
+  margin: var(--s2) var(--s2) var(--s2);
+}
+
+.session-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-height: 44px;
+  padding: 0 var(--s3);
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--ink);
+  font-size: 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-menu-item svg {
+  width: 18px;
+  height: 18px;
+  color: var(--ink-2);
+}
+
+.session-menu-item:hover {
+  background: var(--pressed);
+}
+
+.session-menu-item.quiet {
+  color: var(--ink-2);
+}
+
+.session-menu-title {
+  font-weight: 600;
+  padding: var(--s1) var(--s2) 0;
+}
+
+.session-menu-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s2);
+  padding: var(--s2);
+}
+
+.session-menu-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  padding: 0 var(--s2) var(--s1);
+}
+
+/* ------------------------------------------------------------- one day */
+
+.tt-day {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.tt-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: var(--s1);
+}
+
+.tt-day-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 56px;
+  padding: var(--s2) 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--card);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.tt-day-chip-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.tt-day-chip-date {
+  font-size: 18px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+/* A day with sessions carries a small mark under its date. */
+.tt-day-chip.busy .tt-day-chip-date::after {
+  content: "";
+  display: block;
+  width: 5px;
+  height: 5px;
+  margin: 3px auto 0;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+
+.tt-day-chip.today {
+  border-color: var(--accent);
+}
+
+.tt-day-chip[aria-selected="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.tt-day-chip[aria-selected="true"] .tt-day-chip-date {
+  color: var(--accent-ink);
+}
+
+.tt-day-chip[aria-selected="true"].busy .tt-day-chip-date::after {
+  background: var(--accent-ink);
+}
+
+.tt-day-list .tt-block-button {
+  padding: var(--s3) var(--s4);
+  gap: 3px;
+}
+
+.tt-day-list .tt-name {
+  font-size: 18px;
+}
+
+.tt-foot {
+  max-width: var(--measure);
+}

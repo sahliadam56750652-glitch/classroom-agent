@@ -1,14 +1,43 @@
 /*
-  Now: the default screen. One item, read tired, on a phone.
+  Today: the default screen. A date and a greeting, the one next action, and
+  beside it on a wide screen today's schedule as a timeline.
 
   The title is the largest thing on the screen by construction: section 2 fixes
   the deficit as one subordinate line ABOVE it. Nothing here escalates -- no
-  alarm colour, no countdown, no change in tone at 23:00.
+  alarm colour, no countdown, no change in tone at 23:00. The greeting changes
+  a word and nothing else.
 */
 
-.now-hero {
-  max-width: 44rem;
+.today-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
+
+.today-greeting {
+  color: var(--ink);
+}
+
+.today-split {
+  display: grid;
+  gap: var(--s6);
+}
+
+@media (min-width: 1024px) {
+  .today-split {
+    grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr);
+    align-items: start;
+    gap: var(--s6);
+  }
+}
+
+.today-aside {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s6);
+}
+
+/* ------------------------------------------------------------- the hero */
 
 .now-what {
   display: flex;
@@ -22,35 +51,50 @@
   overflow-wrap: break-word;
 }
 
+.deficit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+}
+
+/* The two short factual lines in the hero -- pages, and which session -- are
+   figures more than prose, so they take the display face too. */
+.now-what .t-state,
+.now-why {
+  font-family: var(--font-display);
+  color: var(--ink-2);
+}
+
 /* The one graphic in the app: the shape of the document, with the window an
    evening starts with marked. NOT a progress bar -- nothing records which
    windows have been read, so a filled bar would claim windows were done. */
 .ruler {
   display: flex;
   gap: 3px;
-  height: 6px;
+  height: 8px;
 }
 
 .tick {
   min-width: 4px;
-  border-radius: 3px;
-  background: var(--pressed);
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--subject-fill) 70%, var(--line));
 }
 
 /* Where an evening would start. Marked, not filled. */
 .tick-now {
-  background: var(--accent);
+  background: var(--subject);
 }
 
 /* Pages nothing has read: hollow, a fact about the material, never red. */
 .tick-unread {
   background: transparent;
-  box-shadow: inset 0 0 0 1px var(--edge);
+  box-shadow: inset 0 0 0 1.5px var(--edge);
 }
 
 .tick-now.tick-unread {
   background: transparent;
-  box-shadow: inset 0 0 0 1px var(--accent);
+  box-shadow: inset 0 0 0 1.5px var(--subject);
 }
 
 .hero-actions .button {
@@ -65,62 +109,6 @@
 
 .now-stale {
   margin-bottom: var(--s4);
-}
-
-.now-clear {
-  max-width: 34rem;
-  padding: var(--s5);
-}
-
-/* Today's sessions and what is due, beside the hero on a wide screen and below
-   it on a phone. */
-.today-aside {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s6);
-}
-
-@media (min-width: 1024px) {
-  .today-aside {
-    padding-top: var(--s2);
-  }
-}
-
-.today-date {
-  margin-left: var(--s2);
-  font-weight: 400;
-}
-
-.due-title {
-  font-weight: 500;
-  overflow-wrap: anywhere;
-}
-
-.now-session {
-  align-items: baseline;
-  gap: var(--s4);
-}
-
-.now-time {
-  flex: none;
-  min-width: 3.2em;
-  color: var(--ink-2);
-}
-
-.now-session-name {
-  font-weight: 500;
-}
-
-/* A session that moved or was cancelled: said, and set back, never hidden. */
-.now-session.departed .now-session-name {
-  text-decoration: line-through;
-  text-decoration-color: var(--ink-3);
-  color: var(--ink-2);
-}
-
-/* The server says why a day is quiet in lower case, as a clause. */
-.now-clear .t-state::first-letter {
-  text-transform: uppercase;
 }
 
 .nowrap {
@@ -184,4 +172,82 @@
   width: 22px;
   height: 22px;
   color: var(--accent);
+}
+
+/* --------------------------------------------------------- the timeline
+   Today's sessions as blocks in their subjects' colours, against their times. */
+
+.timeline {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.slot {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: var(--s3);
+  align-items: stretch;
+}
+
+.slot-time {
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--s3);
+  text-align: right;
+}
+
+.slot-start {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.slot-end {
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.slot-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 60px;
+  padding: var(--s3) var(--s4);
+  border-radius: 14px;
+  background: var(--subject-fill);
+  border-left: 4px solid var(--subject);
+}
+
+.slot-name {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.slot-where {
+  font-family: var(--font-display);
+  font-size: 14px;
+  color: color-mix(in oklab, var(--ink) 78%, var(--subject-fill));
+}
+
+/* Moved away or cancelled: still on the timeline, struck through, with why. */
+.slot.departed .slot-block {
+  background: transparent;
+  border: 1.5px dashed var(--edge);
+  border-left: 4px solid var(--edge);
+}
+
+.slot.departed .slot-name {
+  text-decoration: line-through;
+  text-decoration-color: var(--ink-3);
+  color: var(--ink-2);
+}
+
+.due-title {
+  font-weight: 500;
+  overflow-wrap: anywhere;
 }

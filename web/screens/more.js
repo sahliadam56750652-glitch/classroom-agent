@@ -10,15 +10,42 @@ import { html } from "/html.js";
 import { Icon } from "/icons.js";
 import { linkProps } from "/router.js";
 import { ScreenHeader } from "/ui.js";
+import { useState } from "preact/hooks";
+import { CHOICES, setTheme, storedTheme } from "/theme.js";
 
 export const SECONDARY = [
   ["/add", "Add", "add", "An upload, a task, a session held, or a project."],
   ["/status", "Status", "status", "When it last synced, and every figure it counts."],
 ];
 
+const THEME_WORDS = { system: "System", light: "Light", dark: "Dark" };
+
+/** Light, dark or the system's choice, for this device only. */
+function ThemeChoice() {
+  const [chosen, setChosen] = useState(storedTheme());
+  return html`<section class="section" aria-labelledby="theme-title">
+    <h2 class="section-title" id="theme-title">Appearance</h2>
+    <div class="choice" role="group" aria-labelledby="theme-title">
+      ${CHOICES.map(
+        (choice) => html`<button
+          key=${choice}
+          type="button"
+          aria-pressed=${chosen === choice ? "true" : "false"}
+          onClick=${() => {
+            setTheme(choice);
+            setChosen(choice);
+          }}
+        >${THEME_WORDS[choice]}</button>`
+      )}
+    </div>
+    <p class="t-meta">Remembered on this device. System follows the phone's own setting.</p>
+  </section>`;
+}
+
 export function More({ onSignOut }) {
   return html`<div class="screen">
     <${ScreenHeader} title="More" />
+    <${ThemeChoice} />
     <ul class="list">
       ${SECONDARY.map(
         ([to, label, icon, what]) => html`<li key=${to}>
