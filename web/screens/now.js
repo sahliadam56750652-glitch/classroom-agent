@@ -15,6 +15,8 @@
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { Offline, api, describe } from "/api.js";
+import { lookup, syncNow, useLocal, useTimetable } from "/sync.js";
+import { whenSynced } from "/synced.js";
 import { localTime, plural, relativeDay, sessionName, shortDate } from "/format.js";
 import { linkProps } from "/router.js";
 import { Icon } from "/icons.js";
@@ -236,21 +238,9 @@ const DUE_DAYS = 4;
  * not it). A session that moved or was cancelled stays, crossed out, with why.
  */
 function TodaySessions() {
-  const [day, setDay] = useState(null);
-
-  useEffect(() => {
-    let live = true;
-    const today = localToday();
-    api
-      .get(`/api/timetable?from=${today}&to=${today}`)
-      .then((found) => live && setDay((found.days || [])[0] || null))
-      .catch(() => {
-        // Context, not the answer. Without it the hero still stands alone.
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
+  const today = localToday();
+  const found = useTimetable(today, today);
+  const day = found.status === "ready" && found.covered ? found.data.days[0] || null : null;
 
   if (!day) return null;
   const items = [
@@ -300,18 +290,7 @@ function Slot({ session, departed }) {
  */
 function DueSoon() {
   const names = useSubjectNames();
-  const [rows, setRows] = useState(null);
-
-  useEffect(() => {
-    let live = true;
-    api
-      .get("/api/deadlines")
-      .then((found) => live && setRows(found))
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, []);
+  const rows = useLocal("/api/deadlines").data;
 
   if (!rows) return null;
   const now = Date.now();
@@ -479,61 +458,87 @@ function Actions({ item, files, windows, onNext }) {
   `;
 }
 
-export function Now({ status }) {
-  const [body, setBody] = useState(null);
-  const [problem, setProblem] = useState("");
-  const [offline, setOffline] = useState(false);
+/** The date a plan is for: tomorrow, locally, as the PC's default is. */
+function tomorrow() {
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}`;
+}
 
-  const [round, setRound] = useState(0);
+/**
+ * The plan for a date: from the phone's snapshot, which holds today and the
+ * next seven days. A date asked for with `?date=` that the snapshot does not
+ * hold -- an inspection aid, see below -- is asked of the PC instead.
+ */
+function usePlan(date, round) {
+  const local = useLocal(`/api/now?date=${date}`);
+  const [live, setLive] = useState(null);
+  const [problem, setProblem] = useState("");
+  const asked = new URLSearchParams(location.search).get("date");
 
   useEffect(() => {
-    let live = true;
-    setBody(null);
-    // `?date=` is passed straight through. DESIGN.md's test of this screen is
-    // answerable by looking, and the empty state cannot be looked at on a day
-    // that has material -- so a quiet date makes the rarer state inspectable.
-    const asked = new URLSearchParams(location.search).get("date");
+    setLive(null);
+    setProblem("");
+    if (!asked || local.status !== "absent") return undefined;
+    let current = true;
     api
-      .get(asked ? `/api/now?date=${encodeURIComponent(asked)}` : "/api/now")
-      .then((found) => live && setBody(found))
-      .catch((err) => {
-        if (!live) return;
-        if (err instanceof Offline) setOffline(true);
-        else setProblem(describe(err));
-      });
+      .get(`/api/now?date=${encodeURIComponent(asked)}`)
+      .then((found) => current && setLive(found))
+      .catch((err) => current && setProblem(err instanceof Offline ? "" : describe(err)));
     return () => {
-      live = false;
+      current = false;
     };
-  }, [round]);
+  }, [asked, local.status, round]);
+
+  if (local.status === "ready") return { body: local.data, problem: "", status: "ready" };
+  if (live) return { body: live, problem: "", status: "ready" };
+  return { body: null, problem, status: local.status };
+}
+
+export function Now() {
+  const [round, setRound] = useState(0);
+  // `?date=` is passed straight through. DESIGN.md's test of this screen is
+  // answerable by looking, and the empty state cannot be looked at on a day
+  // that has material -- so a quiet date makes the rarer state inspectable.
+  const date = new URLSearchParams(location.search).get("date") || tomorrow();
+  const { body, problem, status } = usePlan(date, round);
+
+  async function next() {
+    await syncNow();
+    setRound((n) => n + 1);
+  }
 
   if (problem) {
     return html`<div class="screen"><${Problem}>${problem}</${Problem}></div>`;
   }
-  if (offline) {
-    return html`<div class="screen">
-      <${Problem}>No connection, so this is not tonight's answer yet.</${Problem}>
-    </div>`;
-  }
-  if (!body) {
+  if (status === "loading" && !body) {
     // No spinner. At 23:00 on mobile data the gap is real, and a spinner in it
     // is the app performing busyness before it knows anything. The shape of
     // the answer instead, and still.
     return html`<div class="screen"><${Skeleton} hero=${true} rows=${0} /></div>`;
   }
-
-  const asOf = body.__cachedAt;
+  if (!body) {
+    // Nothing for this date on the phone. Either nothing has synced yet, or the
+    // snapshot is older than the week of plans it carries -- said plainly, and
+    // never by showing an old plan as if it were tonight's.
+    const synced = lookup("/api/subjects").syncedAt;
+    return html`<div class="screen today">
+      <header class="today-head">
+        <p class="t-greeting">${longDate(new Date())}</p>
+        <p class="t-title today-greeting">${greeting(new Date())}</p>
+      </header>
+      <${Empty} title=${synced ? "No plan for this date on the phone." : "Nothing synced yet."}>
+        ${synced
+          ? `The phone holds a week of plans from the last sync, ${whenSynced(synced)}. The next one arrives when the PC is on.`
+          : "Open the app while the PC is on and everything syncs to this phone."}
+      </${Empty}>
+    </div>`;
+  }
 
   // The one next action first and largest; then today's sessions, then what is
   // due soon. Beside the hero at 1024px and above, below it on a phone.
   return html`
-    ${asOf
-      ? html`<p class="notice now-stale" role="status">
-          ${`No connection. This is as of ${new Date(asOf).toLocaleTimeString(
-            undefined,
-            { hour: "2-digit", minute: "2-digit" }
-          )}.`}
-        </p>`
-      : null}
     <div class="screen today">
       <header class="today-head">
         <p class="t-greeting">${longDate(new Date())}</p>
@@ -542,7 +547,7 @@ export function Now({ status }) {
       <div class="today-split">
         <div class="today-main">
           ${body.waiting
-            ? html`<${Waiting} body=${body} onNext=${() => setRound((n) => n + 1)} />`
+            ? html`<${Waiting} body=${body} onNext=${next} />`
             : html`<${Clear} body=${body} />`}
         </div>
         <div class="today-aside">

@@ -343,6 +343,7 @@ def render(
     steps: str = "",
     block_cookies: bool = False,
     width: int = 390,
+    real_clock: bool = False,
 ) -> dict:
     """Load the app in a real browser and return its text, console and size.
 
@@ -378,6 +379,22 @@ def render(
             url += f"&p={path}"
         if not sign_in:
             url += "&s=0"
+        if real_clock:
+            # Storage tests: IndexedDB and the Cache API do not complete under
+            # virtual time, so these run on the real clock over DevTools and
+            # poll until the probe has written its answer. See tools/cdp.py.
+            sys.path.insert(0, str(REPO_ROOT / "tools"))
+            from cdp import evaluate_when_ready
+
+            raw = evaluate_when_ready(
+                find_chrome(), url, (max(width + 40, 520), 960),
+                "document.getElementById('o') ? document.getElementById('o').textContent : ''",
+                profile=profile,
+            )
+            assert raw, "probe produced nothing on the real clock"
+            payload = json.loads(raw)
+            payload["console"] = []
+            return payload
         result = subprocess.run(
             [
                 find_chrome(), "--headless=new", "--disable-gpu", "--no-first-run",
@@ -939,8 +956,10 @@ def test_a_401_mid_use_routes_to_signin(served, tmp_path_factory):
         path="/",
         steps="""
           await fetch('/api/session', {method: 'DELETE', credentials: 'same-origin'});
-          const link = d().querySelector('a[href="/study"]');
-          if (link) link.click();
+          // Since 5e a screen reads the phone's snapshot, so a tap asks the PC
+          // nothing; the next SYNC is what finds the session gone. The
+          // connection coming back is one of the things that starts a sync.
+          f.contentWindow.dispatchEvent(new Event('online'));
           await sleep(2500);
         """,
     )
@@ -1072,3 +1091,148 @@ def test_the_greeting_stays_evening_until_five(served, tmp_path_factory):
         assert said[clock] == "Good morning", (clock, said[clock])
     for clock in ("12:00", "17:59"):
         assert said[clock] == "Good afternoon", (clock, said[clock])
+
+
+# ---------------------------------------------------------------------------
+# Phase 5e: the library survives everything but uninstalling the app
+# ---------------------------------------------------------------------------
+
+# Steps that report back: whatever `report(x)` is given ends up in the page text
+# as PROBE:{json}, and `probed()` reads it back out.
+_REPORT = """
+  const report = (value) => d().body.insertAdjacentHTML('beforeend',
+    '<pre>PROBE:' + JSON.stringify(value) + ':END</pre>');
+  const snapshotEntries = (w) => new Promise((resolve) => {
+    const open = w.indexedDB.open('lectern');
+    open.onerror = () => resolve(-1);
+    open.onsuccess = () => {
+      const db = open.result;
+      if (!db.objectStoreNames.contains('kv')) return resolve(-2);
+      const get = db.transaction('kv').objectStore('kv').get('snapshot');
+      get.onsuccess = () => resolve(get.result ? Object.keys(get.result.entries).length : 0);
+      get.onerror = () => resolve(-3);
+    };
+  });
+  const keepFake = async (w) => {
+    const cache = await w.caches.open('library');
+    await cache.put('/api/documents/kept/file', new w.Response('%PDF-1.4 kept'));
+  };
+  const hasFake = async (w) => Boolean(await w.caches.match('/api/documents/kept/file'));
+"""
+
+
+def _probed(found: dict) -> dict:
+    match = re.search(r"PROBE:(.*?):END", found["text"], re.S)
+    assert match, found["text"][:500]
+    return json.loads(match.group(1))
+
+
+@chrome_only
+def test_signing_out_never_touches_the_library(served, tmp_path_factory):
+    """Losing the library by signing out must be impossible (Phase 5e).
+
+    The app syncs, a document is kept, Sign out is pressed -- and the snapshot
+    and the document are both still on the phone afterwards.
+    """
+    base, _ = served
+    steps = _REPORT + """
+      const w = f.contentWindow;
+      const before = await snapshotEntries(w);
+      await keepFake(w);
+      const out = [...d().querySelectorAll('button')].find((b) => b.textContent.includes('Sign out'));
+      if (out) out.click();
+      await sleep(1500);
+      report({ before, after: await snapshotEntries(w), kept: await hasFake(w),
+               clicked: Boolean(out), path: w.location.pathname });
+    """
+    found = _probed(render(base, tmp_path_factory.mktemp("so"), path="/more", steps=steps, real_clock=True))
+    assert found["clicked"] and found["path"] == "/signin", found
+    assert found["before"] > 5, found
+    assert found["after"] == found["before"], found
+    assert found["kept"] is True, found
+
+
+@chrome_only
+def test_a_401_signs_out_without_touching_the_library(served, tmp_path_factory):
+    base, _ = served
+    steps = _REPORT + """
+      const w = f.contentWindow;
+      const before = await snapshotEntries(w);
+      await keepFake(w);
+      await fetch('/api/session', {method: 'DELETE', credentials: 'same-origin'});
+      w.dispatchEvent(new Event('online'));
+      await sleep(2000);
+      report({ before, after: await snapshotEntries(w), kept: await hasFake(w),
+               path: w.location.pathname,
+               local: d().body.innerText.includes("Read what's on this phone") });
+    """
+    found = _probed(render(base, tmp_path_factory.mktemp("s401"), path="/", steps=steps, real_clock=True))
+    assert found["path"] == "/signin", found
+    assert found["before"] > 5 and found["after"] == found["before"], found
+    assert found["kept"] is True, found
+    # And the way back to it is offered on the sign-in screen.
+    assert found["local"] is True, found
+
+
+@chrome_only
+def test_an_app_update_keeps_the_library(served, tmp_path_factory):
+    """A new service worker deletes old SHELL caches and never the library.
+
+    The worker is unregistered and registered again, so its activate step runs
+    for real against caches that include an old shell, an old pre-5e API cache,
+    and the library.
+    """
+    base, _ = served
+    steps = _REPORT + """
+      const w = f.contentWindow;
+      await keepFake(w);
+      await (await w.caches.open('shell-0ld0ld0ld0ld')).put('/x', new w.Response('old'));
+      await (await w.caches.open('api-0ld0ld0ld0ld')).put('/y', new w.Response('old'));
+      const reg = await w.navigator.serviceWorker.getRegistration();
+      if (reg) await reg.unregister();
+      // A new script URL, so this is a real install and activate rather than
+      // the old registration revived.
+      const fresh = await w.navigator.serviceWorker.register('/sw.js?update=1');
+      // The NEW worker: the one installing or waiting, not the old active one.
+      const worker = fresh.installing || fresh.waiting || fresh.active;
+      for (let i = 0; i < 60 && worker.state !== 'activated'; i++) await sleep(250);
+      await sleep(500);
+      const names = await w.caches.keys();
+      report({ names, kept: await hasFake(w), active: worker.state === 'activated',
+               script: worker.scriptURL });
+    """
+    found = _probed(render(base, tmp_path_factory.mktemp("upd"), path="/", steps=steps, real_clock=True))
+    assert found["active"], found
+    assert found["kept"] is True, found
+    assert "library" in found["names"], found
+    assert "shell-0ld0ld0ld0ld" not in found["names"], found
+    assert "api-0ld0ld0ld0ld" not in found["names"], found
+
+
+@chrome_only
+def test_every_screen_renders_from_the_phone_with_the_pc_unreachable(served, tmp_path_factory):
+    """After one sync, every request to the PC fails -- and every screen still
+    shows its content and when it was synced."""
+    base, _ = served
+    steps = _REPORT + """
+      const w = f.contentWindow;
+      await sleep(500);
+      w.fetch = () => Promise.reject(new TypeError('the PC is off'));
+      const seen = {};
+      for (const [path, expect] of [
+        ['/study', 'Database'], ['/work', 'Work'], ['/timetable', 'Timetable'],
+        ['/library', 'Chapter 4'], ['/quizzes', 'Ready to sit'], ['/status', 'Lectures'],
+        ['/', 'Good'],
+      ]) {
+        w.history.pushState(null, '', path);
+        w.dispatchEvent(new Event('agent:navigate'));
+        await sleep(700);
+        const text = d().body.innerText;
+        seen[path] = { content: text.includes(expect), synced: /Synced \d/.test(text) || text.includes('Synced yesterday') || /Synced [A-Z]/.test(text) };
+      }
+      report(seen);
+    """
+    found = _probed(render(base, tmp_path_factory.mktemp("off"), path="/study", steps=steps, real_clock=True))
+    for path, seen in found.items():
+        assert seen["content"], (path, found)
+        assert seen["synced"], (path, found)

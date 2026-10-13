@@ -219,3 +219,66 @@ def screenshot_at(
         process.kill()
         process.wait(timeout=10)
         shutil.rmtree(profile, ignore_errors=True)
+
+
+def evaluate_when_ready(
+    chrome: str,
+    url: str,
+    window: tuple[int, int],
+    expression: str,
+    *,
+    profile: Path | None = None,
+    timeout: float = 90.0,
+) -> str:
+    """Load `url` in real time and return `expression` once it is non-empty.
+
+    For tests whose steps touch IndexedDB or the Cache API. Under
+    `--virtual-time-budget` those calls never complete before the fast-forwarded
+    timers run out, so a probe that waits on them dumps an empty page. Here the
+    clock is the real one and the page is polled until it reports.
+    """
+    port = _free_port()
+    own_profile = profile is None
+    profile = profile or Path(tempfile.mkdtemp(prefix="cdp-"))
+    process = subprocess.Popen(
+        [chrome, "--headless=new", "--disable-gpu", "--no-first-run", "--no-sandbox",
+         f"--user-data-dir={profile}", f"--remote-debugging-port={port}",
+         f"--window-size={window[0]},{window[1]}", "about:blank"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        target = None
+        for _ in range(100):
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/json", timeout=1) as found:
+                    pages = [t for t in json.load(found) if t.get("type") == "page"]
+                if pages:
+                    target = pages[0]["webSocketDebuggerUrl"]
+                    break
+            except OSError:
+                pass
+            time.sleep(0.1)
+        if target is None:
+            return ""
+        page = Page(target)
+        page.call("Page.enable")
+        page.call("Page.navigate", url=url)
+        deadline = time.monotonic() + timeout
+        value = ""
+        while time.monotonic() < deadline:
+            time.sleep(0.25)
+            try:
+                value = page.call(
+                    "Runtime.evaluate", expression=expression, returnByValue=True
+                ).get("result", {}).get("value") or ""
+            except RuntimeError:
+                value = ""
+            if value:
+                break
+        page.socket.close()
+        return str(value)
+    finally:
+        process.kill()
+        process.wait(timeout=10)
+        if own_profile:
+            shutil.rmtree(profile, ignore_errors=True)

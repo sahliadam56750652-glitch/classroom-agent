@@ -10,7 +10,6 @@ import { html } from "/html.js";
 import {
   api,
   describe,
-  forgetCachedData,
   haveSession,
   NotSignedIn,
   Offline,
@@ -32,6 +31,8 @@ import { Icon } from "/icons.js";
 import { Brand } from "/ui.js";
 import { linkProps, match, navigate, useRoute } from "/router.js";
 import { flushWhenOnline } from "/queue.js";
+import { loadSnapshot, startSyncing, useSyncState } from "/sync.js";
+import { syncedLine } from "/synced.js";
 
 /**
  * The token, once every 90 days.
@@ -41,7 +42,7 @@ import { flushWhenOnline } from "/queue.js";
  * turns spellcheck ON -- which then underlines a random 43-character secret. Found
  * by rendering the page, not by reading it.
  */
-function SignIn({ onDone }) {
+function SignIn({ onDone, onLocal, hasLocal }) {
   const [token, setToken] = useState("");
   const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState(false);
@@ -114,32 +115,66 @@ function SignIn({ onDone }) {
           </button>
         </form>
         ${problem && html`<p class="problem" role="alert">${problem}</p>`}
+        ${hasLocal
+          ? html`<p class="t-meta signin-local">
+              Everything synced to this phone is still here.${" "}
+              <button class="button quiet-button" type="button" onClick=${onLocal}>
+                Read what's on this phone
+              </button>
+            </p>`
+          : null}
       </div>
     </main>
   `;
 }
 
 /**
- * Who is signed in, decided by the server before anything else renders.
+ * Who is signed in -- and, since Phase 5e, whether that even matters right now.
  *
- * Four states, and the shell renders in only two of them. "checking" shows
- * nothing but the loading line, so neither the shell nor the sign-in screen
- * flashes at someone who turns out to be the other.
+ * The phone holds a snapshot of everything (sync.js), so the shell renders from
+ * it at once, without waiting for the PC. The server is asked in the background:
  *
- * A 401 from ANY request, at any time, lands here through `onSignedOut` and
- * moves to /signin. No screen handles its own 401, which is why no screen can
- * any longer print one.
+ *   "in"     the PC answered, or the PC is not reachable but the phone has a
+ *            snapshot to show -- being offline is not being signed out
+ *   "out"    the PC answered 401: the sign-in screen, with no nav
+ *   "local"  signed out, and reading what is on the phone anyway; nothing syncs
+ *
+ * A 401 from ANY request lands here through `onSignedOut`. It never touches the
+ * snapshot or the documents. Neither does Sign out: it ends the session on the
+ * PC, and the library stays on the phone. tests/test_web_render.py holds both.
  */
 function App() {
   const [state, setState] = useState("checking");
+  const [hasLocal, setHasLocal] = useState(false);
   const route = useRoute();
 
   useEffect(() => {
+    let live = true;
+    loadSnapshot().then((found) => {
+      if (!live) return;
+      setHasLocal(Boolean(found));
+      if (found) setState((now) => (now === "checking" ? "in" : now));
+    });
     haveSession()
-      .then(setState)
-      .catch(() => setState("unreachable"));
-    return onSignedOut(() => setState("out"));
+      .then((answer) => {
+        if (!live) return;
+        setState(answer === "out" ? "out" : "in");
+      })
+      .catch(() => live && setState("in"));
+    const stop = onSignedOut(() => {
+      setState((now) => (now === "local" ? "local" : "out"));
+      loadSnapshot().then((found) => setHasLocal(Boolean(found)));
+    });
+    return () => {
+      live = false;
+      stop();
+    };
   }, []);
+
+  // Syncing starts once there is a shell to sync for, and only when signed in.
+  useEffect(() => {
+    if (state === "in") startSyncing();
+  }, [state]);
 
   // Keep the URL honest about the state: signed out is /signin, and /signin
   // is not a place a signed-in person should be left standing.
@@ -147,7 +182,7 @@ function App() {
     if (state === "out" && route.path !== "/signin") {
       navigate("/signin", { replace: true });
     }
-    if (state === "in" && route.path === "/signin") {
+    if ((state === "in" || state === "local") && route.path === "/signin") {
       navigate("/", { replace: true });
     }
   }, [state, route.path]);
@@ -156,33 +191,43 @@ function App() {
     return html`<main class="booting" aria-busy="true"><p class="t-meta">…</p></main>`;
   }
   if (state === "out") {
-    return html`<${SignIn} onDone=${() => setState("in")} />`;
+    return html`<${SignIn}
+      hasLocal=${hasLocal}
+      onDone=${() => setState("in")}
+      onLocal=${() => setState("local")}
+    />`;
   }
   return html`<${Shell}
-    offline=${state === "unreachable"}
+    local=${state === "local"}
+    onSignIn=${() => setState("out")}
     onSignOut=${async () => {
+      // The session ends on the PC. The snapshot and the documents stay on the
+      // phone: losing the library by signing out must be impossible.
       await signOut().catch(() => {});
-      forgetCachedData();
       setState("out");
     }}
   />`;
 }
 
+/** The one line every screen carries: when its data was synced. */
+function SyncedLine({ local, onSignIn }) {
+  const sync = useSyncState();
+  if (local) {
+    return html`<p class="synced-line" role="status">
+      ${syncedLine(sync.syncedAt, false, false)}. Signed out, so nothing syncs.${" "}
+      <button class="button quiet-button" type="button" onClick=${onSignIn}>Sign in</button>
+    </p>`;
+  }
+  return html`<p class="synced-line" role="status">
+    ${syncedLine(sync.syncedAt, sync.reachable, sync.syncing)}${sync.error ? ` · ${sync.error}` : ""}
+  </p>`;
+}
+
 /**
- * Everything behind a live session.
- *
- * `/api/status` is fetched once here rather than per screen, because the one
- * thing the default screen needs from it -- the bot username, for the primary
- * action -- does not change between navigations, and asking again on every render
- * would be a request per screen for a value that is configuration.
+ * Everything behind a live session -- or behind none, when reading what the
+ * phone holds while signed out.
  */
-function Shell({ onSignOut, offline }) {
-  const [status, setStatus] = useState(null);
-
-  useEffect(() => {
-    api.get("/api/status").then(setStatus).catch(() => setStatus({}));
-  }, []);
-
+function Shell({ onSignOut, onSignIn, local }) {
   const route = useRoute();
   const reading = match("/read/", route.path);
 
@@ -196,12 +241,8 @@ function Shell({ onSignOut, offline }) {
   return html`
     <div class="shell">
       <main class="shell-main" id="main">
-        ${offline
-          ? html`<p class="notice" role="status">
-              The server isn't answering, so these screens show what was last known.
-            </p>`
-          : null}
-        <${Screen} route=${route} status=${status} onSignOut=${onSignOut} />
+        <${SyncedLine} local=${local} onSignIn=${onSignIn} />
+        <${Screen} route=${route} onSignOut=${onSignOut} />
       </main>
       <${Sidebar} here=${route.path} onSignOut=${onSignOut} />
       <${TabBar} here=${route.path} />
@@ -210,12 +251,12 @@ function Shell({ onSignOut, offline }) {
 }
 
 /** Which screen this path is. */
-function Screen({ route, status, onSignOut }) {
-  const [, screen] = pick(route, status, onSignOut);
+function Screen({ route, onSignOut }) {
+  const [, screen] = pick(route, onSignOut);
   return screen;
 }
 
-function pick(route, status, onSignOut) {
+function pick(route, onSignOut) {
   const path = route.path;
   // Study. /subjects/... is the old address of a subject and still works, so a
   // link saved before the redesign is not a dead end.
@@ -239,7 +280,7 @@ function pick(route, status, onSignOut) {
   if (path === "/add") return ["add", html`<${Add} />`];
   if (path === "/status") return ["status", html`<${Status} />`];
   if (path === "/more") return ["more", html`<${More} onSignOut=${onSignOut} />`];
-  return ["now", html`<${Now} status=${status} />`];
+  return ["now", html`<${Now} />`];
 }
 
 // The five places, DESIGN.md section 8. Four here and More, which the tab bar

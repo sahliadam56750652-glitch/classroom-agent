@@ -24,6 +24,7 @@ import { html } from "/html.js";
 import { Offline, api, describe } from "/api.js";
 import { linkProps, navigate } from "/router.js";
 import { queuePosition } from "/queue.js";
+import { documentFromSnapshot } from "/sync.js";
 import { Icon } from "/icons.js";
 import { Problem } from "/ui.js";
 
@@ -138,30 +139,44 @@ export function Reader({ driveId }) {
   const restored = useRef(askedPage || false);
   const lastWritten = useRef(null);
 
-  // Metadata and the stored position, in parallel with the PDF itself.
+  // Metadata and the stored position, in parallel with the PDF itself. Asked of
+  // the PC; when it does not answer, the document's details come from the
+  // phone's snapshot and reading starts where it can -- the position is said to
+  // be unknown rather than silently guessed.
   useEffect(() => {
     let live = true;
-    Promise.all([
+    Promise.allSettled([
       api.get(`/api/documents/${encodeURIComponent(driveId)}`),
       api.get(`/api/documents/${encodeURIComponent(driveId)}/position`),
-    ])
-      .then(([found, position]) => {
+    ]).then(async ([found, position]) => {
+      if (!live) return;
+      if (found.status === "fulfilled") {
+        setDoc(found.value);
+      } else {
+        const kept = await documentFromSnapshot(driveId);
         if (!live) return;
-        setDoc(found);
+        if (kept) {
+          setDoc(kept);
+        } else {
+          const err = found.reason;
+          setProblem(
+            err instanceof Offline
+              ? "This document is not on the phone yet. It arrives with the next sync, while the PC is on."
+              : describe(err)
+          );
+          return;
+        }
+      }
+      if (position.status === "fulfilled") {
         // Said out loud, both when the page moved and when it is gone. A silent
         // fall back to page one would show me different material and look
         // exactly like it worked.
-        if (position.note) setNote(position.note);
-        if (position.page && !askedPage) restored.current = position.page;
-      })
-      .catch((err) => {
-        if (!live) return;
-        setProblem(
-          err instanceof Offline
-            ? "No connection, and this document is not kept offline yet."
-            : describe(err)
-        );
-      });
+        if (position.value.note) setNote(position.value.note);
+        if (position.value.page && !askedPage) restored.current = position.value.page;
+      } else if (position.reason instanceof Offline) {
+        setNote("The PC is not reachable, so where you stopped is not known here. This opens at the start.");
+      }
+    });
     return () => {
       live = false;
     };

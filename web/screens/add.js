@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { Offline, api, describe } from "/api.js";
+import { syncNow, useLocal } from "/sync.js";
 import { Icon } from "/icons.js";
 import { ScreenHeader } from "/ui.js";
 import { subjectStyle } from "/subject-color.js";
@@ -41,15 +42,9 @@ function remember(name) {
   }
 }
 
+/** The subjects to file under, from the phone's snapshot. */
 function useSubjects() {
-  const [subjects, setSubjects] = useState([]);
-  useEffect(() => {
-    api
-      .get("/api/subjects")
-      .then((rows) => setSubjects(rows.map((row) => row.name)))
-      .catch(() => setSubjects([]));
-  }, []);
-  return subjects;
+  return (useLocal("/api/subjects").data || []).map((row) => row.name);
 }
 
 /** Which subject, as a row of chips: one tap, the colour beside the name. */
@@ -231,6 +226,7 @@ export function Add() {
             due: data.get("due") || null,
           });
           form.reset();
+          syncNow();
           return body.due_at
             ? `${body.title} is recorded.`
             : `${body.title} is recorded with no date, so nothing will remind you of it.`;
@@ -271,6 +267,7 @@ export function Add() {
             covered: data.get("covered") || null,
           });
           form.reset();
+          syncNow();
           return `${body.course_name || body.course_id}, ${body.held_on}: logged.`;
         }}
       >
@@ -313,6 +310,7 @@ export function Add() {
             milestones,
           });
           form.reset();
+          syncNow();
           return `${body.title} is started, with ${body.milestones_total} milestone${body.milestones_total === 1 ? "" : "s"}.`;
         }}
       >

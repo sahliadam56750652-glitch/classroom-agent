@@ -11,11 +11,10 @@
 // skipped?" "none"). No summary, no health score, no green ticks -- those would be
 // a judgement about the numbers, and the point is to show the numbers.
 
-import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
-import { api, describe } from "/api.js";
+import { useLocal } from "/sync.js";
 import { localTime } from "/format.js";
-import { Problem, ScreenHeader, Skeleton } from "/ui.js";
+import { NotSynced, ScreenHeader, Skeleton } from "/ui.js";
 
 // Stored states, in words -- per section, because the same stored word means
 // different things in different tables: an OCR page that is "pending" is
@@ -71,22 +70,12 @@ function Figures({ title, counts, note, words = {} }) {
 }
 
 export function Status() {
-  const [status, setStatus] = useState(null);
-  const [problem, setProblem] = useState("");
-
-  useEffect(() => {
-    let live = true;
-    api
-      .get("/api/status")
-      .then((found) => live && setStatus(found))
-      .catch((err) => live && setProblem(describe(err)));
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  if (problem) return html`<div class="screen"><${Problem}>${problem}</${Problem}></div>`;
-  if (!status) return html`<div class="screen"><${Skeleton} rows=${4} /></div>`;
+  const found = useLocal("/api/status");
+  if (found.status === "loading") return html`<div class="screen"><${Skeleton} rows=${4} /></div>`;
+  if (found.status === "absent") {
+    return html`<div class="screen"><${ScreenHeader} title="Status" /><${NotSynced} reason=${found.reason} /></div>`;
+  }
+  const status = found.data;
 
   const sync = status.last_sync;
   const synced = sync

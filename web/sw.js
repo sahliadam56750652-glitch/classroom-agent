@@ -1,31 +1,38 @@
-// The service worker. DESIGN.md section 6, as amended when 5a retired its
-// original justification.
+// The service worker. DESIGN.md section 6, as amended for Phase 5e.
 //
-// The promise is "what has been delivered is readable offline", and "delivered"
-// is doing real work: the library is local to the SERVER now, and 116 MB is not
-// going to live on a phone. So four policies, and the third one is the whole
-// design:
+// The backend is a PC that is on only some of the time, so the phone holds its
+// own copy: the snapshot in IndexedDB (local.js, sync.js) and the documents in
+// one cache, LIBRARY. Three policies:
 //
-//   SHELL      precache, cache-first. Opening offline must never be blank.
-//   API GETs   network-first, cache fallback, and the fallback is LABELLED.
-//   DOCUMENTS  never automatic. Tonight's gate item is kept deliberately;
-//              anything else only if I ask. A 40 MB deck must not be cached
-//              because I scrolled past it.
-//   WRITES     not touched here. The page queues them; see queue.js.
+//   SHELL      precache, cache-first, VERSIONED. A new app replaces it.
+//   LIBRARY    documents, UNVERSIONED. Nothing in this file ever deletes it --
+//              not an update, not a sign-out, not a 401. Losing the library is
+//              the one failure here that cannot be undone while the PC is off.
+//   API        not cached here at all. Reads come from the snapshot; writes are
+//              the page's problem.
 //
-// One hard constraint shapes this: **the Cache API cannot store a 206.**
-// `Cache.put` rejects a partial response by spec. The reader gets its speed from
-// range requests, so reading online and keeping offline are necessarily two
-// different requests -- a kept document is fetched WHOLE, once, on purpose.
+// One hard constraint shapes the documents: **the Cache API cannot store a
+// 206.** A kept document is fetched WHOLE, once, on purpose, and reading online
+// still uses range requests.
 
 // A hash of every file in SHELL_FILES, stamped by `agent webcontract`. Never
 // edited by hand: the shell is served cache-first, so a changed file reaches an
 // installed app ONLY when this changes, and a forgotten bump looks exactly like
 // a fix that did not work. A test fails when it is stale.
-const VERSION = "81bfe9377f1d";
+const VERSION = "07b8450752f5";
 const SHELL = `shell-${VERSION}`;
-const API = `api-${VERSION}`;
-const DOCS = `docs-${VERSION}`;
+
+// The documents' cache. Its name carries NO version, on purpose: every cache
+// named after a version is deleted when the next version activates, and that
+// is exactly how an app update used to wipe every kept document.
+// tests/test_web_assets.py refuses a VERSION anywhere in this name.
+const LIBRARY = "library";
+
+// Only caches of these kinds are ever deleted, and only old versions of them.
+// `api-` caches are from before 5e, when API reads were cached here; the
+// snapshot replaced them. A `docs-` cache from before 5e is never deleted: it may
+// hold a document I kept, and caches.match() still finds it.
+const DISPOSABLE = /^(shell|api)-/;
 
 // Everything needed to render something rather than nothing. The PDF.js worker
 // is NOT here: 1.4 MB that only the reader needs, and precaching it would make
@@ -40,6 +47,9 @@ const SHELL_FILES = [
   "/fonts/bricolage-latin-ext.woff2",
   "/app.js",
   "/api.js",
+  "/local.js",
+  "/sync.js",
+  "/synced.js",
   "/html.js",
   "/format.js",
   "/router.js",
@@ -117,7 +127,7 @@ self.addEventListener("activate", (event) => {
       .then((names) =>
         Promise.all(
           names
-            .filter((name) => ![SHELL, API, DOCS].includes(name))
+            .filter((name) => DISPOSABLE.test(name) && name !== SHELL)
             .map((name) => caches.delete(name))
         )
       )
@@ -131,20 +141,13 @@ self.addEventListener("message", (event) => {
     // Fetched WHOLE and without a Range header, because a 206 cannot be cached.
     event.waitUntil(
       caches
-        .open(DOCS)
+        .open(LIBRARY)
         .then((cache) => cache.add(new Request(data.url, { credentials: "same-origin" })))
         .catch((err) => console.warn("[sw] could not keep", data.url, err))
     );
   }
-  if (data.type === "forget" && data.url) {
-    event.waitUntil(caches.open(DOCS).then((cache) => cache.delete(data.url)));
-  }
-  if (data.type === "signed-out") {
-    // Signing out means the cached screens and the kept documents go too. They
-    // are personal data, and "signed out" that still shows last night's backlog
-    // offline is not signed out. The shell stays: it holds nothing of mine.
-    event.waitUntil(Promise.all([caches.delete(API), caches.delete(DOCS)]));
-  }
+  // There is no "signed-out" message any more. Signing out ends the session on
+  // the PC; it does not take the library off the phone (Phase 5e).
 });
 
 self.addEventListener("fetch", (event) => {
@@ -165,7 +168,8 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   if (url.pathname.startsWith("/api/")) {
-    event.respondWith(api(request, event));
+    // Straight to the network. The page reads the snapshot first and treats a
+    // failed request as "the PC is not reachable", which is the truth.
     return;
   }
   event.respondWith(shell(request, event));
@@ -200,33 +204,6 @@ async function shell(request, event) {
 }
 
 /**
- * API reads: the network, and the last known answer when there is none.
- *
- * The fallback carries `X-Agent-Cached-At`, which is what lets the page say "as
- * of 21:40" rather than presenting old figures as current. Section 7 forbids the
- * app inventing a state, and stale data shown as fresh is exactly that.
- */
-async function api(request, event) {
-  try {
-    const response = await fetch(request);
-    if (response.ok) {
-      const copy = response.clone();
-      const when = new Date().toISOString();
-      event.waitUntil(
-        withStamp(copy, when).then((stamped) =>
-          caches.open(API).then((cache) => cache.put(request, stamped))
-        )
-      );
-    }
-    return response;
-  } catch (err) {
-    const cached = await caches.match(request);
-    if (cached) return cached;
-    throw err;
-  }
-}
-
-/**
  * Documents: only what was deliberately kept.
  *
  * No network fallback INTO the cache -- a document is never cached as a side
@@ -245,15 +222,4 @@ async function document_(request) {
     if (cached) return cached;
     throw err;
   }
-}
-
-/** A copy of a response carrying when it was stored. */
-async function withStamp(response, when) {
-  const headers = new Headers(response.headers);
-  headers.set("X-Agent-Cached-At", when);
-  return new Response(await response.blob(), {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
 }

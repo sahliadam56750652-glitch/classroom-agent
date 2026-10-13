@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
-import { api } from "/api.js";
+import { useLocal } from "/sync.js";
 import { linkProps } from "/router.js";
 import { Icon, Mark } from "/icons.js";
 import { subjectStyle } from "/subject-color.js";
@@ -112,40 +112,28 @@ export function Problem({ children }) {
 // ---------------------------------------------------------------- subject names
 //
 // Library documents and deadlines carry a course id, not a subject; the colour
-// and the name both come from the subject. One request for the whole session,
-// shared by every screen that asks.
+// and the name both come from the subject. Read from the phone's snapshot, so a
+// name is known with the PC off.
 
-let names = null;
-
-function loadNames() {
-  if (!names) {
-    names = api
-      .get("/api/subjects")
-      .then((subjects) => {
-        const byCourse = {};
-        for (const s of subjects || []) {
-          if (s.course_id) byCourse[s.course_id] = s.name;
-          if (s.mapped_course) byCourse[s.mapped_course] = byCourse[s.mapped_course] || s.name;
-        }
-        return byCourse;
-      })
-      .catch(() => {
-        names = null;
-        return {};
-      });
+/** course id -> subject name, from the synced subjects; {} before a sync. */
+export function useSubjectNames() {
+  const subjects = useLocal("/api/subjects").data || [];
+  const byCourse = {};
+  for (const s of subjects) {
+    if (s.course_id) byCourse[s.course_id] = s.name;
+    if (s.mapped_course) byCourse[s.mapped_course] = byCourse[s.mapped_course] || s.name;
   }
-  return names;
+  return byCourse;
 }
 
-/** course id -> subject name, or {} until it arrives. */
-export function useSubjectNames() {
-  const [found, setFound] = useState({});
-  useEffect(() => {
-    let live = true;
-    loadNames().then((byCourse) => live && setFound(byCourse));
-    return () => {
-      live = false;
-    };
-  }, []);
-  return found;
+/**
+ * What a screen says when the phone holds nothing for it yet. Never an error:
+ * the PC is simply not the thing being looked at.
+ */
+export function NotSynced({ reason }) {
+  return html`<${Empty} title="Not on this phone yet.">
+    ${reason
+      ? reason
+      : "It arrives with the next sync, while the PC is on."}
+  </${Empty}>`;
 }

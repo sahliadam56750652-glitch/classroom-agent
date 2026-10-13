@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
-import { Offline, api, describe } from "/api.js";
+import { useLocal } from "/sync.js";
 import { age, plural } from "/format.js";
 import { Icon } from "/icons.js";
 import { navigate } from "/router.js";
@@ -17,7 +17,7 @@ import {
   Card,
   Chip,
   Empty,
-  Problem,
+  NotSynced,
   ScreenHeader,
   SectionLinks,
   Skeleton,
@@ -61,28 +61,10 @@ function Post({ post, subject }) {
 
 export function Library({ course }) {
   const names = useSubjectNames();
-  const [posts, setPosts] = useState(null);
-  const [problem, setProblem] = useState("");
+  const library = useLocal("/api/library");
+  const posts = library.data;
   const [query, setQuery] = useState("");
   const [only, setOnly] = useState(course || "");
-
-  useEffect(() => {
-    let live = true;
-    api
-      .get("/api/library")
-      .then((found) => live && setPosts(found))
-      .catch((err) => {
-        if (!live) return;
-        setProblem(
-          err instanceof Offline
-            ? "No connection, and the library list is not kept offline."
-            : describe(err)
-        );
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
 
   useEffect(() => setOnly(course || ""), [course]);
 
@@ -93,8 +75,8 @@ export function Library({ course }) {
     <${SectionLinks} links=${STUDY_PARTS} here="/library" />
   `;
 
-  if (problem) return html`<div class="screen">${header}<${Problem}>${problem}</${Problem}></div>`;
-  if (!posts) return html`<div class="screen">${header}<${Skeleton} rows=${4} /></div>`;
+  if (library.status === "loading") return html`<div class="screen">${header}<${Skeleton} rows=${4} /></div>`;
+  if (library.status === "absent") return html`<div class="screen">${header}<${NotSynced} reason=${library.reason} /></div>`;
 
   const courses = [...new Map(posts.map((post) => [post.course_id, subjectOf(post)])).entries()].sort(
     (a, b) => a[1].localeCompare(b[1])

@@ -21,11 +21,12 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
-import { api, describe } from "/api.js";
+import { Offline, api, describe } from "/api.js";
+import { useLocal } from "/sync.js";
 import { linkProps, navigate } from "/router.js";
 import { Icon } from "/icons.js";
 import { localTime, plural } from "/format.js";
-import { Card, Chip, Empty, Problem, ScreenHeader, SectionLinks, Skeleton, STUDY_PARTS, useSubjectNames } from "/ui.js";
+import { Card, Chip, Empty, NotSynced, Problem, ScreenHeader, SectionLinks, Skeleton, STUDY_PARTS, useSubjectNames } from "/ui.js";
 import { subjectStyle } from "/subject-color.js";
 
 const LETTERS = ["A", "B", "C", "D"];
@@ -35,6 +36,11 @@ const LETTERS = ["A", "B", "C", "D"];
  *
  * Returns { sentence, action } where action is "start", "ask" or null.
  */
+// Grading happens on the PC and nowhere else -- a quiz is never made to work
+// offline by weakening that. So with the PC off, the quiz says what it is
+// waiting for, plainly, instead of failing.
+const OFFLINE = "Quizzes are graded on your PC. This one opens when the PC is reachable.";
+
 export function quizState(status) {
   if (!status) return { sentence: "", action: null };
   switch (status.kind) {
@@ -77,7 +83,7 @@ export function QuizEntry({ itemId, compact = false }) {
     api
       .get(`/api/study-items/${itemId}/quiz`)
       .then((found) => live && setStatus(found))
-      .catch((err) => live && setProblem(describe(err)));
+      .catch((err) => live && setProblem(err instanceof Offline ? OFFLINE : describe(err)));
     return () => {
       live = false;
     };
@@ -315,7 +321,7 @@ export function Quiz({ itemId }) {
         setAttempt(await api.post(`/api/study-items/${itemId}/quiz`));
       }
     } catch (err) {
-      setProblem(describe(err));
+      setProblem(err instanceof Offline ? OFFLINE : describe(err));
     }
   }
 
@@ -405,22 +411,17 @@ export function PastAttempt({ attemptId }) {
 export function Quizzes() {
   const names = useSubjectNames();
   const subjectOf = (entry) => names[entry.course_id] || entry.course_name;
-  const [body, setBody] = useState(null);
-  const [problem, setProblem] = useState("");
+  const found = useLocal("/api/quizzes");
+  const body = found.data;
 
-  useEffect(() => {
-    let live = true;
-    api
-      .get("/api/quizzes")
-      .then((found) => live && setBody(found))
-      .catch((err) => live && setProblem(describe(err)));
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  if (problem) return html`<div class="screen"><${Problem}>${problem}</${Problem}></div>`;
-  if (!body) return html`<div class="screen"><${Skeleton} rows=${4} /></div>`;
+  if (found.status === "loading") return html`<div class="screen"><${Skeleton} rows=${4} /></div>`;
+  if (found.status === "absent") {
+    return html`<div class="screen">
+      <${ScreenHeader} title="Study" />
+      <${SectionLinks} links=${STUDY_PARTS} here="/quizzes" />
+      <${NotSynced} reason=${found.reason} />
+    </div>`;
+  }
 
   return html`<div class="screen">
     <${ScreenHeader} title="Study" />

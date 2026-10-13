@@ -552,6 +552,16 @@ gate asks that evening with `timetable.yaml` untouched.
 - **5c — the PWA and the APK.** The client DESIGN.md is the brief for.
 - **5d — the gate's actions in the client.** Deliver, mark-read, skip and
   snooze, reached from the web client rather than only from Telegram.
+- **5e — offline-first. Slice 1 complete (2026-10-13): the three blockers.**
+  An app update can no longer delete kept documents (the `library` cache has
+  no version in its name, and only old `shell-`/`api-` caches are ever
+  deleted). A 401 and Sign out both end the session and leave the snapshot and
+  the library on the phone; the sign-in screen offers "Read what's on this
+  phone". Screens read the phone's snapshot (`GET /api/sync`, held in IndexedDB
+  by `web/sync.js`) before the network, and every screen carries "Synced 07:31"
+  or "· PC not reachable". All four are pinned by render tests on a real clock
+  (`render(real_clock=True)`, via `tools/cdp.py`), because IndexedDB and the
+  Cache API never complete under `--virtual-time-budget`.
 - **5e — offline-first.** Added 2026-10-13: the phone works from its last sync
   while the PC is off, PDFs included; it syncs only while the PC is on. Plan approved
   2026-10-13: `docs/superpowers/specs/2026-10-13-phase-5e-offline-first-plan.md`.

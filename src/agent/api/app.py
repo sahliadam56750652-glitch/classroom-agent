@@ -25,6 +25,7 @@ from .routes import (
     quiz,
     study,
     subjects,
+    sync,
     timetable,
 )
 
@@ -128,6 +129,7 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(meta.router, prefix="/api", tags=["meta"])
     app.include_router(study.router, prefix="/api", tags=["study"])
     app.include_router(quiz.router, prefix="/api", tags=["quiz"])
+    app.include_router(sync.router, prefix="/api", tags=["sync"])
     app.include_router(subjects.router, prefix="/api", tags=["subjects"])
     app.include_router(library.router, prefix="/api", tags=["library"])
     app.include_router(deadlines.router, prefix="/api", tags=["deadlines"])

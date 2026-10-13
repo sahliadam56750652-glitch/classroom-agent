@@ -18,10 +18,11 @@
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { api, describe } from "/api.js";
+import { syncNow, useLocal } from "/sync.js";
 import { hasPassed, plural } from "/format.js";
 import { Icon } from "/icons.js";
 import { linkProps } from "/router.js";
-import { Card, Chip, Empty, Problem, ScreenHeader, Skeleton, useSubjectNames } from "/ui.js";
+import { Card, Chip, Empty, NotSynced, Problem, ScreenHeader, Skeleton, useSubjectNames } from "/ui.js";
 import { subjectStyle } from "/subject-color.js";
 
 const DAY = 86400000;
@@ -138,15 +139,11 @@ export function ProjectCard({ project, subject }) {
 
 export function Work() {
   const names = useSubjectNames();
-  const [rows, setRows] = useState(null);
-  const [projects, setProjects] = useState(null);
+  const homework = useLocal("/api/homework");
+  const projectList = useLocal("/api/projects");
+  const rows = homework.data;
+  const projects = projectList.status === "loading" ? null : projectList.data || [];
   const [problem, setProblem] = useState("");
-
-  const load = () => {
-    api.get("/api/homework").then(setRows).catch((err) => setProblem(describe(err)));
-    api.get("/api/projects").then(setProjects).catch(() => setProjects([]));
-  };
-  useEffect(load, []);
 
   const subjectOf = (row) => names[row.course_id] || row.course_name;
 
@@ -154,14 +151,16 @@ export function Work() {
     setProblem("");
     try {
       await api.post(`/api/tasks/${taskId}/complete`);
-      load();
+      await syncNow();
     } catch (err) {
       setProblem(describe(err));
     }
   }
 
-  if (problem && !rows) return html`<div class="screen"><${Problem}>${problem}</${Problem}></div>`;
-  if (!rows) return html`<div class="screen"><${Skeleton} rows=${4} /></div>`;
+  if (homework.status === "loading") return html`<div class="screen"><${Skeleton} rows=${4} /></div>`;
+  if (homework.status === "absent") {
+    return html`<div class="screen"><${ScreenHeader} title="Work" /><${NotSynced} reason=${homework.reason} /></div>`;
+  }
 
   return html`<div class="screen work">
     <${ScreenHeader} title="Work" />
@@ -223,32 +222,31 @@ export function Work() {
  */
 export function ProjectPage({ id }) {
   const names = useSubjectNames();
-  const [project, setProject] = useState(null);
+  const found = useLocal(`/api/projects/${id}`);
+  const project = found.data;
   const [problem, setProblem] = useState("");
   const [adding, setAdding] = useState("");
   const [busy, setBusy] = useState(false);
-
-  const load = () =>
-    api
-      .get(`/api/projects/${encodeURIComponent(id)}`)
-      .then(setProject)
-      .catch((err) => setProblem(describe(err)));
-  useEffect(load, [id]);
 
   async function act(work) {
     setBusy(true);
     setProblem("");
     try {
       await work();
-      await load();
+      await syncNow();
     } catch (err) {
       setProblem(describe(err));
     }
     setBusy(false);
   }
 
-  if (problem && !project) return html`<div class="screen"><${Problem}>${problem}</${Problem}></div>`;
-  if (!project) return html`<div class="screen"><${Skeleton} rows=${3} /></div>`;
+  if (found.status === "loading") return html`<div class="screen"><${Skeleton} rows=${3} /></div>`;
+  if (found.status === "absent") {
+    return html`<div class="screen">
+      <a class="back-link t-meta" ...${linkProps("/work")}>Work</a>
+      <${NotSynced} reason=${found.reason} />
+    </div>`;
+  }
 
   const subject = names[project.course_id] || project.course_name;
   const passed = project.deadline_at && hasPassed(project.deadline_at) && !project.closed_at;

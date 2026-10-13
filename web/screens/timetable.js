@@ -32,8 +32,9 @@
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { api, describe } from "/api.js";
+import { syncNow, useTimetable } from "/sync.js";
 import { Icon } from "/icons.js";
-import { Chip, Empty, Problem, ScreenHeader, Skeleton } from "/ui.js";
+import { Chip, Empty, NotSynced, Problem, ScreenHeader, Skeleton } from "/ui.js";
 import { subjectStyle } from "/subject-color.js";
 
 const WIDE = "(min-width: 1024px)";
@@ -332,7 +333,7 @@ export function Timetable() {
   const wide = useWide();
   const today = iso(new Date());
   const [monday, setMonday] = useState(() => iso(mondayOf(new Date())));
-  const [data, setData] = useState(null);
+  const [live, setLive] = useState(null);
   const [problem, setProblem] = useState("");
   const [said, setSaid] = useState("");
   const [chosen, setChosen] = useState(today);
@@ -340,17 +341,24 @@ export function Timetable() {
 
   const sunday = iso(new Date(parse(monday).getTime() + 6 * DAY_MS + 3600000));
 
-  const load = () => {
-    api
-      .get(`/api/timetable?from=${monday}&to=${sunday}`)
-      .then(setData)
-      .catch((err) => setProblem(describe(err)));
-  };
+  // The phone holds three weeks from this Monday. A week outside them is asked
+  // of the PC, and when the PC is off the screen says the week is not on the
+  // phone -- never an empty grid that looks like a week with no lectures.
+  const local = useTimetable(monday, sunday);
+  const data = local.covered ? local.data : live;
 
   useEffect(() => {
-    setData(null);
-    load();
-  }, [monday]);
+    setLive(null);
+    if (local.covered || local.status === "loading") return undefined;
+    let current = true;
+    api
+      .get(`/api/timetable?from=${monday}&to=${sunday}`)
+      .then((found) => current && setLive(found))
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
+  }, [monday, local.covered, local.status]);
 
   async function record(spec) {
     setProblem("");
@@ -359,7 +367,7 @@ export function Timetable() {
     try {
       const done = await api.post("/api/adjustments", spec);
       setSaid(saidBack(done, spec));
-      load();
+      await syncNow();
     } catch (err) {
       setProblem(describe(err));
     }
@@ -371,8 +379,7 @@ export function Timetable() {
     setChosen(iso(mondayOf(next)));
   };
 
-  if (problem && !data) return html`<div class="screen"><${Problem}>${problem}</${Problem}></div>`;
-  if (!data) return html`<div class="screen"><${Skeleton} rows=${4} /></div>`;
+  if (local.status === "loading") return html`<div class="screen"><${Skeleton} rows=${4} /></div>`;
 
   const thisWeek = monday === iso(mondayOf(new Date()));
 
@@ -399,7 +406,9 @@ export function Timetable() {
     ${said ? html`<p class="notice tt-said" role="status">${said}</p>` : null}
     ${problem ? html`<${Problem}>${problem}</${Problem}>` : null}
 
-    ${wide
+    ${!data
+      ? html`<${NotSynced} reason="Only three weeks from this Monday are kept on the phone. Other weeks need the PC." />`
+      : wide
       ? html`<${WeekGrid}
           days=${data.days}
           today=${today}
@@ -417,7 +426,7 @@ export function Timetable() {
           onRecord=${record}
         />`}
 
-    ${data.orphans.length
+    ${data && data.orphans.length
       ? html`
           <!-- Always printed: an adjustment that names nothing the file still
                contains is never applied and never silently dropped. -->

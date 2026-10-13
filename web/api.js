@@ -218,9 +218,3 @@ export function describe(err) {
   }
   return "Something in the app itself went wrong. Reloading usually clears it.";
 }
-
-/** Tell the service worker to forget cached personal data. Sign-out only. */
-export function forgetCachedData() {
-  const worker = navigator.serviceWorker && navigator.serviceWorker.controller;
-  if (worker) worker.postMessage({ type: "signed-out" });
-}

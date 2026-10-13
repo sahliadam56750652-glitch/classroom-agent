@@ -636,3 +636,50 @@ def test_no_stylesheet_ever_inverts_the_page():
         body = re.sub(r"/\*.*?\*/", "", sheet.read_text(encoding="utf-8"), flags=re.S)
         for forbidden in ("invert(", "mix-blend-mode: difference", "mix-blend-mode:difference"):
             assert forbidden not in body, f"{sheet.name}: {forbidden}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 5e: the phone's copy
+# ---------------------------------------------------------------------------
+
+
+def test_the_library_cache_name_never_carries_the_version():
+    """Every versioned cache is deleted when the next version activates. That
+    is how an app update used to wipe every kept document."""
+    body = (WEB / "sw.js").read_text(encoding="utf-8")
+    declared = re.search(r'const LIBRARY = ([^;]+);', body)
+    assert declared, "no LIBRARY cache in sw.js"
+    assert "VERSION" not in declared.group(1), declared.group(1)
+    disposable = re.search(r"const DISPOSABLE = (/.*?/);", body)
+    assert disposable and "library" not in disposable.group(1) and "docs" not in disposable.group(1)
+    # Nothing else in the worker deletes caches by name.
+    assert body.count("caches.delete(") == 1, "a second place deletes caches"
+
+
+def test_signing_out_has_no_purge_left_anywhere():
+    for module in list(WEB.glob("*.js")) + list(WEB.glob("screens/*.js")):
+        code = re.sub(r"//[^\n]*|/\*.*?\*/", "", module.read_text(encoding="utf-8"), flags=re.S)
+        assert "signed-out" not in code, module.name
+        assert "forgetCachedData" not in code, module.name
+
+
+# Where a screen may still ask the PC directly for a read, and why. Everything
+# else reads the snapshot. A new entry here is a decision, not a convenience.
+ONLINE_READS = {
+    ("quiz.js", "/api/study-items/"),  # a quiz is graded on the PC, so it needs it
+    ("quiz.js", "/api/quiz-attempts/"),
+    ("now.js", "/api/now?date="),  # ?date= inspection of a date outside the week
+    ("timetable.js", "/api/timetable?from="),  # a week outside the three synced
+    ("reader.js", "/api/documents/"),  # metadata and position, with snapshot fallback
+}
+
+
+def test_screens_read_the_snapshot_before_the_network():
+    found = set()
+    for module in list(WEB.glob("screens/*.js")) + [WEB / "ui.js", WEB / "app.js", WEB / "reader" / "reader.js"]:
+        code = re.sub(r"//[^\n]*|/\*.*?\*/", "", module.read_text(encoding="utf-8"), flags=re.S)
+        for path in re.findall(r"\.get\(\s*[`\"'](/api/[^`\"'$?]*\??[a-z=]*)", code):
+            allowed = [(name, prefix) for name, prefix in ONLINE_READS if name == module.name and path.startswith(prefix)]
+            assert allowed, f"{module.name} reads {path} from the PC; read the snapshot (sync.js useLocal)"
+            found.add(allowed[0])
+    assert found, "the scan found nothing to check"

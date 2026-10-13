@@ -20,11 +20,11 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
-import { Offline, api, describe } from "/api.js";
+import { useLocal } from "/sync.js";
 import { age, plural, relativeDay } from "/format.js";
 import { subjectStyle as subjectStyleOf } from "/subject-color.js";
 import { linkProps } from "/router.js";
-import { Card, Chip, Empty, Problem, ScreenHeader, SectionLinks, Skeleton, STUDY_PARTS } from "/ui.js";
+import { Card, Chip, Empty, Problem, ScreenHeader, NotSynced, SectionLinks, Skeleton, STUDY_PARTS } from "/ui.js";
 import { QuizEntry } from "/screens/quiz.js";
 import { Icon } from "/icons.js";
 import { navigate } from "/router.js";
@@ -176,39 +176,37 @@ function Inactive({ rows }) {
   </details>`;
 }
 
+/** Today, locally, as the timetable names a day. */
+function localToday() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/** The synced timetable from today on: what "next session" is measured against. */
+function useUpcoming() {
+  const found = useLocal("/api/timetable");
+  if (found.status !== "ready") return null;
+  const today = localToday();
+  return { ...found.data, days: found.data.days.filter((day) => day.date >= today) };
+}
+
 export function Subjects() {
-  const [rows, setRows] = useState(null);
-  const [next, setNext] = useState({});
-  const [problem, setProblem] = useState("");
+  const subjects = useLocal("/api/subjects");
+  // The order, not the content: without the timetable the list still renders,
+  // in the server's order.
+  const upcoming = useUpcoming();
+  const next = upcoming ? nextSessions(upcoming) : {};
 
-  useEffect(() => {
-    let live = true;
-    api
-      .get("/api/subjects")
-      .then((found) => live && setRows(found))
-      .catch((err) => {
-        if (!live) return;
-        setProblem(
-          err instanceof Offline
-            ? "No connection, and nothing has been kept for this screen."
-            : describe(err)
-        );
-      });
-    // The order, not the content: without the timetable the list still renders,
-    // in the server's order.
-    api
-      .get("/api/timetable")
-      .then((found) => live && setNext(nextSessions(found)))
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  if (problem) {
-    return html`<div class="screen"><${Problem}>${problem}</${Problem}></div>`;
+  if (subjects.status === "loading") return html`<div class="screen"><${Skeleton} rows=${5} /></div>`;
+  if (subjects.status === "absent") {
+    return html`<div class="screen">
+      <${ScreenHeader} title="Study" />
+      <${SectionLinks} links=${STUDY_PARTS} here="/study" />
+      <${NotSynced} reason=${subjects.reason} />
+    </div>`;
   }
-  if (!rows) return html`<div class="screen"><${Skeleton} rows=${5} /></div>`;
+  const rows = subjects.data;
 
   const behind = rows.filter((row) => row.state === "behind");
   const active = order(rows.filter((row) => !INACTIVE.has(row.state)), next);
@@ -322,16 +320,13 @@ function Post({ post, subject }) {
   const [problem, setProblem] = useState("");
   const state = post.study_item_state;
 
-  async function open() {
+  // The file to open comes with the post in the snapshot, so opening it needs
+  // nothing from the PC.
+  function open() {
     setProblem("");
-    try {
-      const found = await api.get(`/api/study-items/${post.study_item_id}`);
-      const file = (found.files || []).find((f) => f.readable);
-      if (file) navigate(`/read/${encodeURIComponent(file.drive_id)}`);
-      else setProblem("Nothing readable is held for this post yet.");
-    } catch (err) {
-      setProblem(describe(err));
-    }
+    const file = (post.documents || []).find((found) => found.readable);
+    if (file) navigate(`/read/${encodeURIComponent(file.drive_id)}`);
+    else setProblem("Nothing readable is held for this post yet.");
   }
 
   const meta = [
@@ -363,42 +358,27 @@ function Post({ post, subject }) {
 }
 
 export function Subject({ name }) {
-  const [subject, setSubject] = useState(null);
-  const [sessions, setSessions] = useState(null);
-  const [posts, setPosts] = useState(null);
-  const [problem, setProblem] = useState("");
+  const found = useLocal(`/api/subjects/${name}`);
+  const library = useLocal("/api/library");
+  const upcoming = useUpcoming();
+  const sessions = upcoming ? sessionsOf(name, upcoming) : null;
 
-  useEffect(() => {
-    let live = true;
-    api
-      .get(`/api/subjects/${encodeURIComponent(name)}`)
-      .then((found) => {
-        if (!live) return;
-        setSubject(found);
-        if (!found.course_id) return setPosts([]);
-        api
-          .get(`/api/library?course=${encodeURIComponent(found.course_id)}`)
-          .then((rows) => live && setPosts(rows))
-          .catch(() => live && setPosts([]));
-      })
-      .catch((err) => live && setProblem(describe(err)));
-    api
-      .get("/api/timetable")
-      .then((found) => live && setSessions(sessionsOf(name, found)))
-      .catch(() => live && setSessions([]));
-    return () => {
-      live = false;
-    };
-  }, [name]);
-
-  if (problem) {
+  if (found.status === "loading") return html`<div class="screen"><${Skeleton} rows=${3} /></div>`;
+  if (found.status === "absent") {
     return html`<div class="screen">
-      <${Problem}>${problem}</${Problem}>
-      <p><a class="button quiet-button" ...${linkProps("/study")}>All subjects</a></p>
+      <a class="back-link t-meta" ...${linkProps("/study")}>Study</a>
+      <${NotSynced} reason=${found.reason} />
     </div>`;
   }
-  if (!subject) return html`<div class="screen"><${Skeleton} rows=${3} /></div>`;
-
+  const subject = found.data;
+  const posts =
+    library.status === "ready"
+      ? subject.course_id
+        ? library.data.filter((post) => post.course_id === subject.course_id)
+        : []
+      : library.status === "loading"
+      ? null
+      : [];
 
   return html`
     <div class="screen subject-page" style=${subjectStyleOf(subject.name)}>
