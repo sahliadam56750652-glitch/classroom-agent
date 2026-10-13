@@ -19,7 +19,7 @@ from .config import Config, ConfigError, load_config
 from .db import store
 from .digest import composer
 from . import entries
-from .files import drive, extract, ocr, packs, upload as upload_mod
+from .files import drive, extract, ocr, packs
 from .gate import adjustments as gate_adjust
 from .gate import bot as gate_bot
 from .gate import messages as gate_messages
@@ -424,32 +424,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="report what would be recorded; write nothing",
     )
 
-    sessions_parser = sub.add_parser(
-        "sessions",
-        parents=[shared],
-        help="log that a session happened and what it covered, or list what was logged",
-    )
-    sessions_parser.add_argument(
-        "--subject", default=None, metavar="NAME",
-        help="the timetable subject (required to log; filters the listing)",
-    )
-    sessions_parser.add_argument(
-        "--on", default=None, metavar="YYYY-MM-DD",
-        help="the day it was held (default: today, locally)",
-    )
-    sessions_parser.add_argument(
-        "--kind", default="LEC", choices=sorted(timetable_mod.KINDS),
-        help="LEC, TUT, LAB or Project (default: LEC)",
-    )
-    sessions_parser.add_argument(
-        "--covered", default=None, metavar="TEXT",
-        help="what was actually covered -- this is the whole point of logging it",
-    )
-    sessions_parser.add_argument(
-        "--dry-run", action="store_true",
-        help="report what would be logged; write nothing",
-    )
-
     tasks_parser = sub.add_parser(
         "tasks",
         parents=[shared],
@@ -505,53 +479,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="include what is handed in or done",
     )
 
-    upload_parser = sub.add_parser(
-        "upload",
-        parents=[shared],
-        help="add a local file to a subject's library -- a board, notes, a handout",
-    )
-    upload_parser.add_argument(
-        "file",
-        type=Path,
-        help="the PDF or photograph to add",
-    )
-    upload_parser.add_argument(
-        "--subject",
-        required=True,
-        metavar="NAME",
-        help="the timetable subject it belongs to (exact, never a near-match)",
-    )
-    upload_parser.add_argument(
-        "--title",
-        default=None,
-        metavar="TEXT",
-        help="what to call it in the gate and the pack (default: the filename)",
-    )
-    upload_parser.add_argument(
-        "--posted",
-        default=None,
-        metavar="YYYY-MM-DD",
-        help="when the material is dated, which is what the OCR queue sorts on",
-    )
-    upload_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="resolve, check the bytes and report; write nothing",
-    )
-
     subjects_parser = sub.add_parser(
         "subjects",
         parents=[shared],
-        help="show each subject's identity, or mint one for a subject with no Classroom",
-    )
-    subjects_parser.add_argument(
-        "--add",
-        metavar="NAME",
-        default=None,
-        help=(
-            "mint a course-like id for a subject that has no Classroom and never "
-            "will, and print the timetable.yaml line to paste"
-        ),
+        help="show each subject's identity, or where each one stands",
     )
     subjects_parser.add_argument(
         "--standing",
@@ -2111,7 +2042,7 @@ def cmd_projects(config: Config, args: argparse.Namespace) -> int:
         if args.subject is not None:
             try:
                 _, course_id = _subject_course(config, args.subject)
-            except (upload_mod.UploadError, timetable_mod.TimetableError) as err:
+            except (entries.SubjectError, timetable_mod.TimetableError) as err:
                 print(f"error: {err}", file=sys.stderr)
                 return 1
             courses = [course_id]
@@ -2168,7 +2099,7 @@ def _add_project(config: Config, args: argparse.Namespace) -> int:
                 coursework=args.coursework,
             ),
         )
-    except (upload_mod.UploadError, timetable_mod.TimetableError, ConfigError) as err:
+    except (entries.SubjectError, timetable_mod.TimetableError, ConfigError) as err:
         print(f"error: {err}", file=sys.stderr)
         return 1
 
@@ -2291,87 +2222,6 @@ def _close_project(config: Config, project_id: int) -> int:
     return 0
 
 
-def cmd_sessions(config: Config, args: argparse.Namespace) -> int:
-    """Log that a session happened, or show what has been logged.
-
-    The timetable says a session was SCHEDULED. This says one took place and
-    what was in it -- which is the fact no file can hold, because it is not
-    known until afterwards.
-    """
-    if args.subject is not None and (args.covered is not None or args.on is not None):
-        return _log_session(config, args)
-
-    conn = store.open_db(config)
-    try:
-        courses = None
-        if args.subject is not None:
-            try:
-                _, course_id = _subject_course(config, args.subject)
-            except (upload_mod.UploadError, timetable_mod.TimetableError) as err:
-                print(f"error: {err}", file=sys.stderr)
-                return 1
-            courses = [course_id]
-        rows = store.manual_sessions(conn, courses)
-    finally:
-        conn.close()
-
-    if not rows:
-        print("No sessions logged.")
-        print('  agent sessions --subject "Calculus III" --on 2026-09-21 \\')
-        print('                 --kind LEC --covered "Cauchy sequences"')
-        return 0
-
-    _print_table(
-        ["id", "held", "subject", "kind", "covered"],
-        [
-            [
-                str(row["id"]), row["held_on"],
-                str(row["course_name"] or row["course_id"]),
-                row["kind"], (row["covered"] or "")[:52],
-            ]
-            for row in rows
-        ],
-    )
-    return 0
-
-
-def _log_session(config: Config, args: argparse.Namespace) -> int:
-    try:
-        plan = entries.plan_session(
-            config,
-            timetable_mod.load(config.timetable_path),
-            entries.SessionSpec(
-                subject=args.subject,
-                kind=args.kind,
-                on=args.on,
-                covered=args.covered,
-            ),
-        )
-    except (upload_mod.UploadError, timetable_mod.TimetableError) as err:
-        print(f"error: {err}", file=sys.stderr)
-        return 1
-    except ConfigError as err:
-        print(err, file=sys.stderr)
-        return 1
-
-    print(f"  subject: {plan.subject}")
-    print(f"  held:    {plan.held_on}  {plan.kind}")
-    print(f"  covered: {plan.covered or '(not recorded)'}")
-
-    if args.dry_run:
-        print()
-        print("  dry run -- nothing written")
-        return 0
-
-    conn = store.open_db(config)
-    try:
-        session_id = entries.log_session(conn, plan)
-        conn.commit()
-    finally:
-        conn.close()
-    print()
-    print(f"  logged as session {session_id}.")
-    return 0
 
 
 # What a submission state says, in words. Classroom's own vocabulary is shouty
@@ -2448,7 +2298,7 @@ def cmd_tasks(config: Config, args: argparse.Namespace) -> int:
         if args.subject is not None:
             try:
                 _, course_id = _subject_course(config, args.subject)
-            except (upload_mod.UploadError, timetable_mod.TimetableError) as err:
+            except (entries.SubjectError, timetable_mod.TimetableError) as err:
                 print(f"error: {err}", file=sys.stderr)
                 return 1
             courses = [course_id]
@@ -2504,7 +2354,7 @@ def _add_task(config: Config, args: argparse.Namespace) -> int:
                 source=args.source,
             ),
         )
-    except (upload_mod.UploadError, timetable_mod.TimetableError, ConfigError) as err:
+    except (entries.SubjectError, timetable_mod.TimetableError, ConfigError) as err:
         print(f"error: {err}", file=sys.stderr)
         return 1
 
@@ -2562,62 +2412,6 @@ def _complete_task(config: Config, task_id: int) -> int:
     return 0
 
 
-def cmd_upload(config: Config, args: argparse.Namespace) -> int:
-    """Put a local file into a subject's library, one stage in."""
-    try:
-        table = timetable_mod.load(config.timetable_path)
-    except timetable_mod.TimetableError as err:
-        print(err, file=sys.stderr)
-        return 1
-
-    conn = store.open_db(config)
-    try:
-        try:
-            plan = upload_mod.prepare(
-                config, conn, table,
-                subject=args.subject, path=args.file,
-                title=args.title, posted=args.posted,
-            )
-        except upload_mod.UploadError as err:
-            print(f"error: {err}", file=sys.stderr)
-            return 1
-
-        print(f"  subject: {plan.subject} ({plan.course_name})")
-        print(f"  title:   {plan.title}")
-        print(f"  dated:   {plan.posted_at}")
-        print(f"  file:    {plan.file_id}  {plan.mime_type}  "
-              f"{plan.size_bytes / 1024:.0f} KB")
-
-        if plan.already_held:
-            # Keyed by content, so this is not a conflict -- it is the same
-            # file. Said plainly rather than written again.
-            print()
-            print("  already in the library: these exact bytes are already held")
-            print(f"  as {plan.file_id}. Nothing written.")
-            return 0
-
-        if args.dry_run:
-            print()
-            print(f"  would write: library/{plan.local_path}")
-            print("  dry run -- nothing written")
-            return 0
-
-        upload_mod.commit(config, conn, plan, args.file.read_bytes())
-        conn.commit()
-    finally:
-        conn.close()
-
-    print()
-    print(f"  wrote library/{plan.local_path} and a 'fetched' extraction row.")
-    print("  Download is the only stage an upload skips -- the rest of the")
-    print("  pipeline reads it exactly as it reads a lecture from Drive.")
-    print()
-    print("  Next: `agent run` picks it up at 07:30 and 19:30. To use it tonight:")
-    print("      agent extract")
-    print(f'      agent ocr --course "{plan.subject}"')
-    print("      agent studyitems")
-    return 0
-
 
 def _identity(course_id: str | None, tracked: set[str]) -> str:
     """How a subject is identified, in the words that say what to do about it."""
@@ -2635,9 +2429,6 @@ def cmd_subjects(config: Config, args: argparse.Namespace) -> int:
     except timetable_mod.TimetableError as err:
         print(err, file=sys.stderr)
         return 1
-
-    if args.add is not None:
-        return _add_manual_subject(config, table, args.add)
 
     if args.standing:
         return _print_standing(config, table)
@@ -2668,8 +2459,7 @@ def cmd_subjects(config: Config, args: argparse.Namespace) -> int:
     awaiting = table.subjects_awaiting_course()
     if awaiting:
         print(f"  {len(awaiting)} subject(s) await a Classroom course id.")
-        print("  Join the course, run `agent courses`, and paste the id in --")
-        print('  or, if there will never be one: agent subjects --add "<name>"')
+        print("  Join the course, run `agent courses`, and paste the id in.")
     return 0
 
 
@@ -2721,75 +2511,6 @@ def _print_standing(config: Config, table) -> int:
     print("  material would have to read as 0% or 100% and is neither.")
     return 0
 
-
-def _add_manual_subject(config: Config, table, name: str) -> int:
-    """Mint an identity for a subject with no Classroom, and say where to put it.
-
-    This never writes timetable.yaml. The file is the single source of truth
-    for the weekly pattern and Phase 3a settled that it keeps ONE writer -- me.
-    So the command does the half that needs the database and prints the half
-    that needs the file.
-    """
-    matches = [key for key in table.subjects if key.casefold() == name.casefold()]
-    if not matches:
-        known = ", ".join(sorted(table.subjects)) or "(none)"
-        print(
-            f"{name!r} is not a subject in {config.timetable_path.name}, and "
-            f"names are never matched approximately.\n  Known subjects: {known}",
-            file=sys.stderr,
-        )
-        return 1
-    subject = matches[0]
-    existing = table.subjects[subject]
-
-    if existing is not None and not manual.is_manual(existing):
-        print(
-            f"{subject!r} already maps to Classroom course {existing}. A subject "
-            f"has one identity; if that course is wrong, edit "
-            f"{config.timetable_path.name}.",
-            file=sys.stderr,
-        )
-        return 1
-
-    try:
-        course_id = manual.course_id(subject)
-    except manual.ManualIdError as err:
-        print(err, file=sys.stderr)
-        return 1
-
-    if existing is not None and existing != course_id:
-        print(
-            f"{subject!r} already maps to manual course {existing}, which is not "
-            f"the id this name mints ({course_id}). Leave the file as it is, or "
-            f"edit it by hand -- renaming a course id orphans its study items.",
-            file=sys.stderr,
-        )
-        return 1
-
-    conn = store.open_db(config)
-    try:
-        created = store.ensure_manual_course(conn, course_id, subject)
-        conn.commit()
-    finally:
-        conn.close()
-
-    print(f"  {'registered' if created else 'already registered'}: "
-          f"{course_id}  ({subject})")
-    print()
-    if existing == course_id:
-        print(f"  {config.timetable_path.name} already maps it. Nothing to paste.")
-        return 0
-
-    print(f"  Now paste this line into {config.timetable_path.name}, "
-          f"under `subjects:`:")
-    print()
-    print(f"      {subject}: {course_id}")
-    print()
-    print("  This command does not edit that file. The timetable is the one")
-    print("  source of truth for the weekly pattern, and it keeps one writer.")
-    print()
-    print("  Then: agent timetable --check")
-    return 0
 
 
 def cmd_timetable(config: Config, args: argparse.Namespace) -> int:
@@ -2974,7 +2695,7 @@ def _print_plan(plan: gate_scheduler.GatePlan) -> None:
             continue
         if not subject.has_items:
             note = (
-                "nothing entered yet"
+                "no Classroom, never gated"
                 if subject.manual
                 else f"no readable material ({subject.dead_files} dead attachment(s))"
             )
@@ -3877,11 +3598,9 @@ COMMANDS = {
     "packs": cmd_packs,
     "missing": cmd_missing,
     "studyitems": cmd_studyitems,
-    "upload": cmd_upload,
     "adjust": cmd_adjust,
     "backup": cmd_backup,
     "projects": cmd_projects,
-    "sessions": cmd_sessions,
     "tasks": cmd_tasks,
     "homework": cmd_homework,
     "subjects": cmd_subjects,
@@ -3935,7 +3654,7 @@ def main(argv: list[str] | None = None) -> int:
         SeedWouldBuryBacklog,
         ocr.OCRError,
         packs.PackError,
-        upload_mod.UploadError,
+        entries.SubjectError,
         backup.BackupError,
         llm_provider.LLMError,
         gate_adjust.AdjustmentError,

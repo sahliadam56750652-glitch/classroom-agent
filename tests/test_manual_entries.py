@@ -233,13 +233,6 @@ def test_the_scanner_still_has_no_last_scanned_state_anywhere():
 # entry
 # --------------------------------------------------------------------------
 
-def session_args(**kwargs):
-    return argparse.Namespace(**{
-        "subject": None, "on": None, "kind": "LEC", "covered": None,
-        "dry_run": False, **kwargs,
-    })
-
-
 def task_args(**kwargs):
     return argparse.Namespace(**{
         "subject": None, "title": None, "due": None, "kind": "tutorial",
@@ -252,35 +245,6 @@ def task_args(**kwargs):
 def wired(conn, monkeypatch):
     monkeypatch.setattr(store, "open_db", lambda _config: KeepOpen(conn))
     return conn
-
-
-def test_logging_a_session_records_what_was_covered(config, wired, capsys):
-    assert cli.cmd_sessions(config, session_args(
-        subject="Calculus III", on="2026-09-21", kind="TUT",
-        covered="Cauchy sequences, completeness",
-    )) == 0
-    assert "logged as session" in capsys.readouterr().out
-
-    row = store.manual_sessions(wired)[0]
-    assert (row["course_id"], row["held_on"], row["kind"]) == (MANUAL, "2026-09-21", "TUT")
-    assert row["covered"] == "Cauchy sequences, completeness"
-
-
-def test_listing_sessions_shows_them_newest_first(config, wired, capsys):
-    for day in ("2026-09-14", "2026-09-21"):
-        cli.cmd_sessions(config, session_args(
-            subject="Calculus III", on=day, covered=f"week of {day}"))
-    capsys.readouterr()
-
-    assert cli.cmd_sessions(config, session_args()) == 0
-    out = capsys.readouterr().out
-    assert out.index("2026-09-21") < out.index("2026-09-14")
-
-
-def test_a_session_for_an_unknown_subject_is_refused(config, wired, capsys):
-    assert cli.cmd_sessions(config, session_args(
-        subject="Calculus", on="2026-09-21", covered="x")) == 1
-    assert "never matched approximately" in capsys.readouterr().err
 
 
 def test_a_dated_task_is_due_at_end_of_day_locally(config, wired, capsys):
@@ -346,10 +310,7 @@ def test_marking_a_task_that_does_not_exist_is_an_error(config, wired, capsys):
 def test_dry_run_writes_nothing(config, wired, capsys):
     cli.cmd_tasks(config, task_args(
         subject="Calculus III", title="TD 3", due="2026-10-05", dry_run=True))
-    cli.cmd_sessions(config, session_args(
-        subject="Calculus III", on="2026-09-21", covered="x", dry_run=True))
     assert store.manual_tasks(wired) == []
-    assert store.manual_sessions(wired) == []
 
 
 # --------------------------------------------------------------------------

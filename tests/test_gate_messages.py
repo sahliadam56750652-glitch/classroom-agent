@@ -195,14 +195,16 @@ def test_a_manual_subject_with_nothing_entered_is_not_reported_as_missing():
     """The Phase 6.2 distinction, at the point I actually read it.
 
     "No readable material" is what Probability & Statistics says, and it means
-    20 attachments are gone from Drive. A manual subject with nothing uploaded
-    yet is not that: nothing is broken, and there is a thing to do about it.
+    20 attachments are gone from Drive. A subject with no Classroom is not that:
+    nothing is broken. Since manual logging was cancelled (2026-10-13) nothing
+    will be entered for it either, so it says what it is -- and must not read as
+    a subject still waiting for a course id, which is a gap that closes.
     """
     plan = build([subject("Calculus III", MANUAL, items=[], has_items=False)])
     text = messages.compose(plan)
-    assert "nothing entered yet" in text
+    assert "no Classroom, never gated" in text
     assert "no readable material" not in text
-    assert "no Classroom" not in text
+    assert "no Classroom course yet" not in text
 
 
 def test_a_manual_subject_with_a_backlog_reads_like_any_other():

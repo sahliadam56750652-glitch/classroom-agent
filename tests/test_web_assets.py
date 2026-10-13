@@ -683,3 +683,11 @@ def test_screens_read_the_snapshot_before_the_network():
             assert allowed, f"{module.name} reads {path} from the PC; read the snapshot (sync.js useLocal)"
             found.add(allowed[0])
     assert found, "the scan found nothing to check"
+
+
+def test_nothing_in_the_client_uploads():
+    """Manual logging -- uploads and session logs -- was cancelled on 2026-10-13."""
+    for module in list(WEB.glob("*.js")) + list(WEB.glob("screens/*.js")):
+        code = re.sub(r"//[^\n]*|/\*.*?\*/", "", module.read_text(encoding="utf-8"), flags=re.S)
+        for gone in ("/api/uploads", "/api/sessions", "/api/subjects/manual", "postForm(", 'type="file"'):
+            assert gone not in code, f"{module.name} still has {gone}"

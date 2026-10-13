@@ -311,16 +311,6 @@ class TaskOut(BaseModel):
     created_at: str
 
 
-class HeldSessionOut(BaseModel):
-    id: int
-    course_id: str
-    course_name: str = ""
-    held_on: str
-    kind: str
-    covered: str | None = None
-    created_at: str
-
-
 class PositionOut(BaseModel):
     """Where I stopped, or why that is no longer knowable.
 

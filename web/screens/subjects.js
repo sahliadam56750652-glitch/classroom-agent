@@ -35,7 +35,7 @@ import { navigate } from "/router.js";
 const SAYS = {
   awaiting_course: "no Classroom course yet, never gated",
   no_material_here: "mapped to a course with no material here",
-  nothing_entered: "nothing entered yet",
+  nothing_entered: "no Classroom, never gated",
   no_readable_material: "no readable material",
   up_to_date: "up to date",
   behind: null, // counted, not described

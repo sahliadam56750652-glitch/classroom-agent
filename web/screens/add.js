@@ -1,46 +1,23 @@
-// Everything entered by hand: an upload, a task, a session that happened, a
-// project.
+// Everything entered by hand: a task, a project.
 //
-// This is the screen Phase 6 exists for. A third of my week has no Classroom at
-// all -- Calculus III, Algebra III, Philosophy -- and a gate covering three
-// subjects out of twelve is a gate I stop believing. For those subjects a
-// photographed board is the main way material arrives, so the upload opens the
-// CAMERA in one tap, with the gallery and files as the second door.
+// Two forms, and that is deliberate. Uploads and session logging were cancelled
+// on 2026-10-13 with the rest of manual logging; tasks and projects stay, filed
+// under any subject -- including the four with no Classroom, through the
+// `manual-` ids they already have.
 //
 // One rule governs every form here: **a failure is visible and keeps what I
 // typed.** Nothing is optimistically shown as saved, and nothing is queued
 // silently. A task that looks recorded and is not is the silent-success failure
 // this project ranks worst, and it would be worst precisely here, where the row
-// exists nowhere else.
+// exists nowhere else. Creating needs the PC, and offline these say so.
 
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { Offline, api, describe } from "/api.js";
 import { syncNow, useLocal } from "/sync.js";
 import { Icon } from "/icons.js";
 import { ScreenHeader } from "/ui.js";
 import { subjectStyle } from "/subject-color.js";
-
-// The subject chosen last time, remembered on this device: a board is usually
-// photographed straight after the lecture it belongs to, so it is usually the
-// same subject twice in a row. A convenience, never state anything relies on.
-const LAST_SUBJECT = "lectern.add.subject";
-
-function remembered() {
-  try {
-    return localStorage.getItem(LAST_SUBJECT) || "";
-  } catch {
-    return "";
-  }
-}
-
-function remember(name) {
-  try {
-    localStorage.setItem(LAST_SUBJECT, name);
-  } catch {
-    // Not remembered; nothing else changes.
-  }
-}
 
 /** The subjects to file under, from the phone's snapshot. */
 function useSubjects() {
@@ -84,7 +61,7 @@ function Form({ id, title, note, children, onSubmit, submitLabel, ready = true, 
       // request timed out is how a feature stops being used.
       setProblem(
         err instanceof Offline
-          ? "No connection, so this was not recorded. Nothing has been lost; try again when you are back."
+          ? "The PC is not reachable, so this was not recorded. What you typed is still here; try again when the PC is on."
           : describe(err)
       );
     } finally {
@@ -106,94 +83,9 @@ function Form({ id, title, note, children, onSubmit, submitLabel, ready = true, 
   </section>`;
 }
 
-/**
- * The upload: the camera first, in one tap.
- *
- * Two real <input type=file>s behind two labels. `capture="environment"` on the
- * first opens the back camera directly on a phone -- the board, now -- and the
- * second has no capture, so it offers the gallery and files: the photo taken an
- * hour ago, a PDF someone sent. Both feed the same form.
- */
-function Upload({ subjects }) {
-  const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState("");
-  const [subject, setSubject] = useState(remembered());
-  const camera = useRef(null);
-  const gallery = useRef(null);
-
-  useEffect(() => {
-    if (!file || !file.type.startsWith("image/")) {
-      setPreview("");
-      return undefined;
-    }
-    const url = URL.createObjectURL(file);
-    setPreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
-
-  const picked = (event) => {
-    const found = event.target.files && event.target.files[0];
-    if (found) setFile(found);
-  };
-
-  return html`<${Form}
-    id="upload"
-    class="add-upload"
-    title="Upload a board or a handout"
-    note="A photographed board, a classmate's notes, an emailed handout. It is read, transcribed and quizzed like anything from Classroom."
-    submitLabel="Upload"
-    ready=${Boolean(file && subject)}
-    onSubmit=${async (data, form) => {
-      data.set("file", file);
-      data.set("subject", subject);
-      const body = await api.postForm("/api/uploads", data);
-      remember(subject);
-      setFile(null);
-      form.reset();
-      return `${body.title} is in ${body.course_name}. It is read at the next sync.`;
-    }}
-  >
-    <div class="pick">
-      <label class="button primary-button pick-camera">
-        <${Icon} name="camera" /> Photograph a board
-        <input
-          ref=${camera}
-          class="visually-hidden"
-          type="file"
-          accept="image/*"
-          capture="environment"
-          onChange=${picked}
-        />
-      </label>
-      <label class="button secondary-button pick-file">
-        <${Icon} name="image" /> Choose a photo or file
-        <input
-          ref=${gallery}
-          class="visually-hidden"
-          type="file"
-          accept="image/*,.pdf,.docx,.pptx,.txt,.md"
-          onChange=${picked}
-        />
-      </label>
-    </div>
-    ${file
-      ? html`<div class="picked">
-          ${preview ? html`<img class="picked-image" src=${preview} alt="The photo to upload" />` : null}
-          <span class="t-meta">${file.name}</span>
-        </div>`
-      : null}
-    <${SubjectChoice} subjects=${subjects} value=${subject} onChange=${setSubject} />
-    <label class="field">
-      <span>Title <span class="hint">optional, the file's own name otherwise</span></span>
-      <input type="text" name="title" />
-    </label>
-  </${Form}>`;
-}
-
 export function Add() {
   const subjects = useSubjects();
   const [taskSubject, setTaskSubject] = useState("");
-  const [sessionSubject, setSessionSubject] = useState("");
   const [projectSubject, setProjectSubject] = useState("");
 
   // /add#project, from Work's "New project": open on that form.
@@ -206,10 +98,8 @@ export function Add() {
 
   return html`<div class="screen add">
     <${ScreenHeader} title="Add">
-      What Classroom doesn't know about: a board, a task from class, a session, a project.
+      What Classroom doesn't know about: a task from class, or a project.
     </${ScreenHeader}>
-
-    <${Upload} subjects=${subjects} />
 
     <div class="add-grid">
       <${Form}
@@ -251,45 +141,6 @@ export function Add() {
             <input type="date" name="due" />
           </label>
         </div>
-      </${Form}>
-
-      <${Form}
-        id="session"
-        title="Log a session"
-        note="The timetable says a session was scheduled. This says one took place."
-        submitLabel="Log it"
-        ready=${Boolean(sessionSubject)}
-        onSubmit=${async (data, form) => {
-          const body = await api.post("/api/sessions", {
-            subject: sessionSubject,
-            kind: data.get("kind") || "LEC",
-            on: data.get("on") || null,
-            covered: data.get("covered") || null,
-          });
-          form.reset();
-          syncNow();
-          return `${body.course_name || body.course_id}, ${body.held_on}: logged.`;
-        }}
-      >
-        <${SubjectChoice} subjects=${subjects} value=${sessionSubject} onChange=${setSessionSubject} />
-        <div class="field-row">
-          <label class="field">
-            <span>Kind</span>
-            <select name="kind">
-              <option value="LEC">Lecture</option>
-              <option value="TUT">Tutorial</option>
-              <option value="LAB">Lab</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Held <span class="hint">today if empty</span></span>
-            <input type="date" name="on" />
-          </label>
-        </div>
-        <label class="field">
-          <span>Covered <span class="hint">optional</span></span>
-          <input type="text" name="covered" placeholder="Integration by parts" />
-        </label>
       </${Form}>
 
       <${Form}

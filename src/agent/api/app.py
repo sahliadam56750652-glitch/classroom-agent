@@ -71,9 +71,6 @@ WRITE_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/milestones/{milestone_id}/complete"),
         ("POST", "/api/tasks"),
         ("POST", "/api/tasks/{task_id}/complete"),
-        ("POST", "/api/sessions"),
-        ("POST", "/api/subjects/manual"),
-        ("POST", "/api/uploads"),
         # 5d: the gate's actions, in the browser. Read and Skip go through
         # gate/actions.py, the functions the bot's buttons call. The quiz routes
         # reach `verified` only through quiz.settle on an attempt rebuilt from

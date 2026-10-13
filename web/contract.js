@@ -9,7 +9,7 @@
 // `tests/test_web_assets.py` fails when this file is out of date, so a forgotten
 // regeneration is a red suite rather than a client that is quietly wrong.
 
-export const GENERATED_AT = "2026-10-13T17:17:13Z";
+export const GENERATED_AT = "2026-10-13T17:39:22Z";
 
 export const ROUTES = {
   "DELETE /api/adjustments/{adjustment_id}": "RecordedOut",
@@ -32,7 +32,6 @@ export const ROUTES = {
   "GET /api/projects/{project_id}": "ProjectOut",
   "GET /api/quiz-attempts/{attempt_id}": "QuizAttemptOut",
   "GET /api/quizzes": "QuizzesOut",
-  "GET /api/sessions": "HeldSessionOut",
   "GET /api/status": "StatusOut",
   "GET /api/study-items/{item_id}": "StudyItemOut",
   "GET /api/study-items/{item_id}/quiz": "QuizStatusOut",
@@ -52,16 +51,13 @@ export const ROUTES = {
   "POST /api/quiz-attempts/{attempt_id}/answers": "QuizAttemptOut",
   "POST /api/quiz-attempts/{attempt_id}/flags": "QuizAttemptOut",
   "POST /api/session": "SignInOut",
-  "POST /api/sessions": "HeldSessionOut",
   "POST /api/study-items/{item_id}/quiz": "QuizAttemptOut",
   "POST /api/study-items/{item_id}/quiz/request": "QuizStatusOut",
   "POST /api/study-items/{item_id}/read": "ItemActionOut",
   "POST /api/study-items/{item_id}/skip": "ItemActionOut",
-  "POST /api/subjects/manual": "ManualSubjectOut",
   "POST /api/tasks": "TaskOut",
   "POST /api/tasks/{task_id}/complete": "TaskOut",
   "POST /api/timetable/file": null,
-  "POST /api/uploads": null,
   "PUT /api/documents/{drive_id}/position": "PositionOut",
   "PUT /api/timetable/file": null
 };
@@ -99,12 +95,6 @@ export const MODELS = {
   "AnswerIn": [
     "choice",
     "index"
-  ],
-  "Body_upload_api_uploads_post": [
-    "file",
-    "posted",
-    "subject",
-    "title"
   ],
   "DayOut": [
     "date",
@@ -166,21 +156,6 @@ export const MODELS = {
   "HealthOut": [
     "ok"
   ],
-  "HeldSessionIn": [
-    "covered",
-    "kind",
-    "on",
-    "subject"
-  ],
-  "HeldSessionOut": [
-    "course_id",
-    "course_name",
-    "covered",
-    "created_at",
-    "held_on",
-    "id",
-    "kind"
-  ],
   "HomeworkOut": [
     "course_id",
     "course_name",
@@ -231,17 +206,6 @@ export const MODELS = {
     "study_item_state",
     "title",
     "unread"
-  ],
-  "ManualSubjectIn": [
-    "subject"
-  ],
-  "ManualSubjectOut": [
-    "already_mapped",
-    "course_id",
-    "created",
-    "note",
-    "paste",
-    "subject"
   ],
   "MilestoneIn": [
     "title"

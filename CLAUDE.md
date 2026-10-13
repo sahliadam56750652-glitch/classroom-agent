@@ -65,7 +65,7 @@ src/agent/
   classroom/   client.py  models.py
   db/          schema.sql  store.py
   sync/        poller.py  differ.py  deadlines.py
-  files/       drive.py  extract.py  packs.py  ocr.py  upload.py
+  files/       drive.py  extract.py  packs.py  ocr.py
   llm/         provider.py
   notify/      telegram.py  dispatch.py
   digest/      composer.py
@@ -155,15 +155,15 @@ decision in `PLAN.md`.
   Raising either limit is spending the other's allowance; the arithmetic is
   written out in `config.example.yaml` so that is a deliberate choice rather
   than a surprise.
-- **Everything entered by hand carries the `manual-` id prefix**, and that is
-  what makes it distinguishable from a Classroom row sitting in the same table.
-  `manual.py` owns the namespace and the minting; `agent upload` writes a post,
-  an attachment and a `fetched` extraction row -- exactly what `agent fetch`
-  would have left -- so **download is the only stage an upload skips.** The
-  prefix is enforced, not trusted: `courses.tracked` refuses one,
-  `soft_delete_missing` never stamps one, and `drive_references` never offers
-  one to Drive. That last pair matter because an upload may be FOR a tracked
-  subject, which puts a manual row inside a course the sync does reconcile.
+- **A subject with no Classroom keeps a `manual-` course id, as identity only.**
+  Manual LOGGING -- uploads, session logs, minting new manual subjects -- was
+  cancelled on 2026-10-13. The four existing ids stay because they are the only
+  thing a task or a project for Calculus III, Algebra III, Philosophy or
+  Communication can be filed against (`entries.subject_course`); those subjects
+  stay in `timetable.yaml` as never gated. The prefix is still enforced, not
+  trusted: `courses.tracked` refuses one, `soft_delete_missing` never stamps one,
+  and `drive_references` never offers one to Drive. `manual_sessions` stays as a
+  table, empty, still covered by `agent backup`.
 
 - **An adjustment names a session as (date, subject, start time)** -- how the
   printed timetable identifies one to a person. It survives the file's sessions

@@ -137,9 +137,11 @@ def _subject_line(subject: Subject) -> str:
         return f"{name} — mapped to a course with no material here"
 
     if state == "nothing_entered":
-        # Not "no readable material": nothing is missing, nothing is broken,
-        # and there is a thing to do about it.
-        return f"{name} — nothing entered yet"
+        # A subject with no Classroom. Since manual logging was cancelled
+        # (2026-10-13) nothing will ever be entered here, so it says what it is
+        # rather than implying a step is missing. The state's name is kept: it is
+        # stored nowhere, but every surface and test matches on it.
+        return f"{name} — no Classroom, never gated"
     if state == "no_readable_material":
         missing = (
             f" — {subject.dead_files} attachment(s) are gone from Drive"

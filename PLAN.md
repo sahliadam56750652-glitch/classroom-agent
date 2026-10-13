@@ -552,6 +552,14 @@ gate asks that evening with `timetable.yaml` untouched.
 - **5c — the PWA and the APK.** The client DESIGN.md is the brief for.
 - **5d — the gate's actions in the client.** Deliver, mark-read, skip and
   snooze, reached from the web client rather than only from Telegram.
+- **5e slice 2 complete (2026-10-13): manual logging removed, identity kept.**
+  Gone: `agent upload`, `agent sessions`, `agent subjects --add`,
+  `POST /api/uploads`, `GET`/`POST /api/sessions`, `POST /api/subjects/manual`,
+  `files/upload.py`, and the Add screen's upload and session forms. Kept: the
+  four `manual-` course rows and their guards, so a task or a project still files
+  under Calculus III (pinned by a test). `resolve_subject` moved into
+  `entries.py` as `subject_course`, raising `entries.SubjectError`. The
+  no-Classroom state now reads "no Classroom, never gated".
 - **5e — offline-first. Slice 1 complete (2026-10-13): the three blockers.**
   An app update can no longer delete kept documents (the `library` cache has
   no version in its name, and only old `shell-`/`api-` caches are ever
@@ -1420,6 +1428,16 @@ semester's scope.
   Telegram opens on the right action -- which would be two real doors, and is
   worth doing IF the bot learns to handle a start payload. That is 5d work either
   way.
+
+- **A NEW subject with no Classroom, next semester.** *Raised 2026-10-13 by
+  5e slice 2.* `agent subjects --add` was removed with manual logging, as the
+  approved plan said, and it was the only way to mint a `manual-` id. The four
+  existing ones cover this semester. A new no-Classroom subject in February would
+  have no identity, so no task or project could be filed under it.
+  **Recommendation:** when that happens, restore the minting command alone -- it
+  is identity, not logging, and it is one function in `manual.py` plus about
+  forty lines of `cli.py` from `git show f717205:src/agent/cli.py`. Not done now,
+  because nothing needs it yet and the plan said to remove it.
 
 - **A report on how often each session actually moves.** *Accepted, deferred
   to November.* The Phase 5 note above is the argument for it -- *"how often

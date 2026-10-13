@@ -322,7 +322,7 @@ def cli_config(tmp_path, conn, monkeypatch):
 def args(**kwargs):
     import argparse
 
-    return argparse.Namespace(**{"add": None, "standing": False, **kwargs})
+    return argparse.Namespace(**{"standing": False, **kwargs})
 
 
 def test_subjects_lists_each_identity_with_what_to_do_about_it(cli_config, capsys):
@@ -332,37 +332,7 @@ def test_subjects_lists_each_identity_with_what_to_do_about_it(cli_config, capsy
     out = capsys.readouterr().out
     assert "809686876412" in out and "tracked" in out
     assert "awaiting a Classroom id" in out
-    assert "agent subjects --add" in out
-
-
-def test_add_mints_registers_and_prints_the_line_to_paste(cli_config, conn, capsys):
-    """It does the half that needs the database and prints the half that needs
-    the file. The timetable keeps one writer -- me."""
-    from agent import cli
-
-    before = cli_config.timetable_path.read_text(encoding="utf-8")
-    assert cli.cmd_subjects(cli_config, args(add="Calculus III")) == 0
-
-    out = capsys.readouterr().out
-    assert "manual-calculus-iii" in out
-    assert "Calculus III: manual-calculus-iii" in out
-    assert store.get_course(conn, "manual-calculus-iii") is not None
-    # And it did NOT touch the file.
-    assert cli_config.timetable_path.read_text(encoding="utf-8") == before
-
-
-def test_add_is_case_insensitive_but_never_approximate(cli_config, capsys):
-    from agent import cli
-
-    assert cli.cmd_subjects(cli_config, args(add="calculus iii")) == 0
-    assert cli.cmd_subjects(cli_config, args(add="Calculus")) == 1
-    err = capsys.readouterr().err
-    assert "never matched approximately" in err
-    assert "Known subjects" in err
-
-
-def test_add_refuses_a_subject_that_already_has_a_classroom_course(cli_config, capsys):
-    from agent import cli
-
-    assert cli.cmd_subjects(cli_config, args(add="UNIX")) == 1
-    assert "already maps to Classroom course" in capsys.readouterr().err
+    # Minting was removed with manual logging (2026-10-13); the way to close
+    # the gap is a Classroom id, and the listing says so.
+    assert "agent subjects --add" not in out
+    assert "agent courses" in out

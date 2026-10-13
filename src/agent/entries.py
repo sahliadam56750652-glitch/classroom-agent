@@ -34,7 +34,6 @@ from typing import Any
 from .classroom.models import ISO_FORMAT
 from .config import Config, ConfigError, display_zone
 from .db import store
-from .files import upload as upload_mod
 from .gate.timetable import Timetable
 
 # ----------------------------------------------------------------------------
@@ -102,6 +101,10 @@ def joined(values: list[str] | None) -> str | None:
     return "\n".join(values) if values else None
 
 
+class SubjectError(ValueError):
+    """A subject name that cannot be filed under. The message says what to do."""
+
+
 def subject_course(table: Timetable, name: str) -> tuple[str, str]:
     """(subject, course id) for a name. Exact, and it says what to do if not.
 
@@ -111,10 +114,31 @@ def subject_course(table: Timetable, name: str) -> tuple[str, str]:
     feature working.
 
     Takes a loaded table rather than a Config so that a caller holding one does
-    not re-read the file per entry. `upload.resolve_subject` is still the single
-    implementation of the refusal.
+    not re-read the file per entry.
+
+    A subject with no Classroom keeps the `manual-` id it was minted under: that
+    id is what a task or a project for Calculus III is filed against, and the
+    only identity such a subject has. Manual LOGGING -- uploads, sessions -- was
+    cancelled on 2026-10-13; manual IDENTITY was kept for exactly this.
     """
-    return upload_mod.resolve_subject(table, name)
+    matches = [key for key in table.subjects if key.casefold() == str(name).casefold()]
+    if not matches:
+        known = ", ".join(sorted(table.subjects)) or "(none)"
+        raise SubjectError(
+            f"{name!r} is not a subject in {table.path.name}, and names are "
+            f"never matched approximately -- a wrong match files work under "
+            f"the wrong subject and looks exactly like this working.\n"
+            f"  Known subjects: {known}"
+        )
+    subject = matches[0]
+    course_id = table.subjects[subject]
+    if course_id is None:
+        raise SubjectError(
+            f"{subject!r} has no course id yet, so there is nothing to file this "
+            f"under. Join its Classroom, run `agent courses`, and paste the id "
+            f"into {table.path.name}."
+        )
+    return subject, course_id
 
 
 # ----------------------------------------------------------------------------
@@ -317,55 +341,6 @@ def complete_task(conn: sqlite3.Connection, task_id: int) -> Outcome:
         return Outcome("already", row)
     store.complete_manual_task(conn, task_id)
     return Outcome("done", row)
-
-
-# ----------------------------------------------------------------------------
-# sessions held
-# ----------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class SessionSpec:
-    subject: str
-    kind: str
-    on: str | None = None
-    covered: str | None = None
-
-
-@dataclass(frozen=True)
-class SessionPlan:
-    subject: str
-    course_id: str
-    held_on: str
-    kind: str
-    covered: str | None
-
-
-def plan_session(config: Config, table: Timetable, spec: SessionSpec) -> SessionPlan:
-    """The timetable says a session was SCHEDULED; this says one took place."""
-    subject, course_id = subject_course(table, spec.subject)
-    held_on = (
-        today(config).isoformat()
-        if spec.on is None
-        else parse_date(spec.on, "--on").isoformat()
-    )
-    return SessionPlan(
-        subject=subject,
-        course_id=course_id,
-        held_on=held_on,
-        kind=spec.kind,
-        covered=spec.covered,
-    )
-
-
-def log_session(conn: sqlite3.Connection, plan: SessionPlan) -> int:
-    return store.log_manual_session(
-        conn,
-        course_id=plan.course_id,
-        held_on=plan.held_on,
-        kind=plan.kind,
-        covered=plan.covered,
-    )
 
 
 # ----------------------------------------------------------------------------

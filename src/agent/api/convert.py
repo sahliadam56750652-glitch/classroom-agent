@@ -274,13 +274,3 @@ def task(row: sqlite3.Row) -> schemas.TaskOut:
     )
 
 
-def held_session(row: sqlite3.Row) -> schemas.HeldSessionOut:
-    return schemas.HeldSessionOut(
-        id=int(row["id"]),
-        course_id=str(row["course_id"]),
-        course_name=str(row["course_name"] or "") if "course_name" in row.keys() else "",
-        held_on=str(row["held_on"]),
-        kind=str(row["kind"]),
-        covered=row["covered"],
-        created_at=str(row["created_at"]),
-    )

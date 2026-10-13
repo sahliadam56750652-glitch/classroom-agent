@@ -15,7 +15,6 @@ over HTTP, which is only true because slice 0 made them exceptions instead of
 
 from __future__ import annotations
 
-import io
 
 import pytest
 from api_fixtures import COURSE, MANUAL, client, make_config, seed
@@ -32,15 +31,6 @@ def config(tmp_path):
     made = make_config(tmp_path)
     seed(made)
     return made
-
-
-# A one-page PDF, small enough to inline and real enough to sniff.
-PDF = (
-    b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
-    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
-    b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\n"
-    b"trailer<</Root 1 0 R>>\n%%EOF\n"
-)
 
 
 # ---------------------------------------------------------------------------
@@ -104,17 +94,6 @@ def test_no_write_route_reaches_verified_without_a_passed_quiz(config, monkeypat
         ),
         ("POST", "/api/tasks/{task_id}/complete"): lambda: session.post(
             "/api/tasks/1/complete"
-        ),
-        ("POST", "/api/sessions"): lambda: session.post(
-            "/api/sessions", json={"subject": "Database", "kind": "LEC", "on": MONDAY}
-        ),
-        ("POST", "/api/subjects/manual"): lambda: session.post(
-            "/api/subjects/manual", json={"subject": "Calculus III"}
-        ),
-        ("POST", "/api/uploads"): lambda: session.post(
-            "/api/uploads",
-            files={"file": ("board.pdf", io.BytesIO(PDF), "application/pdf")},
-            data={"subject": "Database"},
         ),
         ("POST", "/api/study-items/{item_id}/read"): lambda: session.post(
             "/api/study-items/1/read"
@@ -391,7 +370,7 @@ def test_a_closed_project_stops_being_chased(config, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# tasks and sessions
+# tasks
 # ---------------------------------------------------------------------------
 
 
@@ -438,190 +417,16 @@ def test_an_undated_task_is_recorded_and_visible_on_tasks(config, monkeypatch):
     assert session.get("/api/deadlines").json() == []
 
 
-def test_a_held_session_is_logged_with_what_was_covered(config, monkeypatch):
-    session = client(config, monkeypatch)
-    response = session.post(
-        "/api/sessions",
-        json={"subject": "Calculus III", "kind": "TUT", "on": MONDAY,
-              "covered": "integration by parts"},
-    )
-
-    assert response.status_code == 201
-    assert response.json()["covered"] == "integration by parts"
-    assert len(session.get("/api/sessions").json()) == 1
-
-
 def test_a_subject_not_in_the_file_is_refused_for_every_entry(config, monkeypatch):
     """One resolution, one refusal, everywhere."""
     session = client(config, monkeypatch)
     for path, payload in (
         ("/api/tasks", {"subject": "Nope", "title": "x"}),
-        ("/api/sessions", {"subject": "Nope", "kind": "LEC"}),
         ("/api/projects", {"subject": "Nope", "title": "x"}),
     ):
         response = session.post(path, json=payload)
         assert response.status_code == 400, path
         assert "Nope" in response.text
-
-
-# ---------------------------------------------------------------------------
-# manual subjects
-# ---------------------------------------------------------------------------
-
-
-def test_minting_a_manual_subject_returns_the_line_to_paste(config, monkeypatch):
-    """It does the database half and hands back the half that needs the file."""
-    session = client(config, monkeypatch)
-    body = session.post(
-        "/api/subjects/manual", json={"subject": "Calculus III"}
-    ).json()
-
-    assert body["course_id"] == MANUAL
-    assert body["paste"].strip() == f"Calculus III: {MANUAL}"
-
-
-def test_a_subject_with_a_classroom_course_cannot_be_made_manual(config, monkeypatch):
-    """A subject has one identity."""
-    session = client(config, monkeypatch)
-    response = session.post("/api/subjects/manual", json={"subject": "Database"})
-
-    assert response.status_code == 409
-    assert "one identity" in response.text
-
-
-# ---------------------------------------------------------------------------
-# uploads
-# ---------------------------------------------------------------------------
-
-
-def test_an_upload_writes_the_three_rows_fetch_would_have(config, monkeypatch):
-    """Download is the only stage an upload skips."""
-    session = client(config, monkeypatch)
-    response = session.post(
-        "/api/uploads",
-        files={"file": ("board.pdf", io.BytesIO(PDF), "application/pdf")},
-        data={"subject": "Database", "title": "Tuesday's board"},
-    )
-
-    assert response.status_code == 201
-    body = response.json()
-    assert body["written"] is True
-    assert body["drive_id"].startswith("manual-")
-
-    conn = store.connect(config.db_path)
-    assert store.get_extraction(conn, body["drive_id"]) is not None
-    post = conn.execute(
-        "SELECT title FROM coursework_materials WHERE id = ?", (body["post_id"],)
-    ).fetchone()
-    conn.close()
-    assert post["title"] == "Tuesday's board"
-
-
-def test_an_uploaded_file_lands_in_the_library(config, monkeypatch):
-    session = client(config, monkeypatch)
-    body = session.post(
-        "/api/uploads",
-        files={"file": ("board.pdf", io.BytesIO(PDF), "application/pdf")},
-        data={"subject": "Database"},
-    ).json()
-
-    conn = store.connect(config.db_path)
-    row = store.get_extraction(conn, body["drive_id"])
-    conn.close()
-    assert (config.library_dir / str(row["local_path"])).read_bytes() == PDF
-
-
-def test_an_upload_dry_run_resolves_everything_and_writes_nothing(config, monkeypatch):
-    """The same resolution and the same refusals, which is what makes it useful."""
-    session = client(config, monkeypatch)
-    body = session.post(
-        "/api/uploads",
-        params={"dry_run": "true"},
-        files={"file": ("board.pdf", io.BytesIO(PDF), "application/pdf")},
-        data={"subject": "Database"},
-    ).json()
-
-    assert body["written"] is False
-    assert body["course_id"] == COURSE
-
-    conn = store.connect(config.db_path)
-    assert store.count_rows(conn, "extractions") == 0
-    conn.close()
-
-
-def test_a_renamed_file_is_refused_because_renaming_is_not_converting(
-    config, monkeypatch
-):
-    """Said here, where the answer is known -- not three stages later."""
-    session = client(config, monkeypatch)
-    response = session.post(
-        "/api/uploads",
-        files={"file": ("board.pdf", io.BytesIO(b"not a pdf at all"), "application/pdf")},
-        data={"subject": "Database"},
-    )
-
-    assert response.status_code == 400
-    assert "does not convert it" in response.text
-
-
-def test_an_unsupported_format_names_what_is_accepted(config, monkeypatch):
-    session = client(config, monkeypatch)
-    response = session.post(
-        "/api/uploads",
-        files={"file": ("notes.xyz", io.BytesIO(b"whatever"), "application/octet-stream")},
-        data={"subject": "Database"},
-    )
-
-    assert response.status_code == 400
-    assert ".pdf" in response.text
-
-
-def test_an_empty_file_is_refused(config, monkeypatch):
-    session = client(config, monkeypatch)
-    response = session.post(
-        "/api/uploads",
-        files={"file": ("board.pdf", io.BytesIO(b""), "application/pdf")},
-        data={"subject": "Database"},
-    )
-
-    assert response.status_code == 400
-
-
-def test_nothing_is_left_in_the_spool_directory(config, monkeypatch):
-    """Under DATA_DIR, per invariant 5, and cleaned up on every path."""
-    session = client(config, monkeypatch)
-    session.post(
-        "/api/uploads",
-        files={"file": ("board.pdf", io.BytesIO(PDF), "application/pdf")},
-        data={"subject": "Database"},
-    )
-    session.post(
-        "/api/uploads",
-        files={"file": ("bad.pdf", io.BytesIO(b"nope"), "application/pdf")},
-        data={"subject": "Database"},
-    )
-
-    spool = config.data_dir / "tmp"
-    assert not spool.exists() or not list(spool.iterdir())
-
-
-def test_an_upload_for_a_tracked_subject_is_still_a_manual_row(config, monkeypatch):
-    """The case the prefix guards exist for: a manual row inside a course the
-    sync does reconcile."""
-    session = client(config, monkeypatch)
-    body = session.post(
-        "/api/uploads",
-        files={"file": ("board.pdf", io.BytesIO(PDF), "application/pdf")},
-        data={"subject": "Database"},
-    ).json()
-
-    assert body["course_id"] == COURSE
-    assert body["post_id"].startswith("manual-")
-
-    conn = store.connect(config.db_path)
-    stamped = store.soft_delete_missing(conn, "coursework_materials", COURSE, [])
-    conn.close()
-    assert body["post_id"] not in stamped
 
 
 # ---------------------------------------------------------------------------
@@ -660,3 +465,28 @@ def test_a_read_from_another_origin_is_fine(tmp_path, monkeypatch):
 
     response = session.get("/api/subjects", headers={"Origin": "https://evil.example"})
     assert response.status_code == 200
+
+
+def test_a_subject_with_no_classroom_still_takes_tasks_and_projects(config, monkeypatch):
+    """Manual LOGGING went on 2026-10-13; manual IDENTITY stayed for this.
+
+    Calculus III has no Classroom. Its `manual-` id is the only thing a task or a
+    project for it can be filed against.
+    """
+    session = client(config, monkeypatch)
+    task = session.post(
+        "/api/tasks", json={"subject": "Calculus III", "title": "TD 4", "due": "2026-12-01"}
+    )
+    assert task.status_code == 201, task.text
+    assert task.json()["course_id"] == MANUAL
+    project = session.post(
+        "/api/projects", json={"subject": "Calculus III", "title": "Series", "milestones": ["one"]}
+    )
+    assert project.status_code == 201, project.text
+    assert project.json()["course_id"] == MANUAL
+
+
+def test_the_removed_entry_routes_are_gone(config, monkeypatch):
+    session = client(config, monkeypatch)
+    for path in ("/api/uploads", "/api/sessions", "/api/subjects/manual"):
+        assert session.post(path, json={}).status_code in (404, 405), path

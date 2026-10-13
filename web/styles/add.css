@@ -1,8 +1,4 @@
-/*
-  Add: four forms as sheets. The upload is first and widest, because for the
-  subjects with no Classroom a photographed board is how material arrives; its
-  first button opens the camera.
-*/
+/* Add: a task and a project, as two sheets side by side on a wide screen. */
 
 .add-card {
   padding: var(--s5);
@@ -12,11 +8,6 @@
   gap: var(--s4);
 }
 
-.add-upload {
-  background: var(--raised);
-  border-radius: var(--r-hero);
-}
-
 .add-grid {
   display: grid;
   gap: var(--s4);
@@ -24,48 +15,9 @@
 
 @media (min-width: 1024px) {
   .add-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
   }
-}
-
-/* The two doors: camera first, the gallery and files second. */
-.pick {
-  display: grid;
-  gap: var(--s3);
-}
-
-@media (min-width: 560px) {
-  .pick {
-    grid-template-columns: repeat(2, max-content);
-  }
-}
-
-.pick .button {
-  min-height: 56px;
-  position: relative;
-  white-space: nowrap;
-}
-
-.pick .button svg {
-  width: 22px;
-  height: 22px;
-}
-
-.picked {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s2);
-}
-
-.picked-image {
-  display: block;
-  max-width: 100%;
-  max-height: 240px;
-  object-fit: contain;
-  border: 1px solid var(--line);
-  border-radius: var(--r-card);
-  background: var(--card);
 }
 
 .subject-choice {

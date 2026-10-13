@@ -19,7 +19,7 @@
 // edited by hand: the shell is served cache-first, so a changed file reaches an
 // installed app ONLY when this changes, and a forgotten bump looks exactly like
 // a fix that did not work. A test fails when it is stale.
-const VERSION = "07b8450752f5";
+const VERSION = "cb1483ad52b5";
 const SHELL = `shell-${VERSION}`;
 
 // The documents' cache. Its name carries NO version, on purpose: every cache

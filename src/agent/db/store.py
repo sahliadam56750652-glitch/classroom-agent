@@ -2153,6 +2153,9 @@ def mark_notified(
 # None of these rows can be rebuilt by re-syncing. See the note at the top of
 # the Phase 6 section in schema.sql, and `agent backup`.
 
+# Kept for the table that stays: `manual_sessions` rows written before manual
+# logging was cancelled (2026-10-13) are still backed up and restored. Nothing
+# writes new ones -- `agent sessions` and POST /api/sessions are gone.
 def log_manual_session(
     conn: sqlite3.Connection,
     *,
