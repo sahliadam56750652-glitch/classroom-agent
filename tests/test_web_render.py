@@ -1388,3 +1388,33 @@ def test_a_refused_write_stays_with_its_reason_until_discarded(served, tmp_path_
         conn.execute("DELETE FROM client_ops")
         conn.commit()
         conn.close()
+
+
+@chrome_only
+def test_the_offline_edges_say_what_they_are(served, tmp_path_factory):
+    """With the PC unreachable: a date past the phone's week of plans says so and
+    never shows an old item; a quiz says it waits for the PC; and Status names
+    the address the phone's copy is filed under (docs/phone.md)."""
+    from datetime import date, timedelta
+
+    base, _ = served
+    far = (date.today() + timedelta(days=30)).isoformat()
+    steps = _REPORT + _OUTBOX + """
+      const w = f.contentWindow;
+      await sleep(1200);
+      w.fetch = () => Promise.reject(new TypeError('the PC is off'));
+      await go(w, '/?date=__FAR__');
+      const today = d().body.innerText;
+      await go(w, '/quiz/__ITEM__');
+      const quiz = d().body.innerText;
+      await go(w, '/status');
+      const status = d().body.innerText;
+      report({ noPlan: today.includes('No plan for this date on the phone'),
+               oldItem: today.includes("I've read it"),
+               quiz: quiz.includes('Quizzes are graded on your PC'),
+               origin: status.includes('This copy belongs to ' + w.location.origin) });
+    """.replace("__FAR__", far).replace("__ITEM__", str(QUIZ_ITEM))
+    found = _probed(render(base, tmp_path_factory.mktemp("edges"), path="/", steps=steps, real_clock=True))
+    assert found["noPlan"] and not found["oldItem"], found
+    assert found["quiz"], found
+    assert found["origin"], found

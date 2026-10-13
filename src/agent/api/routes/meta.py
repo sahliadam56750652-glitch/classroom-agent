@@ -71,6 +71,8 @@ def sign_in(
     bit.
     """
     limiter = request.app.state.limiter
+    # Behind `tailscale serve` every request arrives from 127.0.0.1, so this is
+    # one bucket for everyone. With one user that is the right bucket anyway.
     client = request.client.host if request.client else "unknown"
     try:
         session_id = api_auth.exchange(

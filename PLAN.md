@@ -552,6 +552,35 @@ gate asks that evening with `timetable.yaml` untouched.
 - **5c — the PWA and the APK.** The client DESIGN.md is the brief for.
 - **5d — the gate's actions in the client.** Deliver, mark-read, skip and
   snooze, reached from the web client rather than only from Telegram.
+- **5e slice 6 complete (2026-10-13): the origin is pinned, and the offline
+  edges say what they are.** `docs/phone.md` is the runbook: Tailscale on the
+  PC, `tailscale serve --bg http://127.0.0.1:8000`, `api.origin`, the missing
+  Startup launcher for `agent serve`, LibreOffice, and the phone checks.
+  Status names the address the phone's copy is filed under. CLAUDE.md's
+  scheduling section now says what a PC that was off does to each entry -- the
+  old line "a missed 20:00 sends nothing late" was wrong: both tasks have "run
+  as soon as possible after a missed start" on. A render test covers a date
+  past the phone's week of plans, a quiz with the PC off, and the address.
+
+  **Settled 2026-10-13: the Tailscale address is the phone's storage identity
+  and never changes.** Android files the installed app's snapshot, documents
+  and outbox under the exact origin, `https://<machine>.<tailnet>.ts.net`. Rename
+  the machine or the tailnet, or turn MagicDNS off, and the app at the new
+  address is a different site: it starts empty, and the old copy -- including
+  writes still waiting in its outbox -- is stranded behind a name that no longer
+  resolves. So the machine name is chosen once (`lectern`), key expiry is off,
+  and `api.origin` records the address. *Recovery, if it changes anyway:* keep
+  the old app installed and its site data uncleared; rename the machine (or
+  tailnet) back so the old address resolves, open the old app with the PC on,
+  and let its outbox send -- nothing is lost. Only if the old name cannot come
+  back: install from the new address and sync on Wi-Fi, which rebuilds the
+  snapshot and every document from the PC; what is lost is only what the old
+  copy had not sent, which its Status lists and which is redone by hand. Then
+  `api.origin` becomes the new address. The same steps are in `docs/phone.md`.
+
+  **Next, and it needs the phone: install and the persistent-storage check.**
+  Not started: Tailscale is not installed on the PC or the phone, LibreOffice
+  is not installed, and nothing has been rendered or measured.
 - **5e slice 5 complete (2026-10-13): the outbox.** Six writes about rows that
   already exist go through `web/outbox.js`, online or not: Read, Skip, a task
   or a milestone done, a timetable change, and where I stopped reading. Each is

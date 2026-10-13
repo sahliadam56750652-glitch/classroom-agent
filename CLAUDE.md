@@ -264,8 +264,27 @@ neither `agent bot` nor `agent serve` holds state a restart could lose.
 
 **That table is the whole of the deployment.** There is no server (Phase 5a was
 cancelled on 2026-10-13), so everything above runs only while this PC is on.
-`agent run` is catch-up safe, so a missed 07:30 is reported in full by the next
-run; `agent gate` deliberately is not, so a missed 20:00 sends nothing late.
+The phone reaches `agent serve` through `tailscale serve` (`docs/phone.md`),
+and its address is the phone's storage: it never changes.
+
+**When the PC was off.** Both Task Scheduler entries have "run as soon as
+possible after a scheduled start is missed" on (checked 2026-10-13):
+
+- `agent run` is catch-up safe, so a missed 07:30 is reported in full by the
+  run that starts at logon.
+- `agent gate` is not, and its late run is what the rule allows and no more. On
+  before midnight, the 20:00 prompt for tomorrow goes out late -- still useful.
+  On after midnight, "tomorrow" has moved: the late run sends the NEXT day's
+  prompt early, the 20:00 run that evening finds its `gate_runs` row and does
+  nothing, and the lecture of the day the PC was off never had a prompt. That
+  is the gate's deliberate non-catch-up, not a bug to fix.
+- The phone covers the gap: Today comes from the week of plans in its snapshot,
+  so the next item is there without the bot. Read and Skip wait in its outbox.
+- Telegram holds a tapped button for about 24 hours. Taps made while the PC was
+  off are answered when `agent bot` starts; older ones are lost.
+- Deadline alerts (T-72/24/3) go out only while the PC is on; the scanner sends
+  only the most urgent threshold it missed. The phone shows every deadline
+  regardless.
 
 The quiz has no entry of its own. It is sat from a button -- in Telegram or in
 the web app, one open attempt per item shared by both -- and its questions are

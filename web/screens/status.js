@@ -103,6 +103,10 @@ function ThisPhone() {
           : null}
       </ul>
       <p class="t-state">${kept}</p>
+      <p class="t-meta status-origin">
+        This copy belongs to <span class="status-address">${location.origin}</span>. Opened from
+        any other address, the app starts empty, so that address never changes.
+      </p>
       ${docs.downloading ? html`<p class="t-meta">Downloading ${docs.downloading}…</p>` : null}
       ${docs.waitingForWifi
         ? html`<p class="t-meta">Documents wait for Wi-Fi. More can allow mobile data.</p>`

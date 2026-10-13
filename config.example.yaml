@@ -150,7 +150,8 @@ api:
   #
   # Leave it true. Chrome treats http://localhost as a trustworthy origin and
   # accepts a Secure cookie there, so the default works for `agent serve` on
-  # this laptop as well as behind Caddy on the box. This exists for the browser
+  # this laptop as well as behind `tailscale serve` (docs/phone.md). This exists
+  # for the browser
   # that disagrees: a cookie silently not set costs an afternoon to diagnose,
   # and that is worth one config key.
   secure_cookie: true
@@ -163,6 +164,8 @@ api:
   # with any other Origin did not come from the app. SameSite=Lax already blocks
   # the cross-site form post; this covers what it does not.
   #
-  # Unset means the check is off, which is right on a laptop where there is no
-  # public origin to compare against yet. Set it at the 5a cutover.
-  # origin: https://classroom.example.org
+  # Set it to the Tailscale address the phone uses (docs/phone.md). That address
+  # is also the phone's STORAGE: Android files the app's copy under it, so it
+  # must never change -- see "The one rule" in docs/phone.md. Unset means the
+  # check is off.
+  # origin: https://lectern.tailXXXX.ts.net

@@ -24,3 +24,12 @@
 .status-card .card-body {
   gap: var(--s3);
 }
+
+/* The address the phone's copy is filed under (docs/phone.md). Long, and
+   allowed to break anywhere rather than push the card wider than a phone. */
+.status-address {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
