@@ -17,12 +17,21 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
-import { api, describe } from "/api.js";
+import { Offline, api, describe } from "/api.js";
 import { syncNow, useLocal } from "/sync.js";
+import { send, useOutbox, waitingFor } from "/outbox.js";
 import { hasPassed, plural } from "/format.js";
 import { Icon } from "/icons.js";
 import { linkProps } from "/router.js";
-import { Card, Chip, Empty, NotSynced, Problem, ScreenHeader, Skeleton, useSubjectNames } from "/ui.js";
+import { Card, Chip, Empty, NotSent, NotSynced, Problem, ScreenHeader, Skeleton, WaitingToSend, useSubjectNames } from "/ui.js";
+
+// Adding a milestone and closing a project are not queued: one creates a row,
+// the other ends one, and neither should look done when it is not (outbox.js).
+const NEEDS_PC = "The PC is not reachable, so this was not recorded. Try again when the PC is on.";
+
+function sayWhy(err) {
+  return err instanceof Offline ? NEEDS_PC : describe(err);
+}
 import { subjectStyle } from "/subject-color.js";
 
 const DAY = 86400000;
@@ -72,6 +81,7 @@ function groups(rows) {
 
 function Homework({ row, subject, onDone }) {
   const [busy, setBusy] = useState(false);
+  const waiting = row.kind === "task" ? waitingFor(`task:${row.id}`) : null;
   const passed = row.due_at && hasPassed(row.due_at) && !row.done;
   const what =
     row.kind === "classroom"
@@ -97,14 +107,16 @@ function Homework({ row, subject, onDone }) {
                 <${Icon} name="external" /> Open in Classroom
               </a>`
             : null}
-          ${row.kind === "task" && !row.done
+          ${waiting
+            ? html`<${WaitingToSend} entry=${waiting} />`
+            : row.kind === "task" && !row.done
             ? html`<button
                 class="button secondary-button"
                 type="button"
                 disabled=${busy}
                 onClick=${async () => {
                   setBusy(true);
-                  await onDone(row.id);
+                  await onDone(row);
                   setBusy(false);
                 }}
               >
@@ -144,14 +156,18 @@ export function Work() {
   const rows = homework.data;
   const projects = projectList.status === "loading" ? null : projectList.data || [];
   const [problem, setProblem] = useState("");
+  useOutbox();
 
   const subjectOf = (row) => names[row.course_id] || row.course_name;
 
-  async function done(taskId) {
+  async function done(row) {
     setProblem("");
     try {
-      await api.post(`/api/tasks/${taskId}/complete`);
-      await syncNow();
+      const outcome = await send({
+        kind: "task", method: "POST", path: `/api/tasks/${row.id}/complete`,
+        target: `task:${row.id}`, label: row.title,
+      });
+      if (outcome.sent) await syncNow();
     } catch (err) {
       setProblem(describe(err));
     }
@@ -165,6 +181,7 @@ export function Work() {
   return html`<div class="screen work">
     <${ScreenHeader} title="Work" />
     ${problem ? html`<${Problem}>${problem}</${Problem}>` : null}
+    <${NotSent} kinds=${["task", "milestone"]} />
     <div class="split">
       <section class="section" aria-labelledby="work-homework">
         <h2 class="section-title" id="work-homework">Homework</h2>
@@ -227,6 +244,7 @@ export function ProjectPage({ id }) {
   const [problem, setProblem] = useState("");
   const [adding, setAdding] = useState("");
   const [busy, setBusy] = useState(false);
+  useOutbox();
 
   async function act(work) {
     setBusy(true);
@@ -234,6 +252,21 @@ export function ProjectPage({ id }) {
     try {
       await work();
       await syncNow();
+    } catch (err) {
+      setProblem(sayWhy(err));
+    }
+    setBusy(false);
+  }
+
+  async function tick(step) {
+    setBusy(true);
+    setProblem("");
+    try {
+      const outcome = await send({
+        kind: "milestone", method: "POST", path: `/api/milestones/${step.id}/complete`,
+        target: `milestone:${step.id}`, label: step.title,
+      });
+      if (outcome.sent) await syncNow();
     } catch (err) {
       setProblem(describe(err));
     }
@@ -272,29 +305,32 @@ export function ProjectPage({ id }) {
     </header>
 
     ${problem ? html`<${Problem}>${problem}</${Problem}>` : null}
+    <${NotSent} kinds=${["milestone"]} />
 
     <div class="split">
       <section class="section" aria-labelledby="project-steps">
         <h2 class="section-title" id="project-steps">Milestones</h2>
         ${steps.length
           ? html`<ul class="checklist">
-              ${steps.map(
-                (step) => html`<li key=${step.id}>
+              ${steps.map((step) => {
+                const waiting = step.done_at ? null : waitingFor(`milestone:${step.id}`);
+                return html`<li key=${step.id}>
                   <button
                     class=${`check-row ${step.done_at ? "done" : ""}`}
                     type="button"
                     role="checkbox"
                     aria-checked=${step.done_at ? "true" : "false"}
-                    disabled=${busy || Boolean(step.done_at) || Boolean(project.closed_at)}
-                    onClick=${() => act(() => api.post(`/api/milestones/${step.id}/complete`))}
+                    disabled=${busy || Boolean(step.done_at) || Boolean(waiting) || Boolean(project.closed_at)}
+                    onClick=${() => tick(step)}
                   >
                     <span class="check-box" aria-hidden="true">
                       ${step.done_at ? html`<${Icon} name="check" />` : null}
                     </span>
                     <span class="check-title">${step.title}</span>
                   </button>
-                </li>`
-              )}
+                  ${waiting ? html`<${WaitingToSend} entry=${waiting} />` : null}
+                </li>`;
+              })}
             </ul>`
           : html`<${Empty} title="No milestones yet.">Progress is counted from them and nothing else.</${Empty}>`}
 

@@ -30,7 +30,6 @@ import { PastAttempt, Quiz, Quizzes } from "/screens/quiz.js";
 import { Icon } from "/icons.js";
 import { Brand } from "/ui.js";
 import { linkProps, match, navigate, useRoute } from "/router.js";
-import { flushWhenOnline } from "/queue.js";
 import { loadSnapshot, startSyncing, useSyncState } from "/sync.js";
 import { syncedLine } from "/synced.js";
 
@@ -390,9 +389,6 @@ if ("serviceWorker" in navigator) {
       .catch((err) => console.warn("[app] no service worker:", err));
   });
 }
-
-// Positions saved while offline go out when the connection returns.
-flushWhenOnline(api);
 
 const root = document.getElementById("app");
 // Cleared first. Preact's `render` APPENDS into a container holding children it

@@ -57,9 +57,10 @@ export function onSignedOut(listener) {
   return () => signedOutListeners.delete(listener);
 }
 
-async function request(method, path, { body, form, signal, probe } = {}) {
+async function request(method, path, { body, form, signal, probe, headers: extra } = {}) {
   const route = `${method} ${templateOf(path)}`;
-  const headers = {};
+  // `extra` carries the outbox's Idempotency-Key (outbox.js).
+  const headers = { ...(extra || {}) };
   if (body) headers["Content-Type"] = "application/json";
   // Tells the service worker this request must reach the server or fail. A
   // cached 200 for /api/status answers "was I signed in last time", which is

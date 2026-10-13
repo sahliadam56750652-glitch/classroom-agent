@@ -148,13 +148,40 @@ def now(
         subject=convert.subject(subject),
         item=convert.item(item),
         windows=_windows_for(conn, config, item, pages),
-        files=[
-            convert.document(found)
-            for found in store.study_item_files(
-                conn, item.entity_type, item.entity_id
-            )
-        ],
+        files=_files_of(conn, item),
+        after=_after(conn, plan),
     )
+
+
+# How many items follow the first. A week of answering Read with the PC off is
+# the case; more than this many in one evening is not.
+AFTER_MAX = 6
+
+
+def _files_of(conn, item) -> list[schemas.DocumentOut]:
+    return [
+        convert.document(found)
+        for found in store.study_item_files(conn, item.entity_type, item.entity_id)
+    ]
+
+
+def _after(conn, plan) -> list[schemas.AfterOut]:
+    """The items after the first, in the order the plan would serve them: the
+    rest of the first subject's, then the next subject's. See AfterOut."""
+    found: list[schemas.AfterOut] = []
+    for index, subject in enumerate(plan.actionable):
+        items = subject.items[1:] if index == 0 else subject.items
+        for item in items:
+            if len(found) >= AFTER_MAX:
+                return found
+            found.append(
+                schemas.AfterOut(
+                    subject=convert.subject(subject),
+                    item=convert.item(item),
+                    files=_files_of(conn, item),
+                )
+            )
+    return found
 
 
 @router.get("/gate", response_model=schemas.GateOut)

@@ -1008,3 +1008,18 @@ CREATE TABLE IF NOT EXISTS renderings (
     rendered_at   TEXT NOT NULL,
     error         TEXT
 );
+
+
+-- -------------------------------------------------------------- client_ops
+
+-- Writes the phone queued while the PC was off, by the key the phone gave
+-- them, with the answer the first one got (api/idempotency.py). A replay whose
+-- reply was lost is sent again; this is what makes it apply once. A queue's
+-- receipts, not a record: never backed up, and safe to empty.
+CREATE TABLE IF NOT EXISTS client_ops (
+    op_id      TEXT PRIMARY KEY,
+    route      TEXT NOT NULL,
+    status     INTEGER NOT NULL,
+    body       TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);

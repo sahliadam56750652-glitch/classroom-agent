@@ -33,8 +33,9 @@ import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { api, describe } from "/api.js";
 import { syncNow, useTimetable } from "/sync.js";
+import { send, useOutbox, waitingFor } from "/outbox.js";
 import { Icon } from "/icons.js";
-import { Chip, Empty, NotSynced, Problem, ScreenHeader, Skeleton } from "/ui.js";
+import { Chip, Empty, NotSent, NotSynced, Problem, ScreenHeader, Skeleton } from "/ui.js";
 import { subjectStyle } from "/subject-color.js";
 
 const WIDE = "(min-width: 1024px)";
@@ -167,9 +168,17 @@ function SessionMenu({ day, session, onRecord, onClose }) {
 
 // ---------------------------------------------------------------- one block
 
+/** The outbox's name for one session on one date: how an adjustment names it. */
+function sessionTarget(day, subject, start) {
+  return `session:${day}|${subject}|${start}`;
+}
+
 function Block({ day, session, departed, open, onOpen, onRecord, onClose, style }) {
   const names = subjectsOf(session);
   const label = `${names.join(" + ")}, ${kindWord(session)} ${session.start} to ${session.end}`;
+  // A change made with the PC off: shown as waiting, and not offered again
+  // until the PC has said yes or no to it.
+  const waiting = departed ? null : waitingFor(sessionTarget(day, names[0], session.start), ["adjustment"]);
   return html`<div
     class=${`tt-block ${departed ? "departed" : ""} ${open ? "open" : ""}`}
     style=${{ ...subjectStyle(names[0]), ...style }}
@@ -177,7 +186,7 @@ function Block({ day, session, departed, open, onOpen, onRecord, onClose, style 
     <button
       class="tt-block-button session-menu-button"
       type="button"
-      disabled=${departed}
+      disabled=${departed || Boolean(waiting)}
       aria-expanded=${open ? "true" : "false"}
       aria-label=${departed ? `${label}, ${session.note || "not taking place"}` : `${label}. Cancel or move`}
       onClick=${onOpen}
@@ -186,6 +195,11 @@ function Block({ day, session, departed, open, onOpen, onRecord, onClose, style 
       <span class="time tt-time">${`${session.start}–${session.end}`}</span>
       <span class="tt-where">${[kindWord(session), roomOf(session)].filter(Boolean).join(" · ")}</span>
       ${session.note ? html`<span class="tt-note">${session.note}</span>` : null}
+      ${waiting
+        ? html`<span class="tt-note tt-waiting">
+            ${waiting.body.kind === "cancelled" ? "Cancelled" : "Moved"}, waiting to send
+          </span>`
+        : null}
     </button>
     ${open
       ? html`<${SessionMenu} day=${day} session=${session} onRecord=${onRecord} onClose=${onClose} />`
@@ -336,6 +350,7 @@ export function Timetable() {
   const [live, setLive] = useState(null);
   const [problem, setProblem] = useState("");
   const [said, setSaid] = useState("");
+  useOutbox();
   const [chosen, setChosen] = useState(today);
   const [openKey, setOpenKey] = useState(null);
 
@@ -365,9 +380,20 @@ export function Timetable() {
     setSaid("");
     setOpenKey(null);
     try {
-      const done = await api.post("/api/adjustments", spec);
-      setSaid(saidBack(done, spec));
-      await syncNow();
+      const outcome = await send({
+        kind: "adjustment", method: "POST", path: "/api/adjustments", body: spec,
+        target: sessionTarget(spec.on, spec.subject, spec.at),
+        label: `${spec.subject}, ${spec.on} at ${spec.at}`,
+      });
+      if (outcome.sent) {
+        setSaid(saidBack(outcome.value, spec));
+        await syncNow();
+      } else {
+        setSaid(
+          `${spec.kind === "cancelled" ? "Cancelled" : "Moved"}: ${spec.subject} at ${spec.at}, waiting to send. ` +
+            "The PC records it, and moves the evening prompt if it needs to, once it is reachable."
+        );
+      }
     } catch (err) {
       setProblem(describe(err));
     }
@@ -405,6 +431,7 @@ export function Timetable() {
 
     ${said ? html`<p class="notice tt-said" role="status">${said}</p>` : null}
     ${problem ? html`<${Problem}>${problem}</${Problem}>` : null}
+    <${NotSent} kinds=${["adjustment"]} />
 
     ${!data
       ? html`<${NotSynced} reason="Only three weeks from this Monday are kept on the phone. Other weeks need the PC." />`

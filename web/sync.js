@@ -17,9 +17,11 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, describe, NotSignedIn, Offline } from "/api.js";
 import { getKey, setKey } from "/local.js";
+import { flush } from "/outbox.js";
 
 const RETRY_MS = 60 * 1000;
 const REFRESH_MS = 10 * 60 * 1000;
+const FLUSH_WAIT_MS = 2000;
 
 let snapshot = null;
 let loaded = null;
@@ -80,6 +82,17 @@ export function syncNow() {
   emit();
   inflight = (async () => {
     try {
+      // What I did while the PC was off goes first, so the snapshot that
+      // comes back already includes it. A write the PC refuses stays in the
+      // outbox; it never stops the sync. Nor does a phone slow to read its own
+      // storage: past FLUSH_WAIT_MS the snapshot is fetched anyway, and fetched
+      // again once the writes have landed.
+      const sending = flush();
+      const first = await Promise.race([
+        sending.then(() => true),
+        new Promise((resolve) => setTimeout(() => resolve(false), FLUSH_WAIT_MS)),
+      ]);
+      if (!first) sending.then((sent) => sent && setTimeout(syncNow, 0));
       const body = await api.get("/api/sync");
       if (!body || typeof body !== "object" || !body.entries) {
         throw new Error("the PC answered with something that is not a snapshot");

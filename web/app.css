@@ -885,6 +885,56 @@ button.plain {
   color: var(--ink);
 }
 
+/* ----------------------------------------------------------- the outbox
+   Phase 5e. A write waiting on the phone reads as waiting: the clock, in the
+   quiet ink, never the check that would say it is done. */
+
+.waiting {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.waiting svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+}
+
+.not-sent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.not-sent-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.not-sent-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.not-sent-row p {
+  margin: 0;
+}
+
+.not-sent-doors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
 /* ----------------------------------------------------------- empty state
    The mark, small, above one line that says what is true. */
 

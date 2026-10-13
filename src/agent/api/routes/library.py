@@ -28,6 +28,7 @@ from ...filenames import document_filename
 from ...gate import sections
 from .. import convert, files, schemas
 from ..convert import window as convert_window
+from ..idempotency import idempotent
 from ..deps import Conf, Db, MaybeTable, Session
 
 router = APIRouter()
@@ -412,8 +413,9 @@ def read_position(
 
 
 @router.put("/documents/{drive_id}/position", response_model=schemas.PositionOut)
+@idempotent()
 def set_read_position(
-    drive_id: str, body: PositionIn, conn: Db, config: Conf, session: Session
+    drive_id: str, body: PositionIn, request: Request, conn: Db, config: Conf, session: Session
 ) -> schemas.PositionOut:
     """Remember where I stopped. One row per document -- a cursor, not a history.
 

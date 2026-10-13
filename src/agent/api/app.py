@@ -136,7 +136,12 @@ def create_app(config: Config) -> FastAPI:
 
 
 def all_routes(app: FastAPI) -> set[tuple[str, str]]:
-    """Every (method, path) the app exposes, reads included.
+    """Every (method, path) the app exposes, reads included. See `endpoints`."""
+    return set(endpoints(app))
+
+
+def endpoints(app: FastAPI) -> dict[tuple[str, str], object]:
+    """Every (method, path) the app exposes, with the function that answers it.
 
     Walks nested routers rather than reading `app.routes` flat, because FastAPI
     1.7 keeps an included router wrapped -- `app.routes` holds one opaque entry
@@ -149,7 +154,7 @@ def all_routes(app: FastAPI) -> set[tuple[str, str]]:
     Written against both shapes, so a FastAPI that goes back to flattening does
     not silently empty the guard.
     """
-    found: set[tuple[str, str]] = set()
+    found: dict[tuple[str, str], object] = {}
 
     def walk(routes, prefix: str) -> None:
         for route in routes:
@@ -157,7 +162,7 @@ def all_routes(app: FastAPI) -> set[tuple[str, str]]:
             path = getattr(route, "path", None)
             if methods and path is not None:
                 for method in methods:
-                    found.add((method, prefix + path))
+                    found[(method, prefix + path)] = getattr(route, "endpoint", None)
                 continue
 
             # An included router: its prefix is on the include context, and its

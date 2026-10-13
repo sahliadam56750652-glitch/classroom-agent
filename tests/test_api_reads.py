@@ -93,6 +93,23 @@ def test_one_unreviewed_post_becomes_the_one_thing_to_do(config, monkeypatch):
     assert behind[0]["next_item"]["label"] == "Chapter 1, SQL joins"
 
 
+def test_the_plan_carries_what_follows_in_its_own_order(config, monkeypatch):
+    """Phase 5e: Read answered on the phone with the PC off must uncover the next
+    item, so the plan carries them -- in the scheduler's order, never another."""
+    first = add_post(config, post_id="p1", title="Chapter 1", posted="2026-09-01T09:00:00Z")
+    second = add_post(config, post_id="p2", title="Chapter 2", posted="2026-09-08T09:00:00Z")
+    third = add_post(config, post_id="p3", title="Chapter 3", posted="2026-09-15T09:00:00Z")
+    body = client(config, monkeypatch).get("/api/now", params={"date": MONDAY.isoformat()}).json()
+    assert body["item"]["item_id"] == first
+    assert [row["item"]["item_id"] for row in body["after"]] == [second, third]
+    assert body["after"][0]["subject"]["name"] == "Database"
+
+
+def test_nothing_waiting_has_nothing_after(config, monkeypatch):
+    body = client(config, monkeypatch).get("/api/now", params={"date": MONDAY.isoformat()}).json()
+    assert body["after"] == []
+
+
 def test_the_deficit_is_one_line_and_names_an_action(config, monkeypatch):
     """DESIGN.md rule 1: no number without an action next to it."""
     add_post(config)

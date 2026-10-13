@@ -362,16 +362,61 @@ def test_documents_are_never_cached_as_a_side_effect():
     assert "cache.add" not in handler
 
 
-def test_only_positions_are_queued_offline():
-    """Everything else fails visibly.
+# What the phone may queue with the PC off (web/outbox.js): writes about a row
+# that already exists. Creating a task or a project is not here -- a task that
+# looks recorded and is not is the silent-success failure this project ranks
+# worst, so creation needs the PC and says so.
+QUEUED = {
+    ("POST", "/api/study-items/{item_id}/read"),
+    ("POST", "/api/study-items/{item_id}/skip"),
+    ("POST", "/api/tasks/{task_id}/complete"),
+    ("POST", "/api/milestones/{milestone_id}/complete"),
+    ("POST", "/api/adjustments"),
+    ("PUT", "/api/documents/{drive_id}/position"),
+}
 
-    A task that looks recorded and is not is the silent-success failure this
-    project ranks worst, so the queue is deliberately narrow.
-    """
-    body = (WEB / "queue.js").read_text(encoding="utf-8")
-    assert "position" in body.lower()
-    for forbidden in ("/api/tasks", "/api/projects", "/api/uploads", "/api/adjustments"):
-        assert forbidden not in body, forbidden
+
+def _shape(path: str) -> str:
+    """Placeholders of either language as one mark: `${x}` and `{x}` -> `*`."""
+    path = re.sub(r"\$\{[^}]*\}", "*", path)
+    path = re.sub(r"\{[^}]*\}", "*", path)
+    return path.split("?")[0]
+
+
+def test_only_existing_rows_are_queued_offline():
+    """Every write the client sends through the outbox is one of QUEUED."""
+    sent = set()
+    for path in WEB.rglob("*.js"):
+        if "vendor" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for call in re.finditer(r"(?<!function )(?<![\w.])send\(\{(.*?)\}\)", text, re.S):
+            body = call.group(1)
+            method = re.search(r'method:\s*"(\w+)"', body)
+            routes = re.findall(r'[`"](/api/[^`"]+)[`"]', body)
+            assert method and routes, f"{path.name}: a send() whose route cannot be read"
+            for route in routes:
+                sent.add((method.group(1), _shape(route)))
+    allowed = {(method, _shape(route)) for method, route in QUEUED}
+    assert sent, "nothing goes through the outbox"
+    assert sent <= allowed, sent - allowed
+    for forbidden in ("/api/tasks\"", "/api/projects\"", "/api/projects/*/milestones"):
+        assert not any(route == forbidden.strip('"') for _, route in sent), forbidden
+
+
+def test_every_queued_write_is_idempotent_on_the_pc(tmp_path, monkeypatch):
+    """A replay whose reply was lost is sent again; the PC must apply it once.
+    The routes wrapped by api/idempotency.py are exactly the queued ones."""
+    from api_fixtures import build
+
+    from agent.api.app import endpoints
+
+    config = make_config(tmp_path)
+    seed(config)
+    found = endpoints(build(config, monkeypatch))
+    assert found, "the walker found no routes"
+    wrapped = {route for route, endpoint in found.items() if getattr(endpoint, "idempotent", False)}
+    assert wrapped == QUEUED
 
 
 # ---------------------------------------------------------------------------

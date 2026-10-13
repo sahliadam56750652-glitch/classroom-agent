@@ -9,7 +9,7 @@
 // `tests/test_web_assets.py` fails when this file is out of date, so a forgotten
 // regeneration is a red suite rather than a client that is quietly wrong.
 
-export const GENERATED_AT = "2026-10-13T17:59:45Z";
+export const GENERATED_AT = "2026-10-13T18:30:25Z";
 
 export const ROUTES = {
   "DELETE /api/adjustments/{adjustment_id}": "RecordedOut",
@@ -92,6 +92,11 @@ export const MODELS = {
     "to_room",
     "to_start",
     "to_teacher"
+  ],
+  "AfterOut": [
+    "files",
+    "item",
+    "subject"
   ],
   "AnswerIn": [
     "choice",
@@ -224,6 +229,7 @@ export const MODELS = {
   ],
   "NextOut": [
     "act_in_telegram",
+    "after",
     "deficit",
     "files",
     "for_date",

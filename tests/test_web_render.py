@@ -74,6 +74,9 @@ versions:
 # 2026-09-28 is a Monday (Database, with a backlog); 2026-09-29 a Tuesday (OS,
 # with nothing). Fixed dates so the two states are reachable whatever today is.
 BUSY_DAY = "2026-09-28"
+
+# The served DATA_DIR, set by `served`.
+SERVED_DATA: list[Path] = []
 CLEAR_DAY = "2026-09-29"
 
 
@@ -127,6 +130,8 @@ def served(tmp_path_factory):
     (root / ".env").write_text(f"WEB_API_TOKEN={TOKEN}\n", encoding="utf-8")
 
     _seed(data)
+    # For the few tests that check what landed in the database and put it back.
+    SERVED_DATA.append(data)
 
     environment = {**os.environ, "DATA_DIR": str(data)}
 
@@ -1242,3 +1247,144 @@ def test_documents_sync_to_the_phone_and_open_from_it(served, tmp_path_factory):
     assert found["status"] == 206 and found["from"] == "library", found
     assert found["head"].startswith("%PDF"), found
     assert found["range"].startswith("bytes 0-7/"), found
+
+
+# ---------------------------------------------------------------------------
+# the outbox (Phase 5e): writes made with the PC off
+# ---------------------------------------------------------------------------
+
+_OUTBOX = """
+  const outboxCount = (w) => new Promise((resolve) => {
+    const open = w.indexedDB.open('lectern');
+    open.onerror = () => resolve(-1);
+    open.onsuccess = () => {
+      const count = open.result.transaction('outbox').objectStore('outbox').count();
+      count.onsuccess = () => resolve(count.result);
+      count.onerror = () => resolve(-2);
+    };
+  });
+  const go = async (w, path) => {
+    w.history.pushState(null, '', path);
+    w.dispatchEvent(new Event('agent:navigate'));
+    await sleep(800);
+  };
+"""
+
+
+def _next_monday() -> str:
+    """A Monday inside the week of plans the phone holds, for Database."""
+    from datetime import date, timedelta
+
+    today = date.today()
+    return (today + timedelta(days=(7 - today.weekday()) % 7)).isoformat()
+
+
+def _db():
+    return store.connect(SERVED_DATA[-1] / "academic.db")
+
+
+@chrome_only
+def test_read_with_the_pc_off_waits_and_is_never_shown_as_done(served, tmp_path_factory):
+    """Read tapped with the PC off is queued, shown as waiting, and steps aside;
+    when the PC is back it is sent, and applied once."""
+    base, _ = served
+    steps = _REPORT + _OUTBOX + """
+      const w = f.contentWindow;
+      await sleep(1200);
+      const before = d().body.innerText.includes('Chapter 4');
+      const real = w.fetch;
+      w.fetch = () => Promise.reject(new TypeError('the PC is off'));
+      const read = [...d().querySelectorAll('button')].find((b) => b.textContent.includes("I've read it"));
+      if (read) read.click();
+      await sleep(1200);
+      const offline = d().body.innerText;
+      const queued = await outboxCount(w);
+      await go(w, '/status');
+      const status = d().body.innerText;
+      w.fetch = real;
+      w.dispatchEvent(new Event('online'));
+      await sleep(3500);
+      report({ before, clicked: Boolean(read), queued, left: await outboxCount(w),
+               waiting: offline.includes('Read, waiting to send'),
+               done: offline.includes('Marked as read'),
+               answered: offline.includes('Everything in this plan is answered'),
+               statusWaiting: status.includes('One change made here is waiting to send'),
+               statusClear: d().body.innerText.includes('Nothing made on this phone is waiting to send') });
+    """
+    try:
+        found = _probed(render(base, tmp_path_factory.mktemp("obr"), path=f"/?date={_next_monday()}",
+                               steps=steps, real_clock=True))
+        assert found["before"] and found["clicked"], found
+        assert found["queued"] == 1, found
+        assert found["waiting"] and found["answered"], found
+        # Never as done: "Marked as read." is what the PC's answer earns.
+        assert not found["done"], found
+        assert found["statusWaiting"], found
+        assert found["left"] == 0 and found["statusClear"], found
+        conn = _db()
+        try:
+            state = conn.execute("SELECT state FROM study_items WHERE id = 1").fetchone()[0]
+            ops = conn.execute("SELECT COUNT(*) FROM client_ops").fetchone()[0]
+        finally:
+            conn.close()
+        assert state == "reviewed"
+        assert ops == 1
+    finally:
+        conn = _db()
+        conn.execute("UPDATE study_items SET state = 'pending', reviewed_at = NULL WHERE id = 1")
+        conn.execute("DELETE FROM client_ops")
+        conn.commit()
+        conn.close()
+
+
+@chrome_only
+def test_a_refused_write_stays_with_its_reason_until_discarded(served, tmp_path_factory):
+    """A timetable change made offline that the PC refuses when it comes back is
+    never dropped: it is listed under Not sent, with the PC's sentence."""
+    base, _ = served
+    monday = _next_monday()
+    steps = _REPORT + _OUTBOX + """
+      const w = f.contentWindow;
+      await sleep(1200);
+      const spec = { kind: 'cancelled', subject: 'Database', on: '__MONDAY__', at: '08:30' };
+      const outbox = await w.Function("return import('/outbox.js')")();
+      const real = w.fetch;
+      w.fetch = () => Promise.reject(new TypeError('the PC is off'));
+      const first = await outbox.send({ kind: 'adjustment', method: 'POST', path: '/api/adjustments',
+        body: spec, target: 'session:__MONDAY__|Database|08:30', label: 'Database, __MONDAY__ at 08:30' });
+      w.fetch = real;
+      // Meanwhile the same session was cancelled another way, so the PC refuses.
+      const direct = await real('/api/adjustments', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(spec) });
+      w.dispatchEvent(new Event('online'));
+      await sleep(3000);
+      await go(w, '/status');
+      const text = d().body.innerText;
+      const kept = await outboxCount(w);
+      const discard = [...d().querySelectorAll('button')].find((b) => b.textContent.includes('Discard it'));
+      if (discard) discard.click();
+      await sleep(800);
+      report({ queuedFirst: first.sent === false, direct: direct.status, kept,
+               notSent: text.includes('Not sent'), reason: text.includes('already adjusted'),
+               retry: text.includes('Try again'), left: await outboxCount(w),
+               gone: !d().body.innerText.includes('already adjusted') });
+    """.replace("__MONDAY__", monday)
+    try:
+        found = _probed(render(base, tmp_path_factory.mktemp("obx"), path="/status",
+                               steps=steps, real_clock=True))
+        assert found["queuedFirst"] and found["direct"] == 201, found
+        assert found["kept"] == 1, found
+        assert found["notSent"] and found["reason"] and found["retry"], found
+        assert found["left"] == 0 and found["gone"], found
+        conn = _db()
+        try:
+            count = conn.execute("SELECT COUNT(*) FROM timetable_adjustments").fetchone()[0]
+        finally:
+            conn.close()
+        assert count == 1
+    finally:
+        conn = _db()
+        conn.execute("DELETE FROM timetable_adjustments")
+        conn.execute("DELETE FROM client_ops")
+        conn.commit()
+        conn.close()

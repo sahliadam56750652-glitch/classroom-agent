@@ -552,6 +552,26 @@ gate asks that evening with `timetable.yaml` untouched.
 - **5c — the PWA and the APK.** The client DESIGN.md is the brief for.
 - **5d — the gate's actions in the client.** Deliver, mark-read, skip and
   snooze, reached from the web client rather than only from Telegram.
+- **5e slice 5 complete (2026-10-13): the outbox.** Six writes about rows that
+  already exist go through `web/outbox.js`, online or not: Read, Skip, a task
+  or a milestone done, a timetable change, and where I stopped reading. Each is
+  stored on the phone first and sent second, oldest first, before every sync,
+  with an `Idempotency-Key`; the PC keeps the first answer per key in
+  `client_ops` (`api/idempotency.py`, not backed up) so a replay whose reply was
+  lost applies once. A test pins that the routes the client queues and the
+  routes the PC wraps are the same six. A waiting write shows as waiting --
+  "Read, waiting to send" -- never as done, and Today steps past an item I have
+  answered on the phone to the next one the PC listed after it (`NextOut.after`,
+  the plan's own order, never another). A write the PC refuses is never dropped:
+  it is listed under "Not sent" on Status and on its own screen with the PC's
+  sentence, Try again and Discard it. Read or Skip that arrives after the item
+  moved on elsewhere is a notice, cleared by "Understood". Creating a task, a
+  project or a milestone and closing a project still need the PC and say so.
+  `queue.js` is gone; any position it still held joins the outbox once.
+
+  *Deviation from the plan, recorded:* the plan said a moved-on notice is
+  "shown once, then cleared". It stays until I tap Understood instead, because
+  clearing on display would clear it on a screen I opened and did not read.
 - **5e slice 4 complete (2026-10-13): the documents live on the phone.** After
   each snapshot, `web/sync.js` downloads every readable document of this
   semester's courses (`offline_courses` in the snapshot: the timetable's, never a

@@ -9,6 +9,7 @@ import { useLocal } from "/sync.js";
 import { linkProps } from "/router.js";
 import { Icon, Mark } from "/icons.js";
 import { subjectStyle } from "/subject-color.js";
+import { discard, retry, useOutbox, wordsFor } from "/outbox.js";
 
 /** The top of a screen: its name, and one sentence about its state. */
 export function ScreenHeader({ title, children }) {
@@ -136,4 +137,53 @@ export function NotSynced({ reason }) {
       ? reason
       : "It arrives with the next sync, while the PC is on."}
   </${Empty}>`;
+}
+
+// ---------------------------------------------------------------- the outbox
+//
+// Phase 5e. A write made with the PC off waits on the phone (outbox.js). These
+// are the two ways a screen shows that: a waiting write on its own row, and the
+// writes the PC refused, each with Retry and Discard. Never a count in a badge:
+// DESIGN.md forbids counting undone things at me.
+
+/** "Read, waiting to send." On the row the write is about, instead of "done". */
+export function WaitingToSend({ entry }) {
+  return html`<p class="waiting t-meta" role="status">
+    <${Icon} name="now" />
+    <span>${wordsFor(entry)}, waiting to send. It goes when the PC is reachable.</span>
+  </p>`;
+}
+
+/**
+ * Writes the PC refused, and Read or Skip that arrived after the item had moved
+ * on. Only the given kinds, or every kind on Status.
+ */
+export function NotSent({ kinds, title = "" }) {
+  const entries = useOutbox().filter(
+    (e) => (e.status === "refused" || e.status === "notice") && (!kinds || kinds.includes(e.kind))
+  );
+  if (!entries.length) return null;
+  return html`<section class="not-sent" aria-label="Not sent">
+    ${title ? html`<h2 class="section-title">${title}</h2>` : null}
+    <ul class="not-sent-list">
+      ${entries.map(
+        (entry) => html`<li key=${entry.seq} class="notice not-sent-row">
+          <p class="t-lead">${wordsFor(entry)}${entry.label ? html`: ${entry.label}` : null}</p>
+          <p class="t-meta">${entry.detail}</p>
+          <div class="not-sent-doors">
+            ${entry.status === "refused"
+              ? html`<button class="button secondary-button" type="button" onClick=${() => retry(entry.seq)}>
+                    Try again
+                  </button>
+                  <button class="button quiet-button" type="button" onClick=${() => discard(entry.seq)}>
+                    Discard it
+                  </button>`
+              : html`<button class="button quiet-button" type="button" onClick=${() => discard(entry.seq)}>
+                  Understood
+                </button>`}
+          </div>
+        </li>`
+      )}
+    </ul>
+  </section>`;
 }

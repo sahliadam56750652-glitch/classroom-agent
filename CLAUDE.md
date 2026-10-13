@@ -61,7 +61,7 @@ bug even if the tests pass.
 ```
 src/agent/
   config.py  auth.py  cli.py  scope.py  manual.py  entries.py  backup.py
-  api/         app.py  deps.py  auth.py  files.py  schemas.py  routes/
+  api/         app.py  deps.py  auth.py  files.py  schemas.py  idempotency.py  routes/
   classroom/   client.py  models.py
   db/          schema.sql  store.py
   sync/        poller.py  differ.py  deadlines.py
@@ -109,8 +109,9 @@ decision in `PLAN.md`.
   `events.notified_at`, `study_items`, `timetable_adjustments`, and
   `read_positions`. Everything entered by hand is irreplaceable by the same
   argument -- there is no API to re-ask -- which is why `agent backup` covers it
-  and `deploy/fingerprint.py` counts it. `api_sessions` is the one table
-  deliberately left OUT of the backup.
+  and `deploy/fingerprint.py` counts it. `api_sessions` and `client_ops` are
+  the two tables deliberately left OUT of the backup: live cookies, and the
+  receipts of writes the phone already sent.
 - Every long-running command takes `--dry-run`.
 - **`agent run`'s `studyitems` stage is strictly in scope**, which is narrower
   than the `agent studyitems` command's `local`. Typed by hand it is a
@@ -212,6 +213,15 @@ decision in `PLAN.md`.
   `advance_study_item`, never imports `quizgen` or a provider, and never writes
   a `gate_runs` row: computing a plan and recording that a prompt was sent are
   different acts. All of it is pinned by tests, not by convention.
+- **The phone's writes go through one outbox, and only six of them.**
+  `web/outbox.js` stores Read, Skip, a task or milestone done, a timetable
+  change and a reading position on the phone first and sends them second,
+  oldest first, before every sync, each with an `Idempotency-Key` that
+  `api/idempotency.py` answers once. Those six are writes about rows that
+  already exist; creating anything needs the PC and says so. A waiting write is
+  shown as waiting, never as done, and one the PC refuses stays under "Not sent"
+  with its sentence until I retry or discard it. A test holds the client's
+  queued routes and the server's idempotent routes to the same list.
 - **The API never writes a question.** A quiz whose set does not exist yet is a
   row in `quiz_requests`. `agent bot` answers it between polls; the quizzes
   stage of `agent run` answers it first if the bot is not running. The screen

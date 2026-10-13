@@ -34,7 +34,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 
 from ... import scope as scope_mod
 from ...config import Config, display_zone
@@ -42,6 +42,7 @@ from ...db import store
 from ...gate import actions, quiz
 from ...gate import scheduler as gate_scheduler
 from .. import schemas
+from ..idempotency import idempotent
 from ..deps import Conf, Db, MaybeTable, Session
 
 router = APIRouter()
@@ -142,7 +143,8 @@ def _status(conn: sqlite3.Connection, config: Config, item: gate_scheduler.Item)
 
 
 @router.post("/study-items/{item_id}/read", response_model=schemas.ItemActionOut)
-def mark_read(item_id: int, conn: Db, session: Session) -> schemas.ItemActionOut:
+@idempotent()
+def mark_read(item_id: int, request: Request, conn: Db, session: Session) -> schemas.ItemActionOut:
     """I read it. The same function the bot's Read button calls."""
     _item(conn, item_id)
     done = actions.mark_read(conn, item_id)
@@ -150,7 +152,10 @@ def mark_read(item_id: int, conn: Db, session: Session) -> schemas.ItemActionOut
 
 
 @router.post("/study-items/{item_id}/skip", response_model=schemas.ItemActionOut)
-def skip(item_id: int, body: schemas.SkipIn, conn: Db, session: Session) -> schemas.ItemActionOut:
+@idempotent()
+def skip(
+    item_id: int, body: schemas.SkipIn, request: Request, conn: Db, session: Session
+) -> schemas.ItemActionOut:
     """Skipped, logged, never verified. No confirmation: DESIGN.md section 4."""
     _item(conn, item_id)
     done = actions.skip_item(conn, item_id, source="web", reason=body.reason)

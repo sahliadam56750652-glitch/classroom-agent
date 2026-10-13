@@ -18,12 +18,13 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel
 
 from ...db import store
 from ...gate import adjustments as adjust
 from .. import convert, schemas
+from ..idempotency import idempotent
 from ..deps import Db, Session, Table
 
 router = APIRouter()
@@ -235,8 +236,10 @@ def adjustments(
 
 
 @router.post("/adjustments", response_model=RecordedOut, status_code=201)
+@idempotent(status=201)
 def record_adjustment(
     body: AdjustmentIn,
+    request: Request,
     conn: Db,
     table: Table,
     session: Session,

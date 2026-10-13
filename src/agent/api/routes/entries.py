@@ -16,13 +16,14 @@ under the `manual-` ids the four no-Classroom subjects already have.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from ... import entries as entries_mod
 from ...config import ConfigError
 from ...db import store
 from .. import convert, schemas
+from ..idempotency import idempotent
 from ..deps import Conf, Db, Session, Table
 
 router = APIRouter()
@@ -167,8 +168,9 @@ def add_milestone(
 
 
 @router.post("/milestones/{milestone_id}/complete", response_model=schemas.MilestoneOut)
+@idempotent()
 def complete_milestone(
-    milestone_id: int, conn: Db, session: Session
+    milestone_id: int, request: Request, conn: Db, session: Session
 ) -> schemas.MilestoneOut:
     """The only way project progress moves. There is no percentage to write."""
     outcome = entries_mod.complete_milestone(conn, milestone_id)
@@ -265,7 +267,8 @@ def create_task(
 
 
 @router.post("/tasks/{task_id}/complete", response_model=schemas.TaskOut)
-def complete_task(task_id: int, conn: Db, session: Session) -> schemas.TaskOut:
+@idempotent()
+def complete_task(task_id: int, request: Request, conn: Db, session: Session) -> schemas.TaskOut:
     outcome = entries_mod.complete_task(conn, task_id)
     if outcome.status == "missing":
         raise HTTPException(

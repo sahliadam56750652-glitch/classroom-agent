@@ -114,6 +114,20 @@ class SubjectOut(BaseModel):
     sessions: list[SessionOut] = Field(default_factory=list)
 
 
+class AfterOut(BaseModel):
+    """An item the plan would offer once the one before it is answered.
+
+    Phase 5e. The phone keeps a week of plans and may record Read or Skip with
+    the PC off; without these, the item just answered would stay on Today until
+    the PC came back. The client never reorders them -- it only passes over an
+    item it has an answer waiting to send for.
+    """
+
+    subject: SubjectOut
+    item: ItemOut
+    files: list[DocumentOut] = Field(default_factory=list)
+
+
 class NextOut(BaseModel):
     """The default screen: one item, or the honest absence of one.
 
@@ -139,6 +153,8 @@ class NextOut(BaseModel):
     act_in_telegram: bool = True
     next_session: SessionOut | None = None
     silent_because: str = ""
+    # What follows `item`, in the plan's own order. See AfterOut.
+    after: list[AfterOut] = Field(default_factory=list)
 
 
 class GateOut(BaseModel):

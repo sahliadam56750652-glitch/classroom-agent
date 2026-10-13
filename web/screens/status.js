@@ -14,7 +14,8 @@
 import { html } from "/html.js";
 import { useDocuments, useLocal } from "/sync.js";
 import { localTime } from "/format.js";
-import { NotSynced, ScreenHeader, Skeleton } from "/ui.js";
+import { NotSent, NotSynced, ScreenHeader, Skeleton } from "/ui.js";
+import { useOutbox } from "/outbox.js";
 
 // Stored states, in words -- per section, because the same stored word means
 // different things in different tables: an OCR page that is "pending" is
@@ -84,6 +85,7 @@ function size(bytes) {
  */
 function ThisPhone() {
   const docs = useDocuments();
+  const waiting = useOutbox().filter((e) => e.status === "waiting").length;
   const kept =
     docs.persisted === true
       ? "Kept: Android will not clear this storage."
@@ -106,6 +108,11 @@ function ThisPhone() {
         ? html`<p class="t-meta">Documents wait for Wi-Fi. More can allow mobile data.</p>`
         : null}
       ${docs.error ? html`<p class="t-meta">${docs.error}</p>` : null}
+      <p class="t-meta status-outbox">
+        ${waiting
+          ? `${waiting === 1 ? "One change" : `${waiting} changes`} made here ${waiting === 1 ? "is" : "are"} waiting to send. They go, in the order you made them, when the PC is reachable.`
+          : "Nothing made on this phone is waiting to send."}
+      </p>
     </div>
   </section>`;
 }
@@ -133,6 +140,7 @@ export function Status() {
     </${ScreenHeader}>
 
     <${ThisPhone} />
+    <${NotSent} title="Not sent" />
 
     <section class=${`card status-sync ${sync && sync.status === "error" ? "status-failed" : ""}`}>
       <div class="card-body">

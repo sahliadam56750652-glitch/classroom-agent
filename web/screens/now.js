@@ -16,11 +16,12 @@ import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { Offline, api, describe } from "/api.js";
 import { lookup, syncNow, useDocuments, useLocal, useTimetable } from "/sync.js";
+import { send, useOutbox, waitingFor } from "/outbox.js";
 import { whenSynced } from "/synced.js";
 import { localTime, plural, relativeDay, sessionName, shortDate } from "/format.js";
 import { linkProps } from "/router.js";
 import { Icon } from "/icons.js";
-import { Card, Chip, Empty, Problem, Skeleton, useSubjectNames } from "/ui.js";
+import { Card, Chip, Empty, NotSent, Problem, Skeleton, useSubjectNames } from "/ui.js";
 import { subjectStyle } from "/subject-color.js";
 import { greeting, longDate } from "/greeting.js";
 import { QuizEntry } from "/screens/quiz.js";
@@ -160,7 +161,7 @@ function forSession(subject, forDate) {
  * It looks identical at 23:00 and at 14:00, because the app knows nothing at
  * 23:00 that it did not know at 14:00.
  */
-function Waiting({ body, onNext }) {
+function Waiting({ body, onNext, onQueued }) {
   const { item, subject, windows } = body;
   const window = windows && windows.length ? windows[0] : null;
   const pages = item.pages || 0;
@@ -214,6 +215,7 @@ function Waiting({ body, onNext }) {
             files=${body.files}
             windows=${windows}
             onNext=${onNext}
+            onQueued=${onQueued}
           />
         </article>
   `;
@@ -350,7 +352,7 @@ function kindOf(session) {
  * `files` comes from `/api/now` rather than a second request, because this is
  * the screen where a round trip is felt.
  */
-function Actions({ item, files, windows, onNext }) {
+function Actions({ item, files, windows, onNext, onQueued }) {
   const readable = (files || []).find((file) => file.readable);
   const window = windows && windows.length ? windows[0] : null;
   const [done, setDone] = useState(null);
@@ -363,7 +365,24 @@ function Actions({ item, files, windows, onNext }) {
     setBusy(true);
     setProblem("");
     try {
-      await api.post(`/api/study-items/${item.item_id}/${verb}`, body);
+      // Through the outbox: with the PC off it waits on the phone, this item
+      // steps aside, and the next one in the plan takes its place.
+      const outcome = await send({
+        kind: verb,
+        method: "POST",
+        path:
+          verb === "read"
+            ? `/api/study-items/${item.item_id}/read`
+            : `/api/study-items/${item.item_id}/skip`,
+        body: verb === "read" ? null : body,
+        target: `item:${item.item_id}`,
+        label: item.label,
+      });
+      if (!outcome.sent) {
+        setBusy(false);
+        onQueued({ verb, label: item.label });
+        return;
+      }
       setDone(verb);
     } catch (err) {
       setProblem(describe(err));
@@ -485,13 +504,45 @@ function usePlan(date, round) {
   return { body: null, problem, status: local.status };
 }
 
+/**
+ * The plan as it stands on this phone: the first item I have not answered here.
+ *
+ * Read or Skip made with the PC off waits in the outbox, and the PC's plan
+ * still names that item. So the item steps aside for the next one the PC listed
+ * after it -- in the PC's order, never another -- and the deficit counts it as
+ * answered. With every listed item answered, the plan says so rather than
+ * repeating one.
+ */
+function unanswered(body) {
+  if (!body || !body.waiting) return body;
+  const candidates = [
+    { subject: body.subject, item: body.item, files: body.files, windows: body.windows, first: true },
+    ...(body.after || []).map((next) => ({ ...next, windows: [], first: false })),
+  ];
+  const answered = (c) => waitingFor(`item:${c.item.item_id}`, ["read", "skip"]);
+  const open = candidates.filter((c) => !answered(c));
+  if (!open.length) return { ...body, waiting: false, all_answered: true };
+  const shown = open[0];
+  const gone = candidates.filter((c) => answered(c) && c.subject.name === shown.subject.name).length;
+  return {
+    ...body,
+    subject: { ...shown.subject, unreviewed: Math.max(shown.subject.unreviewed - gone, 1) },
+    item: shown.item,
+    files: shown.files,
+    windows: shown.windows,
+  };
+}
+
 export function Now() {
   const [round, setRound] = useState(0);
+  const [queued, setQueued] = useState(null);
+  useOutbox();
   // `?date=` is passed straight through. DESIGN.md's test of this screen is
   // answerable by looking, and the empty state cannot be looked at on a day
   // that has material -- so a quiet date makes the rarer state inspectable.
   const date = new URLSearchParams(location.search).get("date") || tomorrow();
-  const { body, problem, status } = usePlan(date, round);
+  const { body: planned, problem, status } = usePlan(date, round);
+  const body = unanswered(planned);
 
   async function next() {
     await syncNow();
@@ -540,10 +591,21 @@ export function Now() {
             Installing Lectern to the home screen usually lets them be kept. Status has the detail.
           </p>`
         : null}
+      ${queued
+        ? html`<p class="notice" role="status">
+            ${queued.verb === "read" ? "Read" : "Skipped"}, waiting to send: ${queued.label}.
+            It goes when the PC is reachable.
+          </p>`
+        : null}
+      <${NotSent} kinds=${["read", "skip"]} />
       <div class="today-split">
         <div class="today-main">
           ${body.waiting
-            ? html`<${Waiting} body=${body} onNext=${next} />`
+            ? html`<${Waiting} body=${body} onNext=${next} onQueued=${setQueued} />`
+            : body.all_answered
+            ? html`<${Empty} title="Everything in this plan is answered on this phone.">
+                Your answers go to the PC when it is reachable, and the next plan comes back with them.
+              </${Empty}>`
             : html`<${Clear} body=${body} />`}
         </div>
         <div class="today-aside">

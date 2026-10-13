@@ -23,7 +23,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { Offline, api, describe } from "/api.js";
 import { linkProps, navigate } from "/router.js";
-import { queuePosition } from "/queue.js";
+import { send } from "/outbox.js";
 import { documentFromSnapshot } from "/sync.js";
 import { Icon } from "/icons.js";
 import { Problem } from "/ui.js";
@@ -292,17 +292,18 @@ export function Reader({ driveId }) {
     const timer = setTimeout(() => {
       if (lastWritten.current === current) return;
       lastWritten.current = current;
-      api
-        .put(`/api/documents/${encodeURIComponent(driveId)}/position`, {
-          page_index: current - 1,
-        })
-        .catch(() => {
-          // Never interrupts reading. Queued instead, and sent when the
-          // connection returns -- losing my place in a 92-page chapter is
-          // exactly the cost worth a few lines of storage.
-          lastWritten.current = null;
-          queuePosition(driveId, current - 1);
-        });
+      // Through the outbox, so with the PC off it waits on the phone and goes
+      // when the PC is back -- one per document, the latest. It never
+      // interrupts reading: a refusal means the PC no longer has this
+      // document, and a place in it is all that is lost.
+      send({
+        kind: "position",
+        method: "PUT",
+        path: `/api/documents/${encodeURIComponent(driveId)}/position`,
+        body: { page_index: current - 1 },
+        target: `doc:${driveId}`,
+        label: doc ? doc.title : "",
+      }).catch(() => {});
     }, SETTLE_MS);
     return () => clearTimeout(timer);
   }, [driveId, current, pdf]);
