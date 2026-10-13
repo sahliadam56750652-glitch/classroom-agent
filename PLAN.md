@@ -31,8 +31,8 @@ them.**
 4. **New requirement: the Android app stays fully usable while the PC is off,
    from whatever it last synced -- including course PDFs -- and receives updates
    only while the PC is on.** DESIGN.md section 6 is amended: all current-semester
-   material syncs to the phone, not just tonight's item. This is Phase 5e;
-   its plan is written up as a spec once approved.
+   material syncs to the phone, not just tonight's item. This is Phase 5e, planned
+   in `docs/superpowers/specs/2026-10-13-phase-5e-offline-first-plan.md`.
 
 **Phase 0 — complete.** OAuth end to end against the real account, seven scopes
 granted (`classroom.courses.readonly`, `classroom.coursework.me`,
@@ -553,8 +553,8 @@ gate asks that evening with `timetable.yaml` untouched.
 - **5d — the gate's actions in the client.** Deliver, mark-read, skip and
   snooze, reached from the web client rather than only from Telegram.
 - **5e — offline-first.** Added 2026-10-13: the phone works from its last sync
-  while the PC is off, PDFs included; it syncs only while the PC is on. Planned
-  2026-10-13; the spec is written once the plan is approved.
+  while the PC is off, PDFs included; it syncs only while the PC is on. Plan approved
+  2026-10-13: `docs/superpowers/specs/2026-10-13-phase-5e-offline-first-plan.md`.
 
 **5d is sequenced immediately after 5c and counted as part of operational, not
 as an extra.** 5b is deliberately read-only over `study_items`, which means the
