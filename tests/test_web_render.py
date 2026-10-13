@@ -1216,3 +1216,29 @@ def test_every_screen_renders_from_the_phone_with_the_pc_unreachable(served, tmp
     for path, seen in found.items():
         assert seen["content"], (path, found)
         assert seen["synced"], (path, found)
+
+
+@chrome_only
+def test_documents_sync_to_the_phone_and_open_from_it(served, tmp_path_factory):
+    """Phase 5e: this semester's documents are kept whole on the phone, and a
+    range request -- how PDF.js reads -- is answered from that copy."""
+    base, _ = served
+    steps = _REPORT + """
+      const w = f.contentWindow;
+      const url = '/api/documents/d-render/file';
+      let held = false;
+      for (let i = 0; i < 80 && !held; i++) {
+        held = Boolean(await w.caches.match(url));
+        if (!held) await sleep(250);
+      }
+      for (let i = 0; i < 40 && !w.navigator.serviceWorker.controller; i++) await sleep(250);
+      const ranged = await w.fetch(url, { headers: { Range: 'bytes=0-7' } });
+      const head = await ranged.text();
+      report({ held, status: ranged.status, from: ranged.headers.get('X-Lectern-From'),
+               head, range: ranged.headers.get('Content-Range') });
+    """
+    found = _probed(render(base, tmp_path_factory.mktemp("docs"), path="/", steps=steps, real_clock=True))
+    assert found["held"] is True, found
+    assert found["status"] == 206 and found["from"] == "library", found
+    assert found["head"].startswith("%PDF"), found
+    assert found["range"].startswith("bytes 0-7/"), found

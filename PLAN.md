@@ -552,6 +552,18 @@ gate asks that evening with `timetable.yaml` untouched.
 - **5c — the PWA and the APK.** The client DESIGN.md is the brief for.
 - **5d — the gate's actions in the client.** Deliver, mark-read, skip and
   snooze, reached from the web client rather than only from Telegram.
+- **5e slice 4 complete (2026-10-13): the documents live on the phone.** After
+  each snapshot, `web/sync.js` downloads every readable document of this
+  semester's courses (`offline_courses` in the snapshot: the timetable's, never a
+  merely tracked archived one) into the `library` cache, whole, one at a time,
+  only when its content key (`pdf_key`) changed, and removes a copy only once the
+  current snapshot no longer lists it. Wi-Fi only by default where Android says
+  which network it is on; More can allow mobile data. The service worker answers
+  the reader's range requests by slicing the stored file, so a 92-page deck opens
+  on page 1 with the PC off. `navigator.storage.persist()` is asked when
+  documents first arrive, and Status always says whether Android will keep the
+  storage; Today shows one notice if it may not. The sync is the library's only
+  writer (the old "keep" message is gone).
 - **5e slice 3 built (2026-10-13): PowerPoint and Word become PDFs on the PC.**
   `files/render.py` and a `render` stage in `agent run` (after extract) convert
   every in-scope PPTX and DOCX with LibreOffice, headless, under a private

@@ -19,7 +19,7 @@
 // edited by hand: the shell is served cache-first, so a changed file reaches an
 // installed app ONLY when this changes, and a forgotten bump looks exactly like
 // a fix that did not work. A test fails when it is stale.
-const VERSION = "63234d3c5e3d";
+const VERSION = "85be93746ace";
 const SHELL = `shell-${VERSION}`;
 
 // The documents' cache. Its name carries NO version, on purpose: every cache
@@ -135,20 +135,11 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-self.addEventListener("message", (event) => {
-  const data = event.data || {};
-  if (data.type === "keep" && data.url) {
-    // Fetched WHOLE and without a Range header, because a 206 cannot be cached.
-    event.waitUntil(
-      caches
-        .open(LIBRARY)
-        .then((cache) => cache.add(new Request(data.url, { credentials: "same-origin" })))
-        .catch((err) => console.warn("[sw] could not keep", data.url, err))
-    );
-  }
-  // There is no "signed-out" message any more. Signing out ends the session on
-  // the PC; it does not take the library off the phone (Phase 5e).
-});
+// No messages. The library has one writer, the document sync in sync.js, which
+// keeps a manifest of what it stored -- a second writer here would leave copies
+// the sync does not know about and would never remove. And there is no
+// "signed-out" message: signing out ends the session on the PC; it does not
+// take the library off the phone (Phase 5e).
 
 self.addEventListener("fetch", (event) => {
   const request = event.request;
@@ -207,22 +198,47 @@ async function shell(request, event) {
 }
 
 /**
- * Documents: only what was deliberately kept.
+ * Documents: the phone's copy first, the PC second.
  *
- * No network fallback INTO the cache -- a document is never cached as a side
- * effect of reading it, because the reader requests ranges and a 206 cannot be
- * stored anyway. Kept copies are whole responses put here by the `keep` message.
+ * Phase 5e: every readable document of this semester is synced into LIBRARY
+ * (sync.js), whole. The reader asks for ranges -- PDF.js opens a 92-page deck
+ * on page 1 without the rest -- so a range is answered by slicing the stored
+ * file: a 206 built here, from the phone, with the PC off. Nothing here writes
+ * to a cache; only the sync does, deliberately.
  */
 async function document_(request) {
   const cached = await caches.match(request, { ignoreVary: true, ignoreSearch: true });
-  // A kept copy is the whole file, so a Range request can be answered from it
-  // only by the browser's own machinery -- which it will not do for a cached
-  // 200. Returning the whole thing is correct and is what PDF.js falls back to.
-  if (cached && !request.headers.get("range")) return cached;
-  try {
-    return await fetch(request);
-  } catch (err) {
-    if (cached) return cached;
-    throw err;
+  if (cached) return fromCopy(cached, request.headers.get("range"));
+  return fetch(request);
+}
+
+/** A stored whole file, or the slice of it a Range header asks for. */
+async function fromCopy(cached, range) {
+  const type = cached.headers.get("Content-Type") || "application/pdf";
+  const blob = await cached.blob();
+  const base = { "Content-Type": type, "Accept-Ranges": "bytes", "X-Lectern-From": "library" };
+  const asked = range && /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+  if (!asked) {
+    return new Response(blob, { status: 200, headers: { ...base, "Content-Length": String(blob.size) } });
   }
+  let start = asked[1] === "" ? null : Number(asked[1]);
+  let end = asked[2] === "" ? null : Number(asked[2]);
+  if (start === null) {
+    // "bytes=-500": the last 500 bytes.
+    start = Math.max(0, blob.size - (end || 0));
+    end = blob.size - 1;
+  } else if (end === null || end >= blob.size) {
+    end = blob.size - 1;
+  }
+  if (start >= blob.size || start > end) {
+    return new Response(null, { status: 416, headers: { ...base, "Content-Range": `bytes */${blob.size}` } });
+  }
+  return new Response(blob.slice(start, end + 1), {
+    status: 206,
+    headers: {
+      ...base,
+      "Content-Range": `bytes ${start}-${end}/${blob.size}`,
+      "Content-Length": String(end - start + 1),
+    },
+  });
 }

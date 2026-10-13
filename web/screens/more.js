@@ -12,6 +12,7 @@ import { linkProps } from "/router.js";
 import { ScreenHeader } from "/ui.js";
 import { useState } from "preact/hooks";
 import { CHOICES, setTheme, storedTheme } from "/theme.js";
+import { setDocumentsOnMobileData, useDocuments } from "/sync.js";
 
 export const SECONDARY = [
   ["/add", "Add", "add", "A task from class, or a project."],
@@ -42,10 +43,32 @@ function ThemeChoice() {
   </section>`;
 }
 
+/** Whether documents may download over mobile data, for this device. */
+function DocumentsChoice() {
+  const docs = useDocuments();
+  const allowed = docs.onMobileDataAllowed;
+  return html`<section class="section" aria-labelledby="docs-title">
+    <h2 class="section-title" id="docs-title">Documents</h2>
+    <div class="choice" role="group" aria-labelledby="docs-title">
+      <button type="button" aria-pressed=${allowed ? "false" : "true"} onClick=${() => setDocumentsOnMobileData(false)}>
+        Wi-Fi only
+      </button>
+      <button type="button" aria-pressed=${allowed ? "true" : "false"} onClick=${() => setDocumentsOnMobileData(true)}>
+        Mobile data too
+      </button>
+    </div>
+    <p class="t-meta">
+      This semester's documents are kept on this phone so they open with the PC off.
+      The first download is large.
+    </p>
+  </section>`;
+}
+
 export function More({ onSignOut }) {
   return html`<div class="screen">
     <${ScreenHeader} title="More" />
     <${ThemeChoice} />
+    <${DocumentsChoice} />
     <ul class="list">
       ${SECONDARY.map(
         ([to, label, icon, what]) => html`<li key=${to}>

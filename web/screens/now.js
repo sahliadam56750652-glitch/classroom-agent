@@ -15,7 +15,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { Offline, api, describe } from "/api.js";
-import { lookup, syncNow, useLocal, useTimetable } from "/sync.js";
+import { lookup, syncNow, useDocuments, useLocal, useTimetable } from "/sync.js";
 import { whenSynced } from "/synced.js";
 import { localTime, plural, relativeDay, sessionName, shortDate } from "/format.js";
 import { linkProps } from "/router.js";
@@ -359,17 +359,6 @@ function Actions({ item, files, windows, onNext }) {
   const [asking, setAsking] = useState(false);
   const [reason, setReason] = useState("");
 
-  // Tonight's document, kept for the radio being off. One file, a few MB, and
-  // precisely the one I will want at 23:00 -- which is what DESIGN.md section 6
-  // means by "what has been delivered". Nothing else is cached automatically.
-  useEffect(() => {
-    if (!readable || !navigator.serviceWorker?.controller) return;
-    navigator.serviceWorker.controller.postMessage({
-      type: "keep",
-      url: readable.pdf_url,
-    });
-  }, [readable && readable.drive_id]);
-
   async function record(verb, body) {
     setBusy(true);
     setProblem("");
@@ -536,6 +525,7 @@ export function Now() {
     </div>`;
   }
 
+  const docs = useDocuments();
   // The one next action first and largest; then today's sessions, then what is
   // due soon. Beside the hero at 1024px and above, below it on a phone.
   return html`
@@ -544,6 +534,12 @@ export function Now() {
         <p class="t-greeting">${longDate(new Date())}</p>
         <p class="t-title today-greeting">${greeting(new Date())}</p>
       </header>
+      ${docs.persisted === false && docs.held > 0
+        ? html`<p class="notice" role="status">
+            Android may clear the documents on this phone when space runs low.
+            Installing Lectern to the home screen usually lets them be kept. Status has the detail.
+          </p>`
+        : null}
       <div class="today-split">
         <div class="today-main">
           ${body.waiting

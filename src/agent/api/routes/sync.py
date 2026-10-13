@@ -31,6 +31,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from fastapi.encoders import jsonable_encoder
 
+from ... import scope as scope_mod
 from ...config import display_zone
 from ...db import store
 from . import deadlines, entries, library, meta, quiz, study, subjects, timetable
@@ -128,6 +129,10 @@ def build(conn, config, table, session) -> dict[str, Any]:
         "schema_version": store.schema_version(conn),
         "entries": entries_,
         "missing": missing,
+        # Whose documents the phone keeps a copy of: this semester's courses,
+        # every course the timetable names -- never an archived one, even if
+        # it is still tracked. DESIGN.md section 6, as amended for 5e.
+        "offline_courses": sorted(scope_mod.in_scope(table)) if table is not None else [],
     }
 
 

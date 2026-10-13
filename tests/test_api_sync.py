@@ -76,3 +76,13 @@ def test_a_broken_timetable_says_which_entries_are_missing(config, monkeypatch):
 
 def test_the_snapshot_needs_a_session(config, monkeypatch):
     assert client(config, monkeypatch, sign_in=False).get("/api/sync").status_code == 401
+
+
+def test_only_this_semesters_courses_are_offered_for_the_phone(tmp_path, monkeypatch):
+    """A course still tracked but not in the timetable -- last year's -- never has
+    its documents copied to the phone."""
+    made = make_config(tmp_path, tracked_courses=[COURSE, "999-archived"])
+    seed(made)
+    body = client(made, monkeypatch).get("/api/sync").json()
+    assert COURSE in body["offline_courses"]
+    assert "999-archived" not in body["offline_courses"]

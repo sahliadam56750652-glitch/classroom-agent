@@ -12,7 +12,7 @@
 // a judgement about the numbers, and the point is to show the numbers.
 
 import { html } from "/html.js";
-import { useLocal } from "/sync.js";
+import { useDocuments, useLocal } from "/sync.js";
 import { localTime } from "/format.js";
 import { NotSynced, ScreenHeader, Skeleton } from "/ui.js";
 
@@ -69,6 +69,47 @@ function Figures({ title, counts, note, words = {} }) {
   </section>`;
 }
 
+/** "162 MB", "48 kB": the size of what is on the phone, plainly. */
+function size(bytes) {
+  if (bytes == null) return "unknown";
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+  if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1e3))} kB`;
+}
+
+/**
+ * What this phone holds, and whether Android has agreed to keep it. Shown first,
+ * because a library the browser may clear is the one silent loss this app can
+ * suffer -- so whether it is protected is said, never assumed.
+ */
+function ThisPhone() {
+  const docs = useDocuments();
+  const kept =
+    docs.persisted === true
+      ? "Kept: Android will not clear this storage."
+      : docs.persisted === false
+      ? "May be cleared by Android when the phone runs low on space. Installing the app usually lets it be kept."
+      : "Whether Android will keep it is not known on this browser.";
+  return html`<section class="card status-card status-phone">
+    <div class="card-body">
+      <h2 class="section-title">On this phone</h2>
+      <ul class="figures">
+        <li class="figure"><span class="num">${docs.held}</span>of <span class="num">${docs.total}</span>documents</li>
+        <li class="figure"><span class="num">${size(docs.heldBytes)}</span>held</li>
+        ${docs.usage != null
+          ? html`<li class="figure"><span class="num">${size(docs.usage)}</span>used of ${size(docs.quota)} allowed</li>`
+          : null}
+      </ul>
+      <p class="t-state">${kept}</p>
+      ${docs.downloading ? html`<p class="t-meta">Downloading ${docs.downloading}…</p>` : null}
+      ${docs.waitingForWifi
+        ? html`<p class="t-meta">Documents wait for Wi-Fi. More can allow mobile data.</p>`
+        : null}
+      ${docs.error ? html`<p class="t-meta">${docs.error}</p>` : null}
+    </div>
+  </section>`;
+}
+
 export function Status() {
   const found = useLocal("/api/status");
   if (found.status === "loading") return html`<div class="screen"><${Skeleton} rows=${4} /></div>`;
@@ -90,6 +131,8 @@ export function Status() {
     <${ScreenHeader} title="Status">
       Everything the app counts, in full, zeros included.
     </${ScreenHeader}>
+
+    <${ThisPhone} />
 
     <section class=${`card status-sync ${sync && sync.status === "error" ? "status-failed" : ""}`}>
       <div class="card-body">
