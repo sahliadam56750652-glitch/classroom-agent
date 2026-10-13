@@ -246,31 +246,31 @@ product; everything else is navigation.
   because the document was re-uploaded, the app says the document changed rather
   than silently starting from page one — the same rule as the 3d cursor, and the
   same instinct as the recurring lesson: a silent fallback is a misreport.
-- **What has been delivered is readable offline**, and "delivered" is doing real
-  work in that sentence. The reader must not be the one thing that needs a
-  round-trip at 23:00.
+- **Everything this semester is readable offline.** *(Amended 2026-10-13: was
+  "what has been delivered is readable offline", with tonight's item cached
+  automatically and anything else only when I asked.)* The backend is this PC and
+  runs only while it is on, so the phone is not a client that can fall back on a
+  server -- it is the copy I study from. Every document of every course in this
+  semester's timetable is synced to it while the PC is reachable and stays there.
+  Archived courses never are. The reader must not be the one thing that needs a
+  round-trip at 23:00, and now nothing does.
 
-  **The original justification was "the library is already local by invariant 5",
-  and Phase 5a retired it.** That was true while the backend was this laptop. On
-  the Oracle box the library is local to the *server*; the phone is a client over
-  mobile data, and 116 MB is not going to live on it. The rule stands, so it needs
-  an honest mechanism instead of a premise that no longer holds:
+  Three consequences, each of which would otherwise look like a bug:
 
-  - **Tonight's gate item, automatically.** When online, the app fetches the
-    document `/` is asking for and keeps it. It is one file, a few MB, and it is
-    precisely the one I will want with the radio off.
-  - **Anything I explicitly keep.** A per-document action, because a 40 MB deck
-    must not be cached just because I scrolled past it.
-  - **Nothing else.** Everything outside those two needs a connection, and says so
-    rather than failing blankly.
+  - **A document is stored whole**, fetched once by a background sync. Reading
+    then comes from the phone, not from range requests.
+  - **Every screen says when its data was last synced**, always, not only when a
+    request failed. "As of 07:31, PC not reachable" is a fact; data shown with no
+    date is the app inventing a state, which section 7 forbids.
+  - **What needs the PC says so instead of failing**: a quiz is graded on the PC,
+    so offline a quiz says it waits for the PC. A write made offline -- read, skip,
+    a milestone, a moved session -- is shown as waiting to be sent, never as done,
+    until the PC has accepted it.
 
-  Two consequences worth stating, because both would otherwise look like bugs. A
-  document kept offline is fetched **whole** — the range requests that make a
-  92-page deck open instantly return `206`, and a `206` cannot be stored in a
-  browser cache, so reading online and keeping offline are deliberately two
-  different requests. And an API screen opened offline shows the last thing it
-  knew **with the time it knew it visible**; stale data presented as current would
-  be the app inventing a state, which §7 forbids.
+  The reasoning this replaced, kept because it was right for a server: on the
+  Oracle box the library was local to the server and 116 MB was not going to live
+  on a phone over mobile data. With no server, the phone is the only copy I can
+  reach when the PC is off, and this semester's in-scope library is what fits.
 
 ---
 

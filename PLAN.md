@@ -9,6 +9,31 @@ it only with new information, not with a fresh opinion.
 
 ## Status
 
+**Four decisions of 2026-10-13 changed the plan. Read these first; the phase
+entries below are kept as written, with dated notes where a decision overrides
+them.**
+
+1. **No cloud server. The backend lives on this PC and runs only while it is
+   on.** Phase 5a is cancelled. The Oracle runbook, the systemd units and the
+   Caddy stanza are deleted (`git show 566499e` and its parents keep them);
+   `deploy/fingerprint.py` and `agent backup` stay, because comparing and
+   restoring a `DATA_DIR` matters as much for a new laptop as it did for a VM.
+2. **Manual logging for subjects with no Classroom is cancelled**: manual
+   subjects as things to enter material into, session logging, and uploads.
+   Those subjects stay in `timetable.yaml` and stay never-gated, and
+   `agent timetable --check` keeps saying so plainly. **Projects and homework
+   tasks stay.** Nothing is removed by this entry -- the removal is sliced into
+   Phase 5e below, because tasks and projects currently depend on manual-subject
+   identity (see the Phase 6 note).
+3. **The new year's classrooms exist with real material, so 3d stage 2 is
+   unblocked**, sequenced after 5e. The reader's `read_positions` now supply the
+   evidence for the window size the design was waiting on.
+4. **New requirement: the Android app stays fully usable while the PC is off,
+   from whatever it last synced -- including course PDFs -- and receives updates
+   only while the PC is on.** DESIGN.md section 6 is amended: all current-semester
+   material syncs to the phone, not just tonight's item. This is Phase 5e;
+   its plan is written up as a spec once approved.
+
 **Phase 0 — complete.** OAuth end to end against the real account, seven scopes
 granted (`classroom.courses.readonly`, `classroom.coursework.me`,
 `classroom.courseworkmaterials.readonly`, `classroom.announcements.readonly`,
@@ -88,7 +113,39 @@ prefix were enough.
 Phase 5c (the web UI) will call these same functions; nothing here is
 CLI-shaped below `cli.py`.
 
-**Phase 5a — planned, code and units built, not yet cut over.** The move to an
+**Partly cancelled 2026-10-13: manual logging.** Uploads (6.4), session logging
+(6.5's `agent sessions`) and manual subjects as places to put material go.
+Tasks (6.5's `agent tasks`), projects (6.6) and `agent backup` (6.7) stay.
+Measured the same day: 0 tasks, 0 projects, 0 sessions and 0 uploads exist, so
+nothing real is lost.
+
+**Where what stays depends on what goes**, which is why the removal is a 5e
+slice and not done here:
+
+- `entries.subject_course` -> `upload.resolve_subject` is how a task or a
+  project finds its course id: the timetable's `subjects:` map, exactly. For
+  Calculus III, Algebra III, Philosophy and Communication that id is a minted
+  `manual-` one, and it is their ONLY identity. Remove manual identity and a
+  task for Calculus III has nowhere to be filed.
+- `manual_tasks.course_id` and `projects.course_id` are foreign keys to
+  `courses` with `ON DELETE CASCADE`, so deleting the four `MANUAL` rows in
+  `courses` would delete every task and project filed under them, silently.
+- The resolver itself lives in `files/upload.py`, the module being retired.
+- `Subject.state` has a `nothing_entered` state that only exists because a
+  manual subject was expected to receive uploads.
+
+So 5e keeps the `manual-` id as identity only -- a course row a task or project
+can point at -- and removes everything that put material under it.
+
+**Phase 5a — CANCELLED 2026-10-13.** There is no server: the backend runs on
+this PC while it is on, and the phone carries everything else (Phase 5e). The
+runbook, the five systemd units and the Caddy stanza are deleted; git keeps
+them. What survives is everything 5a forced that was true anyway --
+`deploy/fingerprint.py`, `store.BUSY_TIMEOUT_MS` (`agent run` and `agent bot`
+overlap on the PC too), and the survey below, because a new laptop is the same
+directory copy a VM would have been. The original entry follows.
+
+~~**Phase 5a — planned, code and units built, not yet cut over.**~~ The move to an
 Oracle Always Free ARM instance, so that the backend is up when the laptop is
 not. `deploy/` holds the runbook, the five systemd units and
 `deploy/fingerprint.py`, which prints a comparable summary of a `DATA_DIR` so
@@ -317,8 +374,8 @@ before, the gate completes in a few taps, a killed bot resumes mid-quiz with no
 progress lost (there is no resume path -- every button carries ids and every
 state is a row), skipping is recorded as `skipped` and never as `verified`, and
 the digest still sends with the provider stubbed to raise on every call. The
-one item outstanding is hosting: the move to the Oracle box has not happened,
-and nothing in the code depends on it (invariant 5).
+one item outstanding was hosting; the move to the Oracle box is cancelled
+(2026-10-13) and the PC stays the host.
 
 **3b — complete.** `agent gate [--dry-run] [--on DATE] [--force]` composes one
 message for tomorrow and `agent bot [--once]` listens for the buttons.
@@ -477,23 +534,27 @@ settles on:
   A file edited in place answers that only through `git log`, and
   `timetable.yaml` is gitignored, so it does not answer it at all.
 
-**Done when** the PWA installs on the S25 Ultra from a `*.vercel.app` or
-`*.pages.dev` origin, the APK verifies its Digital Asset Links against that
-origin and opens with no browser chrome, the same build works on desktop,
+*(Superseded 2026-10-13: there is no public origin. Install, origin and the APK
+are re-planned in Phase 5e.)* **Done when** the PWA installs on the S25 Ultra
+from a `*.vercel.app` or `*.pages.dev` origin, the APK verifies its Digital
+Asset Links against that origin and opens with no browser chrome, the same build works on desktop,
 deadline alerts still arrive by Telegram independently of the web client, and a
 session the professor moved can be recorded in a few taps — changing what the
 gate asks that evening with `timetable.yaml` untouched.
 
 #### The sub-phases, and why 5d is not optional
 
-- **5a — the move to the Oracle box.** Code and units built, not cut over. See
-  the status section above and `deploy/README.md`.
+- **5a — the move to the Oracle box.** Cancelled 2026-10-13; see the status
+  section.
 - **5b — the HTTP API.** FastAPI over the existing store layer, no new business
   logic, read-only over `study_items`. Spec:
   `docs/superpowers/specs/2026-09-24-phase-5b-http-api-design.md`.
 - **5c — the PWA and the APK.** The client DESIGN.md is the brief for.
 - **5d — the gate's actions in the client.** Deliver, mark-read, skip and
   snooze, reached from the web client rather than only from Telegram.
+- **5e — offline-first.** Added 2026-10-13: the phone works from its last sync
+  while the PC is off, PDFs included; it syncs only while the PC is on. Planned
+  2026-10-13; the spec is written once the plan is approved.
 
 **5d is sequenced immediately after 5c and counted as part of operational, not
 as an extra.** 5b is deliberately read-only over `study_items`, which means the
@@ -699,8 +760,16 @@ than behind it.
   softer nudges. A missed deadline alert is the one failure this project cannot
   afford, so it stays on the channel that has already proven it delivers.
 
-- **Hosting: this laptop through Phase 3, then an Oracle Cloud Always Free ARM
-  instance in Phase 5a.** Deferred past Phase 3 because nothing in the code
+- **Cancelled 2026-10-13: the Oracle hosting decision and the four below it
+  that exist only because of it (cutover order, the timer asymmetry, the
+  recovery artifact's wording, no custom domain).** The backend stays on this
+  PC. They are kept as the record of why the server was planned; none of them
+  binds anything now. The one that still teaches something: two `agent bot`
+  processes on one token split the button presses silently -- true on any
+  machine.
+
+  ~~**Hosting: this laptop through Phase 3, then an Oracle Cloud Always Free ARM
+  instance in Phase 5a.**~~ Deferred past Phase 3 because nothing in the code
   depended on it (invariant 5) and there was no forcing function; 5a is the
   phase because a web dashboard and an Android app are clients, and a client is
   useless against a backend that is only up when the laptop is.
@@ -803,10 +872,9 @@ than behind it.
   folder is how they reach NotebookLM — which has no API either, so a pack
   arrives there as a file whatever this project does.
 
-  **The Drive-synced-folder half of that dies at 5a.** It depends on a desktop
-  sync client and the server does not have one, so on the box `packs_dir`
-  points at a directory nobody can see. See the open question below; the rest
-  of the decision stands.
+  ~~**The Drive-synced-folder half of that dies at 5a.**~~ **Restored 2026-10-13:
+  with no server, `packs_dir` can point at a Drive-synced folder on this PC again,
+  exactly as before 5a.** `GET /api/packs/{course_id}` stays as the second way.
 
 - **NotebookLM has no usable API. This is a finding, not an assumption.**
   Checked September 2026: the consumer product still exposes no public API.
@@ -1017,7 +1085,8 @@ than behind it.
   killing it is harmless and the crude mechanism costs nothing. `agent run` and
   `agent gate` remain ordinary Task Scheduler entries.
 
-  **Retired by Phase 5a.** systemd has no S4U problem, so the `.vbs` becomes
+  ~~**Retired by Phase 5a.**~~ *Not retired: 5a is cancelled and the `.vbs`
+  stays.* systemd has no S4U problem, so the `.vbs` becomes
   `classroom-agent-bot.service` with `Restart=always`. The one setting there
   that is not a default is `StartLimitIntervalSec=0`: systemd would otherwise
   give up after five restarts in ten seconds and leave the unit dead, and a dead
@@ -1508,6 +1577,15 @@ were `skipped` with `skip_source = 'seed'` and that the gate therefore could not
 be exercised; that was true until the term started. The parameter the design
 turns on, how many pages a session actually covers, is now measurable rather than
 guessed, which is what 3d stage 2 was waiting for.
+
+**Unblocked 2026-10-13, sequenced after Phase 5e.** The new year's classrooms
+exist with real material, and the reader has been recording `read_positions`
+since 5b -- a content-anchored page per document per evening read. That is the
+evidence `gate.window_pages` was waiting for: how far one sitting actually gets
+is now a measurement of the gap between consecutive positions in a document,
+not a guess. Measured 2026-10-13: `read_positions` holds 0 rows, so stage 2
+starts by reading for a week or two and only then fixing the number. Nothing
+about the approach above changes.
 
 What does not change: nothing here should touch `study_items`, `quiz.settle` or
 `verify_study_item`. Those are the honesty guarantees, and a real backlog is a

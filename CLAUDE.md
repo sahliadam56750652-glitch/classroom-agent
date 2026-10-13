@@ -72,17 +72,17 @@ src/agent/
   gate/        timetable.py  scheduler.py  messages.py  bot.py  quiz.py
                quizgen.py  actions.py  sections.py  adjustments.py
 tests/
-deploy/        README.md  fingerprint.py  systemd/
+deploy/        fingerprint.py
 data/          academic.db  token.json  library/  logs/
 config.yaml    timetable.yaml          (both hand-edited, both gitignored)
 ```
 
-`deploy/` is Phase 5a: the runbook for the move to the Oracle box, the five
-systemd units, and `fingerprint.py`, which prints a comparable summary of a
-`DATA_DIR` -- row counts, the figures that cannot be rebuilt from the API,
-and one hash over the whole library -- so that "the data arrived whole" is a
-`diff` rather than a belief. It imports nothing from `agent` on purpose: a
-broken install and a truncated copy must not look alike.
+`deploy/fingerprint.py` prints a comparable summary of a `DATA_DIR` -- row
+counts, the figures that cannot be rebuilt from the API, and one hash over the
+whole library -- so that "the data arrived whole" after a copy to a new machine
+is a `diff` rather than a belief. It imports nothing from `agent` on purpose: a
+broken install and a truncated copy must not look alike. (Phase 5a, the server,
+was cancelled on 2026-10-13; the backend lives on this PC. See `PLAN.md`.)
 
 The timetable is a file, not a table. It is versioned, semester-scoped
 configuration with joint sessions and per-session teachers, none of which the
@@ -252,12 +252,10 @@ requires administrator rights this account does not have -- so each starts from 
 as the ordinary user. It is a crude mechanism and it costs nothing, because
 neither `agent bot` nor `agent serve` holds state a restart could lose.
 
-**That table describes the laptop, and stays true until the Phase 5a cutover.**
-The systemd equivalents are written and sit in `deploy/systemd/`; nothing has
-moved yet. Two settings there are not defaults and both encode a rule from this
-file: `Persistent=true` on the run timer because the sync is catch-up safe, and
-`Persistent=false` on the gate timer because it deliberately is not -- a box
-that boots at 06:00 must not send last night's prompt. See `deploy/README.md`.
+**That table is the whole of the deployment.** There is no server (Phase 5a was
+cancelled on 2026-10-13), so everything above runs only while this PC is on.
+`agent run` is catch-up safe, so a missed 07:30 is reported in full by the next
+run; `agent gate` deliberately is not, so a missed 20:00 sends nothing late.
 
 The quiz has no entry of its own. It is sat from a button -- in Telegram or in
 the web app, one open attempt per item shared by both -- and its questions are
