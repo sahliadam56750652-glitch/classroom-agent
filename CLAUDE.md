@@ -65,7 +65,7 @@ src/agent/
   classroom/   client.py  models.py
   db/          schema.sql  store.py
   sync/        poller.py  differ.py  deadlines.py
-  files/       drive.py  extract.py  packs.py  ocr.py
+  files/       drive.py  extract.py  render.py  packs.py  ocr.py
   llm/         provider.py
   notify/      telegram.py  dispatch.py
   digest/      composer.py
@@ -240,7 +240,7 @@ them must not inherit another's.
 
 | when | how | command | why |
 |---|---|---|---|
-| 07:30, 19:30 | Task Scheduler | `agent run` | sync → fetch → extract → ocr → studyitems → quizzes → packs → deadlines → notify |
+| 07:30, 19:30 | Task Scheduler | `agent run` | sync → fetch → extract → render → ocr → studyitems → quizzes → packs → deadlines → notify |
 | 20:00 | Task Scheduler | `agent gate` | tomorrow's revision prompt, after the 19:30 sync has pulled the day's material |
 | at logon | Startup `.vbs` → `pythonw.exe` | `agent bot` | the long-poll listener; restart-safe, so killing it is harmless |
 | at logon | Startup `.vbs` → `pythonw.exe` | `agent serve` | the HTTP API behind the web client; holds no state a restart could lose |

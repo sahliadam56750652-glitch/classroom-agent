@@ -552,6 +552,29 @@ gate asks that evening with `timetable.yaml` untouched.
 - **5c — the PWA and the APK.** The client DESIGN.md is the brief for.
 - **5d — the gate's actions in the client.** Deliver, mark-read, skip and
   snooze, reached from the web client rather than only from Telegram.
+- **5e slice 3 built (2026-10-13): PowerPoint and Word become PDFs on the PC.**
+  `files/render.py` and a `render` stage in `agent run` (after extract) convert
+  every in-scope PPTX and DOCX with LibreOffice, headless, under a private
+  profile in `DATA_DIR`; `agent render [--dry-run]` runs it alone. Re-converted
+  only when the source's sha256 changes. `renderings` is a new table. A missing
+  `soffice` fails the stage loudly and names LibreOffice; nothing is half-done.
+  `DocumentOut` now says how to view a file (`view`, `pdf_url`, `pdf_key`,
+  `unreadable_because`), and the reader opens that URL -- a deck that has not
+  been converted says so instead of failing. **Not yet run on the real 32 files:
+  LibreOffice was not installed on 2026-10-13.** The dry run lists them (19
+  PPTX, 13 DOCX); the conversion and its size are measured the first time
+  `agent render` runs with LibreOffice present.
+
+  **One source of page text, and it is the original's extraction.** A rendering
+  is for reading only: never extracted, never OCR'd, never quizzed on, never an
+  anchor. OCR caches are keyed by page, quiz sets by a fingerprint of the
+  extraction, and saved positions by a content hash of its pages; re-deriving
+  any of them from the PDF would silently retire all three the day a deck
+  became one. LibreOffice exports hidden slides too, so page N of the PDF is
+  slide N of the extraction; where the counts still differ (a Word file is
+  paginated by LibreOffice, not by python-docx), positions are kept by page
+  number only, and a test pins that a rendering leaves the quiz fingerprint and
+  the extraction row untouched.
 - **5e slice 2 complete (2026-10-13): manual logging removed, identity kept.**
   Gone: `agent upload`, `agent sessions`, `agent subjects --add`,
   `POST /api/uploads`, `GET`/`POST /api/sessions`, `POST /api/subjects/manual`,

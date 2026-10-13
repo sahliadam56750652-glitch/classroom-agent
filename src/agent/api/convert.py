@@ -139,6 +139,56 @@ def window(
     )
 
 
+PDF_MIME = "application/pdf"
+IMAGE_MIMES = frozenset({"image/png", "image/jpeg"})
+RENDERED_MIMES = frozenset({
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+})
+
+
+def _get(row, key):
+    return row[key] if key in row.keys() else None
+
+
+def view_of(row) -> dict:
+    """How the reader shows one held file: the view, the URL, the content key.
+
+    One function for every caller, so a document is readable on the subject
+    page exactly when it is readable in the library and in the reader. `row`
+    carries the extraction's columns and, when there is one, the rendering's.
+    """
+    drive_id = str(row["drive_id"])
+    held = bool(_get(row, "local_path")) and str(_get(row, "status") or "") == "ok"
+    mime = _get(row, "mime_type")
+    if not held:
+        return {"readable": False, "view": None, "pdf_url": None, "pdf_key": None,
+                "pdf_bytes": None, "unreadable_because": None}
+    if mime == PDF_MIME:
+        key = _get(row, "md5_checksum")
+        key = f"md5:{key}" if key else f"held:{_get(row, 'size_bytes')}:{_get(row, 'extracted_at')}"
+        return {"readable": True, "view": "pdf", "pdf_url": f"/api/documents/{drive_id}/file",
+                "pdf_key": key, "pdf_bytes": _get(row, "size_bytes"), "unreadable_because": None}
+    if mime in IMAGE_MIMES:
+        key = _get(row, "md5_checksum")
+        key = f"md5:{key}" if key else f"held:{_get(row, 'size_bytes')}:{_get(row, 'extracted_at')}"
+        return {"readable": True, "view": "image", "pdf_url": f"/api/documents/{drive_id}/file",
+                "pdf_key": key, "pdf_bytes": _get(row, "size_bytes"), "unreadable_because": None}
+    if mime in RENDERED_MIMES:
+        if _get(row, "pdf_path") and _get(row, "pdf_sha256"):
+            return {"readable": True, "view": "pdf", "pdf_url": f"/api/documents/{drive_id}/pdf",
+                    "pdf_key": f"sha256:{_get(row, 'pdf_sha256')}", "pdf_bytes": _get(row, "pdf_bytes"),
+                    "unreadable_because": None}
+        why = _get(row, "render_error")
+        return {"readable": False, "view": None, "pdf_url": None, "pdf_key": None, "pdf_bytes": None,
+                "unreadable_because": (
+                    f"It could not be converted to a PDF: {why}" if why
+                    else "It is waiting to be converted to a PDF on the PC."
+                )}
+    return {"readable": False, "view": None, "pdf_url": None, "pdf_key": None, "pdf_bytes": None,
+            "unreadable_because": "This kind of file cannot be shown in the reader."}
+
+
 def document(row: sqlite3.Row) -> schemas.DocumentOut:
     """One attachment, as `store.study_item_files` returns it.
 
@@ -146,18 +196,18 @@ def document(row: sqlite3.Row) -> schemas.DocumentOut:
     too -- so a document arrives under the same name on both, and changing that
     rule stays a decision about one function.
     """
-    local = row["local_path"] if "local_path" in row.keys() else None
+    local = _get(row, "local_path")
     title = str(row["title"] or row["drive_id"])
     return schemas.DocumentOut(
         drive_id=str(row["drive_id"]),
         title=title,
-        url=row["url"] if "url" in row.keys() else None,
-        status=row["status"] if "status" in row.keys() else None,
-        mime_type=row["mime_type"] if "mime_type" in row.keys() else None,
-        size_bytes=row["size_bytes"] if "size_bytes" in row.keys() else None,
-        pages=row["pages"] if "pages" in row.keys() else None,
+        url=_get(row, "url"),
+        status=_get(row, "status"),
+        mime_type=_get(row, "mime_type"),
+        size_bytes=_get(row, "size_bytes"),
+        pages=_get(row, "pages"),
         filename=document_filename(title, local) if local else None,
-        readable=bool(local) and str(row["status"] or "") == "ok",
+        **view_of(row),
     )
 
 

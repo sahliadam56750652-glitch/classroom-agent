@@ -366,7 +366,7 @@ function Actions({ item, files, windows, onNext }) {
     if (!readable || !navigator.serviceWorker?.controller) return;
     navigator.serviceWorker.controller.postMessage({
       type: "keep",
-      url: `/api/documents/${encodeURIComponent(readable.drive_id)}/file`,
+      url: readable.pdf_url,
     });
   }, [readable && readable.drive_id]);
 

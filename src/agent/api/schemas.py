@@ -175,7 +175,19 @@ class DocumentOut(BaseModel):
     # extension of the bytes actually served, from the same function Telegram
     # delivery uses, so a document has one name everywhere.
     filename: str | None = None
+    # Whether the reader can show it, and how. Since Phase 5e a PowerPoint or a
+    # Word file is readable when the PC has converted it to a PDF (files/
+    # render.py); `view` is "pdf", "image" or null, and `pdf_url` is the file the
+    # reader -- and the phone's offline copy -- actually opens.
     readable: bool = False
+    view: str | None = None
+    pdf_url: str | None = None
+    # What the phone keys its copy on: a content hash, so a changed file is
+    # fetched again and an unchanged one never is.
+    pdf_key: str | None = None
+    pdf_bytes: int | None = None
+    # Why a file that should be readable is not, in a sentence. Null otherwise.
+    unreadable_because: str | None = None
     # Read-only context, and about a DIFFERENT thing from `ItemOut.ready`: a
     # window says which pages an evening covers, while readiness is still about
     # the whole post until 3d stage 2 lands. See routes/library.py.

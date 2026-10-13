@@ -182,16 +182,21 @@ export function Reader({ driveId }) {
     };
   }, [driveId]);
 
-  // The document itself. PDF.js fetches ranges from this URL as pages are asked
-  // for; nothing here reads bytes.
+  // The document itself, from the URL its details name: the file when it is a
+  // PDF, the PDF the PC made of it when it is PowerPoint or Word (Phase 5e).
+  // PDF.js fetches ranges from that URL as pages are asked for; nothing here
+  // reads bytes. Waits for the details, because they say which URL -- and an
+  // image or an unreadable file needs no PDF.js at all.
+  const pdfUrl = doc && doc.view === "pdf" ? doc.pdf_url : null;
   useEffect(() => {
+    if (!pdfUrl) return undefined;
     let live = true;
     let task = null;
     loadPdfjs()
       .then((lib) => {
         if (!live) return;
         task = lib.getDocument({
-          url: `/api/documents/${encodeURIComponent(driveId)}/file`,
+          url: pdfUrl,
           // The session cookie has to ride along, or every range request is a
           // 401 and the document never opens.
           withCredentials: true,
@@ -207,12 +212,19 @@ export function Reader({ driveId }) {
         return task.promise;
       })
       .then((opened) => live && opened && setPdf(opened))
-      .catch((err) => live && setProblem(describe(err)));
+      .catch((err) =>
+        live &&
+        setProblem(
+          err instanceof Offline || (err && err.name === "UnexpectedResponseException")
+            ? "This document is not on the phone yet. It arrives with the next sync, while the PC is on."
+            : describe(err)
+        )
+      );
     return () => {
       live = false;
       if (task) task.destroy();
     };
-  }, [driveId]);
+  }, [pdfUrl]);
 
   // Fit the page width to the viewport, and follow a rotation.
   useEffect(() => {
@@ -302,6 +314,19 @@ export function Reader({ driveId }) {
     </main>`;
   }
 
+  // A file the reader cannot show says why, rather than a blank page.
+  if (doc && !doc.readable) {
+    return html`<main class="reader-problem">
+      <${Problem}>${doc.unreadable_because || "This file cannot be shown in the reader."}</${Problem}>
+      ${doc.url
+        ? html`<p><a class="button secondary-button" href=${doc.url} target="_blank" rel="noopener">
+            <${Icon} name="external" /> Open it in Drive
+          </a></p>`
+        : null}
+      <p><a class="button quiet-button" ...${linkProps("/")}><${Icon} name="back" /> Back</a></p>
+    </main>`;
+  }
+
   const total = pdf ? pdf.numPages : doc ? doc.pages : 0;
   const nearby = [];
   for (let n = Math.max(1, current - NEARBY); n <= Math.min(total, current + NEARBY); n++) {
@@ -332,7 +357,9 @@ export function Reader({ driveId }) {
         : null}
 
       <div class="pages" ref=${scroller}>
-        ${pdf
+        ${doc && doc.view === "image"
+          ? html`<div class="page"><img class="reader-image" src=${doc.pdf_url} alt=${doc.title} /></div>`
+          : pdf
           ? Array.from({ length: total }, (_, index) => index + 1).map((n) =>
               nearby.includes(n)
                 ? html`<${Page}

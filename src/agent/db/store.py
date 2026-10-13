@@ -1270,9 +1270,13 @@ def study_item_files(
     return conn.execute(
         "SELECT DISTINCT m.drive_id, m.title, m.url, "
         "       e.status, e.local_path, e.mime_type, e.size_bytes, e.pages, "
+        "       e.md5_checksum, e.extracted_at, "
+        "       r.pdf_path, r.sha256 AS pdf_sha256, r.bytes AS pdf_bytes, "
+        "       r.pages AS pdf_pages, r.error AS render_error, "
         "       t.file_id "
         "  FROM materials m "
         "  LEFT JOIN extractions e ON e.drive_id = m.drive_id "
+        "  LEFT JOIN renderings r ON r.drive_id = m.drive_id "
         "  LEFT JOIN telegram_files t ON t.drive_id = m.drive_id "
         " WHERE m.parent_type = ? AND m.parent_id = ? AND m.deleted_at IS NULL "
         "   AND m.drive_id IS NOT NULL "
@@ -2549,3 +2553,55 @@ def repoint_adjustment(
         (subject, course_id, adjustment_id),
     )
     return cursor.rowcount > 0
+
+
+# --------------------------------------------------------------------------
+# renderings -- PDFs of what the reader cannot open itself (Phase 5e)
+# --------------------------------------------------------------------------
+
+def get_rendering(conn: sqlite3.Connection, drive_id: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM renderings WHERE drive_id = ?", (drive_id,)).fetchone()
+
+
+def save_rendering(
+    conn: sqlite3.Connection,
+    drive_id: str,
+    *,
+    source_sha256: str,
+    pdf_path: str | None,
+    sha256: str | None,
+    size: int | None,
+    pages: int | None,
+    renderer: str | None,
+    error: str | None = None,
+    now: str | None = None,
+) -> None:
+    conn.execute(
+        "INSERT INTO renderings (drive_id, source_sha256, pdf_path, sha256, bytes, pages, "
+        "  renderer, rendered_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(drive_id) DO UPDATE SET source_sha256 = excluded.source_sha256, "
+        "  pdf_path = excluded.pdf_path, sha256 = excluded.sha256, bytes = excluded.bytes, "
+        "  pages = excluded.pages, renderer = excluded.renderer, "
+        "  rendered_at = excluded.rendered_at, error = excluded.error",
+        (drive_id, source_sha256, pdf_path, sha256, size, pages, renderer,
+         now or _utc_now_iso(), error),
+    )
+
+
+def renderable_files(conn: sqlite3.Connection, course_ids: Sequence[str], mimes: Sequence[str]) -> list[sqlite3.Row]:
+    """Every held file of these types in these courses, with its rendering if any."""
+    if not course_ids or not mimes:
+        return []
+    courses = ", ".join("?" for _ in course_ids)
+    kinds = ", ".join("?" for _ in mimes)
+    return conn.execute(
+        f"SELECT DISTINCT e.drive_id, e.local_path, e.mime_type, e.pages, "
+        f"       r.source_sha256, r.error, r.pdf_path "
+        f"  FROM extractions e "
+        f"  JOIN materials m ON m.drive_id = e.drive_id AND m.deleted_at IS NULL "
+        f"  LEFT JOIN renderings r ON r.drive_id = e.drive_id "
+        f" WHERE e.status = 'ok' AND e.local_path IS NOT NULL "
+        f"   AND m.course_id IN ({courses}) AND e.mime_type IN ({kinds}) "
+        f" ORDER BY e.drive_id",
+        [*course_ids, *mimes],
+    ).fetchall()

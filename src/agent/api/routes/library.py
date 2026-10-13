@@ -221,6 +221,13 @@ def document(
     title = str((material["title"] if material else None) or drive_id)
     local = row["local_path"]
     windows, _ = _document_windows(conn, config, drive_id, pages)
+    rendering = store.get_rendering(conn, drive_id)
+    viewed = dict(row)
+    if rendering is not None:
+        viewed.update(
+            pdf_path=rendering["pdf_path"], pdf_sha256=rendering["sha256"],
+            pdf_bytes=rendering["bytes"], render_error=rendering["error"],
+        )
     return schemas.DocumentOut(
         drive_id=drive_id,
         title=title,
@@ -232,9 +239,45 @@ def document(
         filename=(
             document_filename(title, str(local)) if local else None
         ),
-        readable=bool(local) and str(row["status"] or "") == "ok",
         windows=windows,
+        **convert.view_of(_Row(viewed)),
     )
+
+
+class _Row(dict):
+    """A dict that answers `keys()` like a sqlite3.Row, for `convert.view_of`."""
+
+
+@router.get("/documents/{drive_id}/pdf")
+def document_pdf(
+    drive_id: str, request: Request, conn: Db, config: Conf, session: Session
+) -> Response:
+    """The PDF the PC made of a PowerPoint or Word file, with ranges.
+
+    Phase 5e: for reading only. It is never extracted, never OCR'd and never
+    quizzed on -- the original's extraction is the one source of page text.
+    See files/render.py.
+    """
+    rendering = store.get_rendering(conn, drive_id)
+    if rendering is None or not rendering["pdf_path"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"No PDF has been made of {drive_id} yet. `agent run` converts "
+                f"PowerPoint and Word files when LibreOffice is installed."
+            ),
+        )
+    path = files.resolve(config, str(rendering["pdf_path"]))
+    if not path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"The PDF of {drive_id} is recorded but missing from disk.",
+        )
+    material = conn.execute(
+        "SELECT title FROM materials WHERE drive_id = ? LIMIT 1", (drive_id,)
+    ).fetchone()
+    title = str((material["title"] if material else None) or drive_id)
+    return files.document_response(request, path, title=title, mime_type="application/pdf")
 
 
 @router.get("/documents/{drive_id}/file")
@@ -430,6 +473,16 @@ def _anchor_at(
     """
     row = store.document_source(conn, drive_id)
     if row is None:
+        return None
+    # The reader shows a rendering for PowerPoint and Word. When its page count
+    # is not the extraction's, page N on screen is not page N of the text, and a
+    # hash taken from the text would anchor the wrong page: keep the number only.
+    rendering = store.get_rendering(conn, drive_id)
+    extraction = store.get_extraction(conn, drive_id)
+    if (
+        rendering is not None and rendering["pdf_path"] and extraction is not None
+        and rendering["pages"] != extraction["pages"]
+    ):
         return None
     document = sections.read_document(
         row, config.library_dir, store.ocr_pages_for(conn, drive_id)

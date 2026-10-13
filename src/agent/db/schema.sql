@@ -978,3 +978,33 @@ CREATE TABLE IF NOT EXISTS read_positions (
     page_index INTEGER NOT NULL,   -- 0-based, matching ocr_pages.page_index
     updated_at TEXT NOT NULL
 );
+
+
+-- -------------------------------------------------------------- renderings
+
+-- A PDF of a file the reader cannot open itself: a PowerPoint deck or a Word
+-- document, converted on the PC by LibreOffice (files/render.py). Phase 5e.
+--
+-- A rendering is FOR READING ONLY. It is never extracted, never OCR'd, and never
+-- feeds a quiz or a reading anchor: the original file's extraction stays the one
+-- source of page text, so OCR caches, quiz sets and saved positions do not
+-- silently change the day a deck gains a PDF. `pages` is recorded so that a
+-- rendering whose page count differs from the extraction's -- a deck with hidden
+-- slides LibreOffice would not export, a Word file paginated differently -- is
+-- known to be one: a saved position is then kept by page number only.
+--
+-- `source_sha256` is of the file that was converted; when it no longer matches,
+-- the rendering is redone. `error` holds the sentence when a conversion failed,
+-- so a deck that cannot be converted says why instead of looking unreadable.
+-- Rebuildable from the library at any time, so not in the backup.
+CREATE TABLE IF NOT EXISTS renderings (
+    drive_id      TEXT PRIMARY KEY,
+    source_sha256 TEXT NOT NULL,
+    pdf_path      TEXT,          -- relative to the library, forward slashes
+    sha256        TEXT,          -- of the PDF: what the phone keys its copy on
+    bytes         INTEGER,
+    pages         INTEGER,
+    renderer      TEXT,
+    rendered_at   TEXT NOT NULL,
+    error         TEXT
+);

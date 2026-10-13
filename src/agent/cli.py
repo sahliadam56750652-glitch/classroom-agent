@@ -19,7 +19,7 @@ from .config import Config, ConfigError, load_config
 from .db import store
 from .digest import composer
 from . import entries
-from .files import drive, extract, ocr, packs
+from .files import drive, extract, ocr, packs, render as render_mod
 from .gate import adjustments as gate_adjust
 from .gate import bot as gate_bot
 from .gate import messages as gate_messages
@@ -467,6 +467,16 @@ def _build_parser() -> argparse.ArgumentParser:
     tasks_parser.add_argument(
         "--dry-run", action="store_true",
         help="report what would be recorded; write nothing",
+    )
+
+    render_parser = sub.add_parser(
+        "render",
+        parents=[shared],
+        help="convert in-scope PowerPoint and Word files to PDF so the reader can open them",
+    )
+    render_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="list what would be converted; run nothing",
     )
 
     homework_parser = sub.add_parser(
@@ -3471,10 +3481,52 @@ def _print_prepared(result) -> None:
         print("  nothing to prepare")
 
 
+def _do_render(config: Config, conn, *, dry_run: bool):
+    """In-scope PowerPoint and Word to PDF. Raises RenderError if soffice is missing."""
+    table = _timetable_or_none(config)
+    return render_mod.run(conn, config, sorted(scope_mod.local(config, table)), dry_run=dry_run)
+
+
+def _print_rendered(result) -> None:
+    if result.planned:
+        print(f"  dry run -- would convert {len(result.planned)} file(s):")
+        for drive_id in result.planned:
+            print(f"    {drive_id}")
+    for drive_id in result.converted:
+        print(f"  converted {drive_id}")
+    if result.unchanged:
+        print(f"  {result.unchanged} already converted and unchanged")
+    for drive_id, why in result.failed:
+        print(f"  {drive_id} not converted: {why}")
+    for drive_id, slides, pages in result.mismatched:
+        print(f"  {drive_id}: {slides} slide(s) but {pages} PDF page(s); positions kept by page number")
+    if not (result.planned or result.converted or result.unchanged or result.failed):
+        print("  nothing to convert")
+
+
+def cmd_render(config: Config, args: argparse.Namespace) -> int:
+    """Convert in-scope PowerPoint and Word files to PDF with LibreOffice.
+
+    Exits non-zero, naming LibreOffice, when soffice cannot be found -- a
+    conversion step that silently converts nothing would leave the reader quietly
+    unable to open most of the term.
+    """
+    conn = store.open_db(config)
+    try:
+        result = _do_render(config, conn, dry_run=args.dry_run)
+    except render_mod.RenderError as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+    _print_rendered(result)
+    return 1 if result.failed else 0
+
+
 def cmd_run(config: Config, args: argparse.Namespace) -> int:
     """The whole pipeline, in the order each stage feeds the next.
 
-    sync -> fetch -> extract -> ocr -> studyitems -> packs -> deadlines -> notify.
+    sync -> fetch -> extract -> render -> ocr -> studyitems -> quizzes -> packs -> deadlines -> notify.
 
     Classroom state arrives first because everything else reads it; bytes are
     fetched before they can be extracted; text is extracted before a model can
@@ -3520,6 +3572,13 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
             "extract",
             lambda: _do_extract(config, conn, dry_run=args.dry_run),
             report=_print_extract,
+        )
+        # PowerPoint and Word to PDF, for the reader. Fails loudly, naming
+        # LibreOffice, when soffice is missing -- and only this stage fails.
+        _stage(
+            "render",
+            lambda: _do_render(config, conn, dry_run=args.dry_run),
+            report=_print_rendered,
         )
 
         # Bounded by default: the free tier allows roughly 20 pages a day and
@@ -3603,6 +3662,7 @@ COMMANDS = {
     "projects": cmd_projects,
     "tasks": cmd_tasks,
     "homework": cmd_homework,
+    "render": cmd_render,
     "subjects": cmd_subjects,
     "timetable": cmd_timetable,
     "gate": cmd_gate,

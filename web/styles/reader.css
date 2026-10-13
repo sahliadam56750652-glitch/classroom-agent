@@ -142,3 +142,12 @@
   flex-direction: column;
   gap: var(--s4);
 }
+
+/* A photographed board or an image file: shown as it is, never filtered. */
+.reader-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--line);
+}

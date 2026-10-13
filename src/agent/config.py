@@ -151,6 +151,10 @@ class Config:
     # which is what a plain `agent serve` on a laptop wants.
     api_origin: str | None = None
 
+    # config.yaml's render.soffice: the full path to LibreOffice's soffice, when
+    # it is not on PATH or in the usual places. See files/render.py.
+    render_soffice: str | None = None
+
     # config.yaml's telegram.bot_username, without the @. Not a credential -- it
     # is the public handle anyone can see -- so it belongs here beside chat_id
     # rather than in .env.
@@ -362,6 +366,20 @@ def _api_secure_cookie(raw: dict[str, Any], config_path: Path) -> bool:
             f"got {value!r}."
         )
     return value
+
+
+def _render_soffice(raw: dict[str, Any], config_path: Path) -> str | None:
+    section = raw.get("render") or {}
+    if not isinstance(section, dict):
+        raise ConfigError(f"{config_path}: 'render' must be a mapping.")
+    value = section.get("soffice")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(
+            f"{config_path}: 'render.soffice' must be the full path to soffice, got {value!r}."
+        )
+    return value.strip()
 
 
 def _api_origin(raw: dict[str, Any], config_path: Path) -> str | None:
@@ -608,5 +626,6 @@ def load_config(config_path: Path | None = None) -> Config:
         quiz_prepare_limit=prepare_limit,
         api_secure_cookie=_api_secure_cookie(raw, config_path),
         api_origin=_api_origin(raw, config_path),
+        render_soffice=_render_soffice(raw, config_path),
         telegram_bot_username=_telegram_bot_username(raw, config_path),
     )
