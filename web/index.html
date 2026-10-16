@@ -9,26 +9,46 @@
   tests/test_web_assets.py asserts this tag stays exactly this shape.
 -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
+<!--
+  What the page IS, declared exactly, per theme -- set by the script below and
+  by web/theme.js, never left to a default. Light and Bright are "only light",
+  Dark "only dark", System "light dark". The "only" is what tells Chrome's
+  "dark theme for sites" to keep its hands off: a page that says plain "light"
+  is fair game, and it was darkened on the S25 (2026-10-16) -- the light-dark()
+  tokens resolved to our Dark values, and Bright's pixels were recoloured.
+  tests/test_web_theme.py reproduces it with force-dark on.
+-->
+<meta name="color-scheme" content="light dark">
 <title>Lectern</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#f3efe7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#171512" media="(prefers-color-scheme: dark)">
+<!-- ONE theme-color, no media query: the status bar follows the app's theme,
+     not the phone's. Set to the chosen theme's ground below. -->
 <meta name="theme-color" content="#f3efe7">
 <!--
   The theme chosen in More, applied before anything paints, so a dark-theme
-  phone never flashes paper at 23:00. Same key as web/theme.js. Inline because a
-  module would run after the first paint; no external script, nothing fetched.
+  phone never flashes paper at 23:00. Same key and same tables as web/theme.js.
+  Inline because a module would run after the first paint; nothing fetched.
 -->
 <script>
   try {
-    var chosen = localStorage.getItem("lectern.theme") || localStorage.getItem("margin.theme");
+    var chosen = null;
+    try {
+      chosen = localStorage.getItem("lectern.theme") || localStorage.getItem("margin.theme");
+    } catch (e) {}
     var grounds = { light: "#f3efe7", dark: "#171512", bright: "#f4f7fb" };
+    var schemes = { light: "only light", dark: "only dark", bright: "only light" };
+    var root = document.documentElement;
+    var effective = chosen;
     if (grounds[chosen]) {
-      document.documentElement.dataset.theme = chosen;
-      document.querySelector('meta[name="theme-color"]:not([media])')
-        .setAttribute("content", grounds[chosen]);
+      root.dataset.theme = chosen;
+    } else {
+      chosen = "system";
+      effective = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     }
+    var scheme = schemes[chosen] || "light dark";
+    root.style.colorScheme = scheme;
+    document.querySelector('meta[name="color-scheme"]').setAttribute("content", scheme);
+    document.querySelector('meta[name="theme-color"]').setAttribute("content", grounds[effective]);
   } catch (e) {}
 </script>
 <link rel="icon" href="/icon.svg" type="image/svg+xml">

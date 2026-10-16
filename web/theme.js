@@ -23,6 +23,13 @@ export const CHOICES = ["system", "light", "dark", "bright"];
 // The page ground of each theme, for the browser's own chrome.
 const GROUND = { light: "#f3efe7", dark: "#171512", bright: "#f4f7fb" };
 
+// What the page declares it is, per theme -- on <meta name="color-scheme"> and
+// on :root. "only" keeps Chrome's "dark theme for sites" from darkening a page
+// that chose to be light (index.html has the story). Same table as index.html.
+const SCHEME = { system: "light dark", light: "only light", dark: "only dark", bright: "only light" };
+
+const SYSTEM_DARK = matchMedia("(prefers-color-scheme: dark)");
+
 export function storedTheme() {
   try {
     const found = localStorage.getItem(KEY) || localStorage.getItem(OLD_KEY);
@@ -34,16 +41,26 @@ export function storedTheme() {
 
 function effective(choice) {
   if (choice !== "system") return choice;
-  return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return SYSTEM_DARK.matches ? "dark" : "light";
 }
 
 export function applyTheme(choice) {
   const root = document.documentElement;
   if (choice === "system") delete root.dataset.theme;
   else root.dataset.theme = choice;
-  const meta = document.querySelector('meta[name="theme-color"]:not([media])');
+  const scheme = SCHEME[choice] || SCHEME.system;
+  root.style.colorScheme = scheme;
+  const declared = document.querySelector('meta[name="color-scheme"]');
+  if (declared) declared.setAttribute("content", scheme);
+  const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute("content", GROUND[effective(choice)]);
 }
+
+// With System chosen, the phone switching between light and dark moves the
+// status bar too -- the one thing the page cannot do by CSS alone.
+SYSTEM_DARK.addEventListener("change", () => {
+  if (storedTheme() === "system") applyTheme("system");
+});
 
 export function setTheme(choice) {
   if (!CHOICES.includes(choice)) return;
