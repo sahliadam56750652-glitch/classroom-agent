@@ -147,12 +147,27 @@ def pdf_pages(path: Path) -> int | None:
 
 
 @dataclass
+class Sizes:
+    """One file as `agent render` reports it: its name and what it weighs."""
+
+    title: str
+    before: int  # the PowerPoint or Word file
+    after: int | None = None  # the PDF; None until there is one
+
+
+@dataclass
 class Rendered:
     converted: list[str] = field(default_factory=list)
     unchanged: int = 0
     failed: list[tuple[str, str]] = field(default_factory=list)
     mismatched: list[tuple[str, int, int]] = field(default_factory=list)
     planned: list[str] = field(default_factory=list)
+    # Every file looked at, by drive id: converted, unchanged, planned, failed.
+    files: dict[str, Sizes] = field(default_factory=dict)
+
+    def held(self) -> list[str]:
+        """The files that have a PDF now: converted this run or already."""
+        return [drive_id for drive_id, sizes in self.files.items() if sizes.after is not None]
 
 
 def run(conn, config: Config, course_ids: list[str], *, dry_run: bool = False, now: str | None = None) -> Rendered:
@@ -167,13 +182,19 @@ def run(conn, config: Config, course_ids: list[str], *, dry_run: bool = False, n
 
     wanted: list[tuple] = []
     for row in rows:
+        drive_id = str(row["drive_id"])
         source = library / str(row["local_path"])
+        title = str(row["title"] or drive_id)
         if not source.is_file():
-            result.failed.append((str(row["drive_id"]), "the file is not on disk"))
+            result.files[drive_id] = Sizes(title, 0)
+            result.failed.append((drive_id, "the file is not on disk"))
             continue
+        result.files[drive_id] = Sizes(title, source.stat().st_size)
         digest = sha256_of(source)
         if row["source_sha256"] == digest and row["pdf_path"] and not row["error"]:
-            if (library / str(row["pdf_path"])).is_file():
+            pdf = library / str(row["pdf_path"])
+            if pdf.is_file():
+                result.files[drive_id].after = pdf.stat().st_size
                 result.unchanged += 1
                 continue
         wanted.append((row, source, digest))
@@ -218,6 +239,7 @@ def run(conn, config: Config, course_ids: list[str], *, dry_run: bool = False, n
             renderer=RENDERER, now=now,
         )
         conn.commit()
+        result.files[drive_id].after = target.stat().st_size
         result.converted.append(drive_id)
         if row["mime_type"] == PPTX_MIME and row["pages"] and pages and pages != row["pages"]:
             result.mismatched.append((drive_id, int(row["pages"]), int(pages)))

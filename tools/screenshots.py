@@ -2,6 +2,7 @@
 
     python tools/screenshots.py before
     python tools/screenshots.py after
+    python tools/screenshots.py after --theme=bright today study
 
 Writes `web/screenshots/<label>/<screen>-<width>.png`. Same synthetic data every
 run, so a before and an after are comparable -- and synthetic rather than read
@@ -74,7 +75,7 @@ SCREENS = [
 
 # Every screen in both themes, DESIGN.md section 8: light is designed, not
 # derived, so it has to be looked at as much as dark does.
-THEMES = ("light", "dark")
+THEMES = ("light", "dark", "bright")
 
 # The state DESIGN.md section 4 says to design first: 23:00 the night before an
 # 08:30 lecture, nothing done. The page's clock is FROZEN at that instant over
@@ -479,7 +480,10 @@ def main() -> int:
     label = sys.argv[1] if len(sys.argv) > 1 else "after"
     # Any further arguments name the screens to take, so one screen's commit
     # re-shoots that screen and leaves the others as they were.
-    only = set(sys.argv[2:])
+    # `--theme=bright` (repeatable) takes those themes only.
+    asked = [arg.split("=", 1)[1] for arg in sys.argv[2:] if arg.startswith("--theme=")]
+    themes = tuple(asked) or THEMES
+    only = {arg for arg in sys.argv[2:] if not arg.startswith("--")}
     if CHROME is None:
         print("no Chrome to render with", file=sys.stderr)
         return 1
@@ -508,7 +512,7 @@ def main() -> int:
             print((root / "serve.log").read_text(errors="replace")[-2000:])
             return 1
         print(f"writing {out}")
-        for theme in THEMES:
+        for theme in themes:
             for name, path, signed_in in SCREENS:
                 if only and name not in only:
                     continue

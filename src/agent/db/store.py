@@ -2596,7 +2596,9 @@ def renderable_files(conn: sqlite3.Connection, course_ids: Sequence[str], mimes:
     kinds = ", ".join("?" for _ in mimes)
     return conn.execute(
         f"SELECT DISTINCT e.drive_id, e.local_path, e.mime_type, e.pages, "
-        f"       r.source_sha256, r.error, r.pdf_path "
+        f"       r.source_sha256, r.error, r.pdf_path, r.bytes AS pdf_bytes, "
+        f"       (SELECT t.title FROM materials t WHERE t.drive_id = e.drive_id "
+        f"          AND t.title IS NOT NULL ORDER BY t.id LIMIT 1) AS title "
         f"  FROM extractions e "
         f"  JOIN materials m ON m.drive_id = e.drive_id AND m.deleted_at IS NULL "
         f"  LEFT JOIN renderings r ON r.drive_id = e.drive_id "

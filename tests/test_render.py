@@ -33,7 +33,8 @@ def config(tmp_path):
     return made
 
 
-def add_deck(config, *, drive_id="deck", mime=PPTX_MIME, slides=SLIDES, payload=b"PK fake deck"):
+def add_deck(config, *, drive_id="deck", mime=PPTX_MIME, slides=SLIDES, payload=b"PK fake deck",
+             title="Chapter 2"):
     library = config.library_dir
     (library / "files").mkdir(parents=True, exist_ok=True)
     (library / "text").mkdir(parents=True, exist_ok=True)
@@ -41,7 +42,7 @@ def add_deck(config, *, drive_id="deck", mime=PPTX_MIME, slides=SLIDES, payload=
     (library / "files" / f"{drive_id}{suffix}").write_bytes(payload)
     (library / "text" / f"{drive_id}.txt").write_text(sections.PAGE_BREAK.join(slides), encoding="utf-8")
     conn = store.connect(config.db_path)
-    attachment = {"driveFile": {"driveFile": {"id": drive_id, "title": "Chapter 2", "alternateLink": "x"}}}
+    attachment = {"driveFile": {"driveFile": {"id": drive_id, "title": title, "alternateLink": "x"}}}
     material, _ = parse_coursework_material(
         {"id": f"p-{drive_id}", "title": "Chapter 2", "creationTime": "2026-10-01T09:00:00Z",
          "updateTime": "2026-10-01T09:00:00Z", "materials": [attachment]},
@@ -190,6 +191,41 @@ def test_a_dry_run_plans_and_writes_nothing(config, soffice):
     result = render.run(conn, config, [COURSE], dry_run=True)
     assert result.planned == ["deck"]
     assert soffice.calls == [] and store.get_rendering(conn, "deck") is None
+
+
+def test_the_report_names_each_file_and_what_it_weighs(config, soffice, capsys):
+    """By title, never by Drive id; before and after; and a total over every
+    file that has a PDF now -- which is what the phone downloads."""
+    from agent import cli
+
+    add_deck(config, drive_id="d1", title="Chapter 2 - Joins.pptx", payload=b"P" * 2 * 1024 * 1024)
+    add_deck(config, drive_id="d2", title="TD 3.docx", mime=DOCX_MIME, payload=b"P" * 1024 * 1024)
+    conn = store.connect(config.db_path)
+    cli._print_rendered(render.run(conn, config, [COURSE]))
+    said = capsys.readouterr().out
+    assert "Chapter 2 - Joins.pptx  2.0 MB -> " in said
+    assert "TD 3.docx  1.0 MB -> " in said
+    assert "d1" not in said and "d2" not in said
+    assert "total: 2 file(s), 3.0 MB as PowerPoint and Word," in said
+
+    # A second run converts nothing and still totals what is held.
+    cli._print_rendered(render.run(conn, config, [COURSE]), every=True)
+    again = capsys.readouterr().out
+    assert "2 already converted and unchanged" in again
+    # `agent render` still names each file when nothing changed.
+    assert "TD 3.docx  1.0 MB -> " in again
+    assert "total: 2 file(s), 3.0 MB as PowerPoint and Word," in again
+
+
+def test_a_dry_run_names_what_it_would_convert(config, soffice, capsys):
+    from agent import cli
+
+    add_deck(config, drive_id="d1", title="Chapter 2 - Joins.pptx", payload=b"P" * 1024 * 1024)
+    conn = store.connect(config.db_path)
+    cli._print_rendered(render.run(conn, config, [COURSE], dry_run=True))
+    said = capsys.readouterr().out
+    assert "Chapter 2 - Joins.pptx  (1.0 MB)" in said
+    assert "total: 1.0 MB to convert" in said
 
 
 def test_only_the_courses_asked_for_are_converted(config, soffice):

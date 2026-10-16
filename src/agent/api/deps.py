@@ -70,6 +70,13 @@ def get_db(request: Request) -> Iterator[sqlite3.Connection]:
     route having written something: a read commits an empty transaction, which
     costs nothing, and the alternative is every write route remembering to say
     so.
+
+    **Committed BEFORE the response is sent** -- `scope="function"` on every
+    `Depends` of this, below. FastAPI's default runs a yield dependency's exit
+    after the response has gone, so a client could hear "signed in" (or "Read
+    recorded") and send its next request before the row existed: found
+    2026-10-16 as a sign-in whose very next GET was a 401 -- on a phone, that is
+    the app saying I am signed out right after I signed in.
     """
     config: Config = request.app.state.config
     conn = store.connect(
@@ -125,7 +132,7 @@ def require_timetable(
 
 def require_session(
     request: Request,
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> sqlite3.Row:
     """Every route but the exchange and the liveness probe depends on this.
 
@@ -153,7 +160,7 @@ def require_session(
 
 
 # The three names routes actually spell.
-Db = Annotated[sqlite3.Connection, Depends(get_db)]
+Db = Annotated[sqlite3.Connection, Depends(get_db, scope="function")]
 Conf = Annotated[Config, Depends(get_config)]
 Session = Annotated[sqlite3.Row, Depends(require_session)]
 Table = Annotated[Timetable, Depends(require_timetable)]

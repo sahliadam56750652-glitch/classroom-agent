@@ -944,8 +944,10 @@ def test_a_401_mid_use_routes_to_signin(served, tmp_path_factory):
           // Since 5e a screen reads the phone's snapshot, so a tap asks the PC
           // nothing; the next SYNC is what finds the session gone. The
           // connection coming back is one of the things that starts a sync.
+          // Long enough to cover the sync's own wait on the outbox
+          // (FLUSH_WAIT_MS, 2 s), which under virtual time never reads.
           f.contentWindow.dispatchEvent(new Event('online'));
-          await sleep(2500);
+          await sleep(6000);
         """,
     )
     _looks_signed_out(found)
@@ -1418,3 +1420,26 @@ def test_the_offline_edges_say_what_they_are(served, tmp_path_factory):
     assert found["noPlan"] and not found["oldItem"], found
     assert found["quiz"], found
     assert found["origin"], found
+
+
+@chrome_only
+def test_a_session_works_the_moment_sign_in_answers(served):
+    """The commit lands before the response is sent (api/deps.py:get_db).
+
+    FastAPI's default closes a yield dependency AFTER the response has gone, so
+    a client could be told "signed in" and send its next request before the
+    session row was committed -- a 401 straight after signing in. Only a real
+    server shows it: the TestClient waits for the teardown. Several rounds,
+    because it is a race.
+    """
+    import urllib.request
+
+    base, _ = served
+    for _ in range(6):
+        cookie = _sign_in(base)
+        request = urllib.request.Request(
+            f"{base}/api/documents/d-render/file", headers={"Cookie": cookie}
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            assert response.status == 200
+            response.read()

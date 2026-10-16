@@ -501,26 +501,36 @@ def test_precaching_bypasses_the_http_cache():
 # cannot quietly fall below WCAG AA.
 
 
-THEMES = ("light", "dark")
+THEMES = ("light", "dark", "bright")
 
 
-def _tokens(theme: str) -> dict[str, str]:
-    """Every colour token in :root, resolved for one theme.
+def _block(css: str, selector: str) -> str:
+    return re.search(re.escape(selector) + r"\s*\{(.*?)\n\}", css, re.S).group(1)
 
-    Tokens are `light-dark(#light, #dark)` pairs (DESIGN.md section 8), so the
-    light value is the first and the dark the second. A plain hex counts for
-    both.
-    """
-    css = (WEB / "app.css").read_text(encoding="utf-8")
-    root = re.search(r":root\s*\{(.*?)\n\}", css, re.S).group(1)
+
+def _colours(block: str, pick: int) -> dict[str, str]:
     found = {}
-    for name, value in re.findall(r"--([a-z0-9-]+):\s*([^;]+);", root):
+    for name, value in re.findall(r"--([a-z0-9-]+):\s*([^;]+);", block):
         pair = re.fullmatch(r"light-dark\((#[0-9a-fA-F]{6}),\s*(#[0-9a-fA-F]{6})\)", value.strip())
         if pair:
-            found[name] = pair.group(1 if theme == "light" else 2)
+            found[name] = pair.group(pick)
         elif re.fullmatch(r"#[0-9a-fA-F]{6}", value.strip()):
             found[name] = value.strip()
     return found
+
+
+def _tokens(theme: str) -> dict[str, str]:
+    """Every colour token, resolved for one theme.
+
+    Light and Dark are `light-dark(#light, #dark)` pairs in :root (DESIGN.md
+    section 8), so the light value is the first and the dark the second. Bright
+    is its own block, `:root[data-theme="bright"]`, of plain values -- read on
+    its own, so a token it forgot to redefine is MISSING, not silently Light's.
+    """
+    css = (WEB / "app.css").read_text(encoding="utf-8")
+    if theme == "bright":
+        return _colours(_block(css, ':root[data-theme="bright"]'), 1)
+    return _colours(_block(css, ":root"), 1 if theme == "light" else 2)
 
 
 def _luminance(hex_colour):
@@ -537,13 +547,26 @@ def _contrast(a, b):
 SURFACES = ("ground", "card", "raised")
 
 
-def test_both_themes_define_the_same_tokens():
-    """A token with a light value and no dark one is a theme half designed."""
-    light, dark = _tokens("light"), _tokens("dark")
-    assert light.keys() == dark.keys()
+def test_every_theme_defines_the_same_tokens():
+    """A token with a light value and no dark one -- or no bright one -- is a
+    theme half designed."""
+    light, dark, bright = _tokens("light"), _tokens("dark"), _tokens("bright")
+    assert light.keys() == dark.keys() == bright.keys()
     assert {"ground", "card", "ink", "accent", "passed", "s0-fg", "s11-fill"} <= light.keys()
-    # And they differ: the dark theme is not the light one with a new name.
+    # And they differ: no theme is another with a new name.
     assert light["ground"] != dark["ground"] and light["ink"] != dark["ink"]
+    assert bright["ground"] != light["ground"] and bright["s0-fill"] != light["s0-fill"]
+
+
+def test_bright_is_a_choice_and_never_the_systems():
+    """Selectable in More, applied before paint, and System still means light or
+    dark -- the phone's own setting never lands on Bright."""
+    theme = (WEB / "theme.js").read_text(encoding="utf-8")
+    assert '"bright"' in theme.split("export const CHOICES")[1].split(";")[0]
+    effective = theme.split("function effective")[1].split("\n}")[0]
+    assert "bright" not in effective
+    assert "bright:" in (WEB / "screens" / "more.js").read_text(encoding="utf-8")
+    assert "bright:" in (WEB / "index.html").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("theme", THEMES)

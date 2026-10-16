@@ -626,6 +626,14 @@ gate asks that evening with `timetable.yaml` untouched.
   PPTX, 13 DOCX); the conversion and its size are measured the first time
   `agent render` runs with LibreOffice present.
 
+  *Measured 2026-10-16:* all 32 converted. **128.6 MB of PowerPoint and Word
+  became 31.6 MB of PDF.** The heavy decks were heavy with embedded media the
+  PDF drops (ITN Module 13: 40.0 MB to 1.5 MB; Module 2: 30.2 to 2.3; Module 15:
+  23.0 to 1.4); the Word labs roughly double (0.1 to 0.3 MB). So the phone's
+  offline set is about 27 MB of original PDFs plus 32 MB converted, not the
+  162 MB the plan measured as source files. `agent render` now prints each file
+  by title with both sizes and a total.
+
   **One source of page text, and it is the original's extraction.** A rendering
   is for reading only: never extracted, never OCR'd, never quizzed on, never an
   anchor. OCR caches are keyed by page, quiz sets by a fingerprint of the

@@ -23,10 +23,11 @@
 <script>
   try {
     var chosen = localStorage.getItem("lectern.theme") || localStorage.getItem("margin.theme");
-    if (chosen === "light" || chosen === "dark") {
+    var grounds = { light: "#f3efe7", dark: "#171512", bright: "#f4f7fb" };
+    if (grounds[chosen]) {
       document.documentElement.dataset.theme = chosen;
       document.querySelector('meta[name="theme-color"]:not([media])')
-        .setAttribute("content", chosen === "dark" ? "#171512" : "#f3efe7");
+        .setAttribute("content", grounds[chosen]);
     }
   } catch (e) {}
 </script>

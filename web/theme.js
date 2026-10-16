@@ -1,4 +1,7 @@
-// Light, dark, or whatever the system says. DESIGN.md section 8.
+// Light, dark, bright, or whatever the system says. DESIGN.md section 8.
+//
+// Bright is a light theme of its own and the system never picks it: System
+// means light or dark, whichever the phone says.
 //
 // Remembered per device in localStorage and nowhere else: which theme a screen
 // uses is a fact about that screen, not about me, so it is not synced and the
@@ -15,10 +18,10 @@ const KEY = "lectern.theme";
 // The key from the week the app was called Margin, read once so a choice made
 // then survives the rename, and cleared the next time a theme is chosen.
 const OLD_KEY = "margin.theme";
-export const CHOICES = ["system", "light", "dark"];
+export const CHOICES = ["system", "light", "dark", "bright"];
 
 // The page ground of each theme, for the browser's own chrome.
-const GROUND = { light: "#f3efe7", dark: "#171512" };
+const GROUND = { light: "#f3efe7", dark: "#171512", bright: "#f4f7fb" };
 
 export function storedTheme() {
   try {

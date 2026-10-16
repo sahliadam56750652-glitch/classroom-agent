@@ -19,9 +19,9 @@ export const SECONDARY = [
   ["/status", "Status", "status", "When it last synced, and every figure it counts."],
 ];
 
-const THEME_WORDS = { system: "System", light: "Light", dark: "Dark" };
+const THEME_WORDS = { system: "System", light: "Light", dark: "Dark", bright: "Bright" };
 
-/** Light, dark or the system's choice, for this device only. */
+/** Light, dark, bright or the system's choice, for this device only. */
 function ThemeChoice() {
   const [chosen, setChosen] = useState(storedTheme());
   return html`<section class="section" aria-labelledby="theme-title">

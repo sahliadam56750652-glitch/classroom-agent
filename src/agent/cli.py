@@ -3489,19 +3489,42 @@ def _do_render(config: Config, conn, *, dry_run: bool):
     return render_mod.run(conn, config, sorted(scope_mod.local(config, table)), dry_run=dry_run)
 
 
-def _print_rendered(result) -> None:
+def _print_rendered(result, *, every: bool = False) -> None:
+    """Each file by its title, what it weighed before and after, and a total.
+
+    The total is over every file that has a PDF now -- converted this run or
+    already -- because that is what the phone downloads (Phase 5e). `every`
+    lists the unchanged ones too, which `agent render` asks for and `agent run`,
+    twice a day, does not.
+    """
+    files = result.files
     if result.planned:
         print(f"  dry run -- would convert {len(result.planned)} file(s):")
         for drive_id in result.planned:
-            print(f"    {drive_id}")
+            print(f"    {files[drive_id].title}  ({_megabytes(files[drive_id].before)})")
     for drive_id in result.converted:
-        print(f"  converted {drive_id}")
+        sizes = files[drive_id]
+        print(f"  converted {sizes.title}  {_megabytes(sizes.before)} -> {_megabytes(sizes.after or 0)}")
     if result.unchanged:
         print(f"  {result.unchanged} already converted and unchanged")
+        if every:
+            for drive_id in result.held():
+                if drive_id not in result.converted:
+                    sizes = files[drive_id]
+                    print(f"    {sizes.title}  {_megabytes(sizes.before)} -> {_megabytes(sizes.after or 0)}")
     for drive_id, why in result.failed:
-        print(f"  {drive_id} not converted: {why}")
+        print(f"  {files[drive_id].title if drive_id in files else drive_id} not converted: {why}")
     for drive_id, slides, pages in result.mismatched:
-        print(f"  {drive_id}: {slides} slide(s) but {pages} PDF page(s); positions kept by page number")
+        title = files[drive_id].title if drive_id in files else drive_id
+        print(f"  {title}: {slides} slide(s) but {pages} PDF page(s); positions kept by page number")
+    held = result.held()
+    if held:
+        before = sum(files[d].before for d in held)
+        after = sum(files[d].after or 0 for d in held)
+        print(f"  total: {len(held)} file(s), {_megabytes(before)} as PowerPoint and Word, "
+              f"{_megabytes(after)} as PDF")
+    elif result.planned:
+        print(f"  total: {_megabytes(sum(files[d].before for d in result.planned))} to convert")
     if not (result.planned or result.converted or result.unchanged or result.failed):
         print("  nothing to convert")
 
@@ -3521,7 +3544,7 @@ def cmd_render(config: Config, args: argparse.Namespace) -> int:
         return 1
     finally:
         conn.close()
-    _print_rendered(result)
+    _print_rendered(result, every=True)
     return 1 if result.failed else 0
 
 

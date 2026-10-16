@@ -218,13 +218,14 @@ attention", no icon that means worry.
 Most of my time here is dense PDFs, on a phone, at night. The reader is the
 product; everything else is navigation.
 
-- **The chrome follows the theme; neither theme is pure.** *(Amended
-  2026-10-02: was "dark is the default, not a toggle".)* Light, dark or the
-  system's choice, per device. Neither is pure white on pure black: the dark
-  theme is off-white on warm charcoal, the light one ink on paper. Maximum
-  contrast haloes text at 23:00 and makes a 40-page sitting physically tiring,
-  in either.
-- **The page is never inverted.** In either theme the chrome around it follows
+- **The chrome follows the theme; no theme is pure.** *(Amended
+  2026-10-02: was "dark is the default, not a toggle".)* Light, dark, bright or
+  the system's choice, per device. None is pure white on pure black: the dark
+  theme is off-white on warm charcoal, the light one ink on paper, and Bright --
+  the sharpest, for daylight -- near-black ink on white sheets over a cool
+  ground. Maximum contrast haloes text at 23:00 and makes a 40-page sitting
+  physically tiring, which is why Bright is a choice and never the system's.
+- **The page is never inverted.** In any theme the chrome around it follows
   the theme and the PDF renders exactly as
   the professor made it. Inverting a slide deck destroys diagrams, code
   screenshots and photographed boards — which is precisely the content the vision
@@ -310,7 +311,7 @@ product; everything else is navigation.
 Everything above says what the app may say. This says how it looks, and every
 rule above wins where the two meet. Measured rather than chosen by eye: the
 contrast figures are computed, and `tests/test_web_assets.py` recomputes them
-from `app.css` -- in both themes -- so a token cannot drift below AA unnoticed.
+from `app.css` -- in every theme -- so a token cannot drift below AA unnoticed.
 
 *Rewritten 2026-10-02 after the first checkpoint: the structure was right and
 the look was not. Dark-only, colour confined to a 6px dot, a terminal's slashed
@@ -341,14 +342,25 @@ draws the same shapes in the theme's own colours.
 
 ### Themes
 
-Light, dark and System, chosen in More and remembered per device
+System, Light, Dark and Bright, chosen in More and remembered per device
 (`localStorage`, never synced -- it is a fact about a screen, not about me).
-System is the default and follows the OS. Each theme is designed, not derived:
-every colour token is one `light-dark()` pair in `app.css`, so a token that has
-a light value has a dark one chosen beside it.
+System is the default and follows the OS, which means Light or Dark: the phone's
+setting never picks Bright. Each theme is designed, not derived: every colour
+token of Light and Dark is one `light-dark()` pair in `app.css`, so a token that
+has a light value has a dark one chosen beside it; Bright is its own block,
+`:root[data-theme="bright"]`, which redefines every one of those tokens.
+
+*Bright, added 2026-10-16.* Light is the paper desk; Bright is the same desk
+cleared and lit: a crisp, cool near-white ground, white sheets, sharper ink,
+and subject colours more vivid than Light's -- moderately, never neon. It also
+spends the subject colour a little more generously: a tinted card carries its
+fill as a 4px edge stripe and a firmer border, and the hero keeps its tint
+further down. Chips and timetable blocks take the brighter fills as they are.
+Nothing else changes: no red for behind, no urgency colours, `passed` is still
+the one alarm.
 
 The reader's chrome follows the theme. **The PDF page itself is never inverted,
-in either theme** -- section 6.
+in any theme** -- section 6.
 
 ### Type
 
@@ -392,6 +404,24 @@ labels, no tracked-out eyebrows.
 | edge | `#8f8676` (3.4:1) | `#766d60` (3.3:1) | a control's border |
 | line | `#e3ddd1` | `#35302a` | dividers |
 
+**Bright** (ratios on the white card):
+
+| token | bright | role |
+|---|---|---|
+| ground | `#f4f7fb` cool near-white | the page |
+| card | `#ffffff` | a sheet on it |
+| raised | `#ffffff` | the hero, a hovered card |
+| pressed | `#e1e7ee` | pressed, selected |
+| ink | `#11161e` (18.1:1) | names, titles, body |
+| ink-2 | `#3c434e` (10.0:1) | state |
+| ink-3 | `#59616d` (6.3:1) | metadata |
+| accent | `#1e59cd` (6.2:1) | focus, the primary action, "here" |
+| accent-hover | `#0d45b0` | the primary action, pressed |
+| accent-tint | `#e1ecfe` | a selected row |
+| passed | `#b7191c` (6.6:1) | a deadline already gone -- nothing else |
+| edge | `#858d99` (3.4:1) | a control's border |
+| line | `#dce2e9` | dividers |
+
 The accent is fountain-pen blue on paper and the same ink lit on the desk at
 night -- deliberately not the terracotta or the acid green every generated page
 reaches for. **There is still exactly one alarm and it is `passed`.**
@@ -408,8 +438,26 @@ as an alarm). Each hue has three values per theme:
 | `tint` | L .955 | L .265 | the surface of anything that belongs to it -- a card, a page header |
 | `fill` | L .865 / .82 alternating | L .40 / .34 alternating | a timetable block, a chip, the Today timeline |
 
-Every pairing is AA in both themes (`fg` on `tint` at least 5.5:1, `ink` on
-`fill` at least 7:1), and the test checks them all. The colour is never alone:
+Bright uses the same twelve hues with more chroma (gamut-clamped OKLCH): `fg`
+L .47 C .17, `tint` L .955 C .045, `fill` L .86 / .83 alternating C .115.
+
+| hue | `fg` | `tint` | `fill` |
+|---|---|---|---|
+| s0 | `#715700` | `#fdefcf` | `#f0cd74` |
+| s1 | `#5f5f01` | `#f1f3d1` | `#ccce73` |
+| s2 | `#3e6901` | `#e5f7d8` | `#b5e191` |
+| s3 | `#016d3a` | `#dafae3` | `#89dda5` |
+| s4 | `#076a59` | `#d2fbef` | `#74eace` |
+| s5 | `#08686b` | `#cefafb` | `#59dee2` |
+| s6 | `#06657b` | `#daf6ff` | `#7fe1ff` |
+| s7 | `#046093` | `#e3f3ff` | `#90cfff` |
+| s8 | `#2751b8` | `#e9f0ff` | `#bbd1fe` |
+| s9 | `#5743b3` | `#eeeefe` | `#c2c0fe` |
+| s10 | `#7536a2` | `#f5ecff` | `#e1c2ff` |
+| s11 | `#8c2a87` | `#fee8fc` | `#f2aceb` |
+
+Every pairing is AA in every theme (`fg` on `tint` at least 5.5:1, `ink` on
+`fill` at least 7:1; in Bright 5.8:1 and 10.3:1), and the test checks them all. The colour is never alone:
 twelve hues for any number of subjects means two can share one, so the name is
 always beside it.
 
@@ -422,7 +470,7 @@ week by colour before it is read.
 
 Spacing 4 · 8 · 12 · 16 · 24 · 32 · 48 · 64. Radius says what a thing is: 10 a
 control, 16 a card, 24 the hero, round for a chip. Depth is surface and a 1px
-line; no drop shadows, in either theme.
+line; no drop shadows, in any theme (Bright's subject stripe is an inset edge, not depth).
 
 ### Motion
 
