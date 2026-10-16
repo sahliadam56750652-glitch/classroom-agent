@@ -557,10 +557,11 @@ gate asks that evening with `timetable.yaml` untouched.
   verbatim from VS Code's local history (the 14:02 save); the v2 sessions are
   the only version, 2026-09-15 to 2027-01-23. `agent backup` now carries the
   file; a restore puts a missing one back and writes a differing one beside it.
-  **Open, both need me:** the start date 2026-09-15 has been marked CHECK since
-  the first draft; and Nanotechnology maps to `840946407460` "Semiconductors &
-  electronics" while `courses.tracked` has `869982209288` "Nanotechnologies-
-  2026/2027" -- `agent timetable --check` flags it.
+  *Settled the same day:* Nanotechnology is `869982209288` "Nanotechnologies-
+  2026/2027" -- the old `840946407460` was last year's Semiconductors, on the
+  ignored list, mapped by mistake -- and 2026-09-15 is the confirmed start.
+  Backups no longer depend on remembering: `agent run` has a backup stage, one
+  snapshot a day, the newest 14 kept.
 - **Fixes from the first S25 install (2026-10-16).** The app installed as a
   WebAPK, but Status said the storage may be cleared. Cause: persistence was
   asked only while documents were downloading, which happened in a Chrome tab

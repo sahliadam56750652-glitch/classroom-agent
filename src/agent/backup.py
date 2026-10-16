@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import sqlite3
 from dataclasses import dataclass, field
@@ -59,13 +60,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import manual
-from .config import Config
+from .config import Config, display_zone
 from .db import store
 
 MANIFEST = "MANIFEST"
 ROWS_FILE = "manual.json"
 FILES_DIR = "files"
 TIMETABLE_FILE = "timetable.yaml"
+
+# The daily stage of `agent run` (2026-10-16): at most one snapshot per local
+# day, and the newest DAILY_KEEP kept. Only directories this module named --
+# manual-<UTC stamp>, with a MANIFEST inside -- are ever counted or deleted, so
+# a snapshot written elsewhere with --out, or anything else under backups/, is
+# never touched.
+DAILY_KEEP = 14
+_SNAPSHOT_NAME = re.compile(r"^manual-(\d{8}T\d{6}Z)$")
 FORMAT_VERSION = 1
 
 
@@ -324,6 +333,71 @@ def write(
     except OSError as err:
         raise BackupError(f"could not write the snapshot to {out_dir}: {err}") from err
     return snapshot
+
+
+@dataclass
+class Daily:
+    """What the daily stage did."""
+
+    taken: Path | None = None
+    already: Path | None = None  # today's snapshot, when one exists
+    deleted: list[Path] = field(default_factory=list)
+    kept: int = 0
+    dry_run: bool = False
+
+
+def snapshots(config: Config) -> list[tuple[datetime, Path]]:
+    """The snapshots this module wrote into DATA_DIR/backups, oldest first."""
+    root = config.data_dir / "backups"
+    if not root.is_dir():
+        return []
+    found = []
+    for path in root.iterdir():
+        named = _SNAPSHOT_NAME.match(path.name)
+        if named and path.is_dir() and (path / MANIFEST).is_file():
+            stamp = datetime.strptime(named.group(1), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+            found.append((stamp, path))
+    return sorted(found)
+
+
+def daily(
+    config: Config,
+    db: sqlite3.Connection,
+    *,
+    now: datetime | None = None,
+    keep: int = DAILY_KEEP,
+    dry_run: bool = False,
+) -> Daily:
+    """Take today's snapshot if there is none, then keep the newest `keep`.
+
+    "Today" is the local day in config.timezone, because `agent run` fires at
+    07:30 and 19:30 Tunis time and both belong to one day. Deleting happens
+    only after a snapshot is safely written or already exists for today, so a
+    failed write can never leave fewer snapshots than before it ran.
+    """
+    moment = now or datetime.now(timezone.utc)
+    zone = display_zone(config.timezone)
+    today = moment.astimezone(zone).date()
+    result = Daily(dry_run=dry_run)
+
+    existing = snapshots(config)
+    for stamp, path in existing:
+        if stamp.astimezone(zone).date() == today:
+            result.already = path
+    if result.already is None:
+        snapshot = write(config, db, dry_run=dry_run, now=moment)
+        result.taken = snapshot.path
+        # Counted either way, so a dry run plans the same deletions a real run
+        # makes.
+        existing = snapshots(config) if not dry_run else sorted([*existing, (moment, snapshot.path)])
+
+    if keep > 0 and len(existing) > keep:
+        result.deleted = [path for _, path in existing[: len(existing) - keep]]
+        if not dry_run:
+            for path in result.deleted:
+                shutil.rmtree(path)
+    result.kept = min(len(existing), keep) if keep > 0 else len(existing)
+    return result
 
 
 def _verify(snapshot_dir: Path) -> dict[str, list[dict]]:

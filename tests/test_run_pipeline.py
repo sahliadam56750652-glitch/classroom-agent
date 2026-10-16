@@ -16,7 +16,7 @@ import pytest
 
 from datetime import date
 
-from agent import cli, scope
+from agent import backup, cli, scope
 from agent.classroom.models import Course, Material, material_id
 from agent.gate import scheduler, timetable as tt
 from agent.config import Config
@@ -91,6 +91,7 @@ def pipeline(monkeypatch, conn):
     monkeypatch.setattr(
         cli, "_do_deadlines", record("deadlines", deadlines_mod.DeadlineScan(events=[]))
     )
+    monkeypatch.setattr(backup, "daily", record("backup", None))
 
     def notify(*a, **kw):
         order.append("notify")
@@ -122,7 +123,7 @@ def test_the_stages_run_in_dependency_order(config, pipeline):
     assert cli.cmd_run(config, args()) == 0
 
     assert pipeline == [
-        "sync", "fetch", "extract", "ocr", "studyitems", "packs", "deadlines",
+        "sync", "fetch", "extract", "ocr", "studyitems", "packs", "deadlines", "backup",
         "notify",
     ]
 
@@ -136,11 +137,15 @@ def test_the_stages_run_in_dependency_order(config, pipeline):
         ("_do_studyitems", RuntimeError("timetable unreadable")),
         ("_do_packs", packs.PackError("disk full")),
         ("_do_deadlines", RuntimeError("scanner broke")),
+        ("backup", OSError("No space left on device")),
     ],
 )
 def test_no_failing_stage_prevents_the_briefing(config, pipeline, monkeypatch, stage, error):
     """The whole reason `agent run` is safe to schedule."""
-    monkeypatch.setattr(cli, stage, fails(stage, error))
+    if stage == "backup":
+        monkeypatch.setattr(backup, "daily", fails(stage, error))
+    else:
+        monkeypatch.setattr(cli, stage, fails(stage, error))
 
     assert cli.cmd_run(config, args()) == 0
     assert "notify" in pipeline
@@ -160,7 +165,7 @@ def test_a_failing_stage_does_not_stop_the_ones_after_it(config, pipeline, monke
     cli.cmd_run(config, args())
 
     assert pipeline == [
-        "sync", "extract", "ocr", "studyitems", "packs", "deadlines", "notify",
+        "sync", "extract", "ocr", "studyitems", "packs", "deadlines", "backup", "notify",
     ]
 
 
@@ -196,7 +201,7 @@ def test_no_tracked_courses_no_longer_ends_the_run(config, pipeline, monkeypatch
 
     assert cli.cmd_run(config, args()) == 0
     assert pipeline == [
-        "fetch", "extract", "ocr", "studyitems", "packs", "deadlines", "notify",
+        "fetch", "extract", "ocr", "studyitems", "packs", "deadlines", "backup", "notify",
     ]
 
 

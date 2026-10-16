@@ -541,3 +541,61 @@ def test_no_timetable_is_said_rather_than_skipped(config, conn, tmp_path, capsys
     assert snapshot.timetable is False
     assert not (snapshot.path / backup.TIMETABLE_FILE).exists()
     assert any("timetable.yaml" in line and "not found" in line for line in backup.describe(config, conn))
+
+
+# ---------------------------------------------------------------------------
+# the daily stage of `agent run` (2026-10-16)
+# ---------------------------------------------------------------------------
+
+
+def _at(text):
+    return datetime.fromisoformat(text).replace(tzinfo=timezone.utc)
+
+
+def test_the_daily_stage_takes_one_snapshot_a_day(config, conn):
+    """07:30 and 19:30 Tunis are one day: the second run takes nothing."""
+    morning = backup.daily(config, conn, now=_at("2026-10-16T06:30:00"))
+    evening = backup.daily(config, conn, now=_at("2026-10-16T18:30:00"))
+    assert morning.taken is not None and (morning.taken / backup.MANIFEST).is_file()
+    assert evening.taken is None and evening.already == morning.taken
+    assert len(backup.snapshots(config)) == 1
+
+
+def test_the_day_is_tunis_time_not_utc(config, conn):
+    """23:30 UTC on the 16th is 00:30 on the 17th in Tunis: a new day."""
+    backup.daily(config, conn, now=_at("2026-10-16T12:00:00"))
+    late = backup.daily(config, conn, now=_at("2026-10-16T23:30:00"))
+    assert late.taken is not None
+    assert len(backup.snapshots(config)) == 2
+
+
+def test_only_the_newest_fourteen_are_kept(config, conn):
+    for day in range(1, 18):
+        backup.daily(config, conn, now=_at(f"2026-10-{day:02d}T08:00:00"))
+    kept = backup.snapshots(config)
+    assert len(kept) == 14
+    assert kept[0][1].name == "manual-20261004T080000Z"
+    assert kept[-1][1].name == "manual-20261017T080000Z"
+
+
+def test_nothing_else_under_backups_is_ever_deleted(config, conn, tmp_path):
+    """A snapshot I named with --out, or any other directory, is not the
+    stage's to delete -- only the ones it would have named itself."""
+    root = config.data_dir / "backups"
+    mine = backup.write(config, conn, root / "before-the-exam", now=NOW).path
+    stray = root / "manual-notes"
+    stray.mkdir(parents=True)
+    no_manifest = root / "manual-20260101T000000Z"
+    no_manifest.mkdir()
+    for day in range(1, 18):
+        backup.daily(config, conn, now=_at(f"2026-10-{day:02d}T08:00:00"))
+    assert mine.is_dir() and stray.is_dir() and no_manifest.is_dir()
+
+
+def test_the_daily_dry_run_writes_and_deletes_nothing(config, conn):
+    for day in range(1, 16):
+        backup.daily(config, conn, now=_at(f"2026-10-{day:02d}T08:00:00"))
+    before = backup.snapshots(config)
+    planned = backup.daily(config, conn, now=_at("2026-10-16T08:00:00"), dry_run=True)
+    assert planned.taken is not None and planned.deleted
+    assert backup.snapshots(config) == before

@@ -2005,6 +2005,18 @@ def cmd_backup(config: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_daily_backup(result) -> None:
+    if result.already is not None:
+        print(f"  today's snapshot already taken: {result.already.name}")
+    elif result.dry_run:
+        print(f"  dry run -- would write {result.taken}")
+    else:
+        print(f"  wrote {result.taken}")
+    for path in result.deleted:
+        print(f"  {'would delete' if result.dry_run else 'deleted'} {path.name} (older than the newest {backup.DAILY_KEEP})")
+    print(f"  {result.kept} snapshot(s) kept")
+
+
 def _do_restore(config: Config, conn, snapshot_dir, *, dry_run: bool) -> int:
     result = backup.restore(config, conn, snapshot_dir, dry_run=dry_run)
     if not dry_run:
@@ -3561,7 +3573,7 @@ def cmd_render(config: Config, args: argparse.Namespace) -> int:
 def cmd_run(config: Config, args: argparse.Namespace) -> int:
     """The whole pipeline, in the order each stage feeds the next.
 
-    sync -> fetch -> extract -> render -> ocr -> studyitems -> quizzes -> packs -> deadlines -> notify.
+    sync -> fetch -> extract -> render -> ocr -> studyitems -> quizzes -> packs -> deadlines -> backup -> notify.
 
     Classroom state arrives first because everything else reads it; bytes are
     fetched before they can be extracted; text is extracted before a model can
@@ -3672,6 +3684,14 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
             "deadlines",
             lambda: _do_deadlines(config, conn, dry_run=args.dry_run),
             report=lambda result: _print_deadlines(result, dry_run=args.dry_run),
+        )
+        # What cannot be rebuilt from any API, once a day, the newest 14 kept.
+        # Last before notify so it holds what this run just recorded, and a
+        # stage like the rest: a full disk must not cost the briefing.
+        _stage(
+            "backup",
+            lambda: backup.daily(config, conn, dry_run=args.dry_run),
+            report=_print_daily_backup,
         )
 
         print()

@@ -112,7 +112,11 @@ decision in `PLAN.md`.
   and `deploy/fingerprint.py` counts it. So does `timetable.yaml`: hand-written,
   gitignored, and rebuildable from nothing, so the snapshot carries a checksummed
   copy, and a restore never overwrites one that is there -- a differing copy is
-  written beside it (2026-10-16, after one save replaced the whole file). `api_sessions` and `client_ops` are
+  written beside it (2026-10-16, after one save replaced the whole file).
+  `agent run`'s backup stage takes one snapshot per Tunis day and keeps the
+  newest 14 (`backup.DAILY_KEEP`); it deletes only directories it would have
+  named itself, `manual-<UTC>` with a MANIFEST, and never one written with
+  `--out`. `api_sessions` and `client_ops` are
   the two tables deliberately left OUT of the backup: live cookies, and the
   receipts of writes the phone already sent.
 - Every long-running command takes `--dry-run`.
@@ -253,7 +257,7 @@ them must not inherit another's.
 
 | when | how | command | why |
 |---|---|---|---|
-| 07:30, 19:30 | Task Scheduler | `agent run` | sync → fetch → extract → render → ocr → studyitems → quizzes → packs → deadlines → notify |
+| 07:30, 19:30 | Task Scheduler | `agent run` | sync → fetch → extract → render → ocr → studyitems → quizzes → packs → deadlines → backup → notify |
 | 20:00 | Task Scheduler | `agent gate` | tomorrow's revision prompt, after the 19:30 sync has pulled the day's material |
 | at logon | Startup `.vbs` → `pythonw.exe` | `agent bot` | the long-poll listener; restart-safe, so killing it is harmless |
 | at logon | Startup `.vbs` → `pythonw.exe` | `agent serve` | the HTTP API behind the web client; holds no state a restart could lose |
