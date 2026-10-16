@@ -1991,6 +1991,8 @@ def cmd_backup(config: Config, args: argparse.Namespace) -> int:
             print(f"  {table:<24} {count}")
     print(f"  {'uploaded files':<24} {snapshot.files} "
           f"({snapshot.bytes_copied / 1024:.0f} KB)")
+    print(f"  {'timetable.yaml':<24} "
+          f"{'yes' if snapshot.timetable else f'NOT FOUND at {config.timetable_path}'}")
     print()
     if snapshot.dry_run:
         print(f"  dry run -- would write {snapshot.total_rows} row(s) to "
@@ -2018,6 +2020,14 @@ def _do_restore(config: Config, conn, snapshot_dir, *, dry_run: bool) -> int:
             print(f"  {table:<24} {added:>7} {skipped:>7}")
     print(f"  {'uploaded files':<24} {result.files_added:>7} "
           f"{result.files_present:>7}")
+    if result.timetable == "added":
+        print(f"  timetable.yaml was missing and is put back: {config.timetable_path}")
+    elif result.timetable == "same":
+        print("  timetable.yaml here is identical to the backed-up one.")
+    elif result.timetable == "beside":
+        print("  timetable.yaml here DIFFERS from the backed-up one and was left alone.")
+        print(f"    the backed-up copy: {result.timetable_beside}")
+        print("    compare them, keep the right one, and run `agent timetable --check`.")
     print()
     if dry_run:
         print(f"  dry run -- would add {result.total_added} row(s), "

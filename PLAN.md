@@ -552,6 +552,15 @@ gate asks that evening with `timetable.yaml` untouched.
 - **5c — the PWA and the APK.** The client DESIGN.md is the brief for.
 - **5d — the gate's actions in the client.** Deliver, mark-read, skip and
   snooze, reached from the web client rather than only from Telegram.
+- **timetable.yaml rebuilt (2026-10-16).** A 15:48 save replaced the whole
+  file with one version block. `subjects:` and `exceptions:` were restored
+  verbatim from VS Code's local history (the 14:02 save); the v2 sessions are
+  the only version, 2026-09-15 to 2027-01-23. `agent backup` now carries the
+  file; a restore puts a missing one back and writes a differing one beside it.
+  **Open, both need me:** the start date 2026-09-15 has been marked CHECK since
+  the first draft; and Nanotechnology maps to `840946407460` "Semiconductors &
+  electronics" while `courses.tracked` has `869982209288` "Nanotechnologies-
+  2026/2027" -- `agent timetable --check` flags it.
 - **Fixes from the first S25 install (2026-10-16).** The app installed as a
   WebAPK, but Status said the storage may be cleared. Cause: persistence was
   asked only while documents were downloading, which happened in a Chrome tab

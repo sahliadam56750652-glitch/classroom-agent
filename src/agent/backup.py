@@ -29,6 +29,14 @@ Classroom, and wholesale for the tables Phase 6 added. No Classroom CONTENT is
 ever in the file -- a backup that quietly carried a mirror would restore a
 stale one over a fresh one.
 
+**`timetable.yaml` too** (added 2026-10-16, after a save replaced its whole
+contents). It is hand-written, gitignored, and no API can rebuild it -- the
+same argument as every manual row -- so the snapshot carries a copy, checked by
+the manifest like any file. Restore follows the rule below: it never overwrites
+a timetable that is there. A missing one is put back; one that differs gets the
+backed-up copy written BESIDE it, and the report names both files so choosing
+is a deliberate act.
+
 The one exception is an ANCHOR, and it was found by restoring rather than by
 thinking: an exercise sheet handed out on paper for UNIX is a manual row whose
 `course_id` is a Classroom course, and `courses` has a foreign key. Into an
@@ -57,6 +65,7 @@ from .db import store
 MANIFEST = "MANIFEST"
 ROWS_FILE = "manual.json"
 FILES_DIR = "files"
+TIMETABLE_FILE = "timetable.yaml"
 FORMAT_VERSION = 1
 
 
@@ -160,6 +169,7 @@ class Snapshot:
     rows: dict[str, int] = field(default_factory=dict)
     files: int = 0
     bytes_copied: int = 0
+    timetable: bool = False  # whether timetable.yaml was there to copy
     dry_run: bool = False
 
     @property
@@ -173,6 +183,11 @@ class Restored:
     skipped: dict[str, int] = field(default_factory=dict)
     files_added: int = 0
     files_present: int = 0
+    # None: the snapshot has no timetable. "added": there was none here, so it
+    # was put back. "same": the one here is identical. "beside": the one here
+    # differs and was left alone; the backed-up copy is at `timetable_beside`.
+    timetable: str | None = None
+    timetable_beside: Path | None = None
     dry_run: bool = False
 
     @property
@@ -267,11 +282,13 @@ def write(
 
     rows = collect(db)
     files = _library_files(config, rows)
+    timetable = config.timetable_path
     snapshot = Snapshot(
         path=out_dir,
         rows={table: len(values) for table, values in rows.items()},
         files=len(files),
         bytes_copied=sum(path.stat().st_size for path in files),
+        timetable=timetable.is_file(),
         dry_run=dry_run,
     )
     if dry_run:
@@ -295,6 +312,9 @@ def write(
         for path in files:
             shutil.copy2(path, out_dir / FILES_DIR / path.name)
             entries.append(f"{sha256_file(path)}  {FILES_DIR}/{path.name}")
+        if snapshot.timetable:
+            shutil.copy2(timetable, out_dir / TIMETABLE_FILE)
+            entries.append(f"{sha256_file(out_dir / TIMETABLE_FILE)}  {TIMETABLE_FILE}")
 
         entries.append("")
         entries.append("-- row counts")
@@ -387,6 +407,8 @@ def restore(
         result.added[spec.table] = added
         result.skipped[spec.table] = skipped
 
+    _restore_timetable(config, snapshot_dir, result, dry_run=dry_run)
+
     files_dir = snapshot_dir / FILES_DIR
     if files_dir.is_dir():
         for path in sorted(files_dir.iterdir()):
@@ -401,6 +423,32 @@ def restore(
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, destination)
     return result
+
+
+def _restore_timetable(config: Config, snapshot_dir: Path, result: Restored, *, dry_run: bool) -> None:
+    """Put timetable.yaml back if it is missing; never overwrite one that is there.
+
+    One that differs is the case this exists for -- a broken save -- and it is
+    still not overwritten: which file is right is mine to decide, so the
+    backed-up copy goes beside it under a name that says where it came from.
+    """
+    saved = snapshot_dir / TIMETABLE_FILE
+    if not saved.is_file():
+        return
+    here = config.timetable_path
+    if not here.is_file():
+        result.timetable = "added"
+        if not dry_run:
+            here.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(saved, here)
+        return
+    if sha256_file(here) == sha256_file(saved):
+        result.timetable = "same"
+        return
+    result.timetable = "beside"
+    result.timetable_beside = here.with_name(f"timetable.from-backup-{snapshot_dir.name}.yaml")
+    if not dry_run:
+        shutil.copy2(saved, result.timetable_beside)
 
 
 def _exists(db: sqlite3.Connection, spec: Spec, row: dict) -> bool:
@@ -435,4 +483,5 @@ def describe(config: Config, db: sqlite3.Connection) -> list[str]:
     lines = [f"{table:<24} {len(values)}" for table, values in rows.items()]
     files = _library_files(config, rows)
     lines.append(f"{'uploaded files':<24} {len(files)}")
+    lines.append(f"{TIMETABLE_FILE:<24} {'yes' if config.timetable_path.is_file() else 'not found'}")
     return lines

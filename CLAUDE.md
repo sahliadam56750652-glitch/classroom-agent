@@ -109,7 +109,10 @@ decision in `PLAN.md`.
   `events.notified_at`, `study_items`, `timetable_adjustments`, and
   `read_positions`. Everything entered by hand is irreplaceable by the same
   argument -- there is no API to re-ask -- which is why `agent backup` covers it
-  and `deploy/fingerprint.py` counts it. `api_sessions` and `client_ops` are
+  and `deploy/fingerprint.py` counts it. So does `timetable.yaml`: hand-written,
+  gitignored, and rebuildable from nothing, so the snapshot carries a checksummed
+  copy, and a restore never overwrites one that is there -- a differing copy is
+  written beside it (2026-10-16, after one save replaced the whole file). `api_sessions` and `client_ops` are
   the two tables deliberately left OUT of the backup: live cookies, and the
   receipts of writes the phone already sent.
 - Every long-running command takes `--dry-run`.

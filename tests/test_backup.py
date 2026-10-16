@@ -483,3 +483,61 @@ def test_a_bad_snapshot_is_an_error_exit_not_a_traceback(
     empty.mkdir()
     assert cli.cmd_backup(config, backup_args(restore=empty)) == 1
     assert "is not a snapshot" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# timetable.yaml: hand-written, gitignored, rebuilt from no API (2026-10-16)
+# ---------------------------------------------------------------------------
+
+TIMETABLE = "subjects:\n  UNIX: null\nversions: []\n"
+
+
+def test_the_snapshot_carries_the_timetable_with_a_checksum(config, conn, tmp_path):
+    config.timetable_path.write_text(TIMETABLE, encoding="utf-8")
+    snapshot = backup.write(config, conn, tmp_path / "snap", now=NOW)
+    assert snapshot.timetable is True
+    assert (snapshot.path / backup.TIMETABLE_FILE).read_text(encoding="utf-8") == TIMETABLE
+    assert f"  {backup.TIMETABLE_FILE}" in (snapshot.path / backup.MANIFEST).read_text(encoding="utf-8")
+
+
+def test_a_missing_timetable_is_put_back(config, conn, tmp_path):
+    config.timetable_path.write_text(TIMETABLE, encoding="utf-8")
+    snapshot = backup.write(config, conn, tmp_path / "snap", now=NOW)
+    config.timetable_path.unlink()
+    result = backup.restore(config, conn, snapshot.path)
+    assert result.timetable == "added"
+    assert config.timetable_path.read_text(encoding="utf-8") == TIMETABLE
+
+
+def test_a_timetable_that_differs_is_never_overwritten(config, conn, tmp_path):
+    """The broken-save case: the backed-up copy goes beside it, and I choose."""
+    config.timetable_path.write_text(TIMETABLE, encoding="utf-8")
+    snapshot = backup.write(config, conn, tmp_path / "snap", now=NOW)
+    config.timetable_path.write_text("- label: one version block\n", encoding="utf-8")
+    result = backup.restore(config, conn, snapshot.path)
+    assert result.timetable == "beside"
+    assert config.timetable_path.read_text(encoding="utf-8") == "- label: one version block\n"
+    assert result.timetable_beside.read_text(encoding="utf-8") == TIMETABLE
+    assert result.timetable_beside.parent == config.timetable_path.parent
+
+
+def test_an_identical_timetable_is_left_alone(config, conn, tmp_path):
+    config.timetable_path.write_text(TIMETABLE, encoding="utf-8")
+    snapshot = backup.write(config, conn, tmp_path / "snap", now=NOW)
+    assert backup.restore(config, conn, snapshot.path).timetable == "same"
+
+
+def test_a_tampered_timetable_refuses_to_restore(config, conn, tmp_path):
+    config.timetable_path.write_text(TIMETABLE, encoding="utf-8")
+    snapshot = backup.write(config, conn, tmp_path / "snap", now=NOW)
+    (snapshot.path / backup.TIMETABLE_FILE).write_text("subjects: {}\n", encoding="utf-8")
+    with pytest.raises(backup.BackupError, match="checksum"):
+        backup.restore(config, conn, snapshot.path)
+
+
+def test_no_timetable_is_said_rather_than_skipped(config, conn, tmp_path, capsys):
+    assert not config.timetable_path.exists()
+    snapshot = backup.write(config, conn, tmp_path / "snap", now=NOW)
+    assert snapshot.timetable is False
+    assert not (snapshot.path / backup.TIMETABLE_FILE).exists()
+    assert any("timetable.yaml" in line and "not found" in line for line in backup.describe(config, conn))

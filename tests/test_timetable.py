@@ -389,3 +389,15 @@ def test_an_all_null_file_reports_every_subject_as_awaiting(tmp_path):
     assert loaded.manual_subjects() == []
     assert "Calculus II" in "\n".join(notes)
     assert not any("run with no Classroom" in note for note in notes)
+
+
+def test_the_check_never_points_at_removed_commands():
+    """Manual logging went on 2026-10-13: no `agent subjects --add`, and a
+    no-Classroom subject is never gated, so the notes must not say otherwise."""
+    from pathlib import Path
+
+    from agent.gate import timetable as module
+
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    assert "subjects --add" not in source
+    assert "entered by hand" not in source

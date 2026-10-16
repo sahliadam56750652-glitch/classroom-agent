@@ -227,9 +227,10 @@ class Timetable:
     def manual_subjects(self) -> list[str]:
         """Subjects that run with no Classroom and never will have one.
 
-        Calculus III, Algebra III, Philosophy and Communication. They are
-        gated from material entered by hand, so they are not missing anything
-        and must never be reported as a gap.
+        Calculus III, Algebra III, Philosophy and Communication. They are never
+        gated -- manual logging was cancelled on 2026-10-13 -- but tasks and
+        projects still file under them, so they are not missing anything and
+        must never be reported as a gap.
         """
         return sorted(
             name for name, course in self.subjects.items() if manual.is_manual(course)
@@ -550,16 +551,15 @@ def warnings(timetable: Timetable, tracked_courses: list[str]) -> list[str]:
         notes.append(
             f"{len(awaiting)} subject(s) are awaiting a Classroom course id, so "
             f"they appear in the schedule but are never gated. Join the course, "
-            f"run `agent courses`, and paste the id in -- or, if there will "
-            f"never be one, run `agent subjects --add`: {', '.join(awaiting)}"
+            f"run `agent courses`, and paste the id in: {', '.join(awaiting)}"
         )
 
     manual_names = timetable.manual_subjects()
     if manual_names:
         notes.append(
-            f"{len(manual_names)} subject(s) run with no Classroom and are gated "
-            f"from material entered by hand. This is not a gap: "
-            f"{', '.join(manual_names)}"
+            f"{len(manual_names)} subject(s) run with no Classroom, so they are "
+            f"never gated; tasks and projects still file under them. This is not "
+            f"a gap: {', '.join(manual_names)}"
         )
 
     tracked = set(tracked_courses)
