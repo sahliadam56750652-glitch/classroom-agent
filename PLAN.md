@@ -552,6 +552,20 @@ gate asks that evening with `timetable.yaml` untouched.
 - **5c — the PWA and the APK.** The client DESIGN.md is the brief for.
 - **5d — the gate's actions in the client.** Deliver, mark-read, skip and
   snooze, reached from the web client rather than only from Telegram.
+- **Fixes from the first S25 install (2026-10-16).** The app installed as a
+  WebAPK, but Status said the storage may be cleared. Cause: persistence was
+  asked only while documents were downloading, which happened in a Chrome tab
+  before install -- where Chrome refuses -- and the installed app, sharing that
+  storage, found everything held and never asked again. Now it asks on every
+  launch until granted, Status has "Keep this storage" (a tap) and shows what
+  `navigator.storage.persisted()` returns and whether this is the installed
+  app. **Next on the phone:** open the installed app, check Status; if it still
+  says false, tap Keep this storage. Only a refusal of THAT goes to the wrapper
+  discussion. Also: the two "synced" times on Status measured different things
+  (this phone's copy from the PC vs the PC's last check of Classroom), and the
+  card rendered in the phone's 12-hour locale; both are labelled now, and every
+  time goes through one formatter in `web/format.js` -- 24-hour, Africa/Tunis.
+  The theme can be chosen from the desktop sidebar, which has no More.
 - **5e slice 6 complete (2026-10-13): the origin is pinned, and the offline
   edges say what they are.** `docs/phone.md` is the runbook: Tailscale on the
   PC, `tailscale serve --bg http://127.0.0.1:8000`, `api.origin`, the missing

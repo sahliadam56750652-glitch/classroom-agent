@@ -944,11 +944,13 @@ def test_a_401_mid_use_routes_to_signin(served, tmp_path_factory):
           // Since 5e a screen reads the phone's snapshot, so a tap asks the PC
           // nothing; the next SYNC is what finds the session gone. The
           // connection coming back is one of the things that starts a sync.
-          // Long enough to cover the sync's own wait on the outbox
-          // (FLUSH_WAIT_MS, 2 s), which under virtual time never reads.
           f.contentWindow.dispatchEvent(new Event('online'));
-          await sleep(6000);
+          await sleep(3000);
         """,
+        # On the real clock: since 5e the sync reads IndexedDB before it asks the
+        # PC, and under virtual time IndexedDB never answers, so whether the 401
+        # arrived inside the budget was a race (flaky from 2026-10-16).
+        real_clock=True,
     )
     _looks_signed_out(found)
 
@@ -1443,3 +1445,72 @@ def test_a_session_works_the_moment_sign_in_answers(served):
         with urllib.request.urlopen(request, timeout=30) as response:
             assert response.status == 200
             response.read()
+
+
+@chrome_only
+def test_every_time_is_24_hour_and_in_tunis(served, tmp_path_factory):
+    """One formatter, whatever the browser's locale: 13:02 UTC is 14:02 in
+    Tunis, and five past midnight is 00:05, never 12:05 AM or 24:05. And Status
+    says which sync its card is about."""
+    base, _ = served
+    steps = _REPORT + """
+      const w = f.contentWindow;
+      await sleep(1200);
+      const fmt = await w.Function("return import('/format.js')")();
+      const status = d().body.innerText;
+      report({ clock: fmt.clock('2026-10-16T13:02:03Z'),
+               midnight: fmt.clock('2026-10-16T23:05:00Z'),
+               whole: fmt.localTime('2026-10-16T13:02:03Z'),
+               label: /The PC (last checked|has not checked) Classroom/.test(status),
+               twelve: /\b(AM|PM)\b/.test(status) });
+    """
+    found = _probed(render(base, tmp_path_factory.mktemp("time"), path="/status", steps=steps, real_clock=True))
+    assert found["clock"] == "14:02", found
+    assert found["midnight"] == "00:05", found
+    assert found["whole"] == "Fri 16 Oct, 14:02", found
+    assert found["label"] and not found["twelve"], found
+
+
+@chrome_only
+def test_keep_this_storage_asks_from_a_tap_and_says_what_android_said(served, tmp_path_factory):
+    base, _ = served
+    steps = _REPORT + """
+      const w = f.contentWindow;
+      await sleep(1200);
+      let asked = 0;
+      w.navigator.storage.persisted = async () => false;
+      w.navigator.storage.persist = async () => { asked += 1; return false; };
+      const keep = [...d().querySelectorAll('button')].find((b) => b.textContent.includes('Keep this storage'));
+      if (keep) keep.click();
+      await sleep(800);
+      const text = d().body.innerText;
+      report({ button: Boolean(keep), asked, returns: text.includes('returns false'),
+               refused: text.includes('from a tap: refused') });
+    """
+    found = _probed(render(base, tmp_path_factory.mktemp("keep"), path="/status", steps=steps, real_clock=True))
+    assert found["button"] and found["asked"] == 1, found
+    assert found["returns"] and found["refused"], found
+
+
+@chrome_only
+def test_the_theme_can_be_changed_from_the_desktop_sidebar(served, tmp_path_factory):
+    """At 1024px and above there is no More tab, so the sidebar carries it."""
+    base, _ = served
+    steps = _REPORT + """
+      const w = f.contentWindow;
+      await sleep(1000);
+      const side = d().querySelector('.sidebar');
+      const words = side ? [...side.querySelectorAll('.choice button')].map((b) => b.textContent.trim()) : [];
+      const bright = side && [...side.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Bright');
+      if (bright) bright.click();
+      await sleep(300);
+      let stored = null;
+      try { stored = w.localStorage.getItem('lectern.theme'); } catch (e) {}
+      report({ words, theme: d().documentElement.dataset.theme || null, stored,
+               visible: side ? w.getComputedStyle(side).display !== 'none' : false });
+    """
+    found = _probed(render(base, tmp_path_factory.mktemp("side"), path="/", steps=steps,
+                           real_clock=True, width=1440))
+    assert found["visible"], found
+    assert found["words"] == ["System", "Light", "Dark", "Bright"], found
+    assert found["theme"] == "bright" and found["stored"] == "bright", found

@@ -33,3 +33,15 @@
   color: var(--ink);
   overflow-wrap: anywhere;
 }
+
+/* What Android said about keeping the storage, and the tap that asks again. */
+.status-keep {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s2);
+}
+
+.status-keep p {
+  margin: 0;
+}

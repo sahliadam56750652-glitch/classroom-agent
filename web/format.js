@@ -68,19 +68,52 @@ export function age(iso) {
   return `${months} month${months === 1 ? "" : "s"} ago`;
 }
 
-/**
- * A stored UTC instant as a local time. Display only, per the convention that
- * conversion happens at the moment of display and nowhere earlier.
- */
-export function localTime(iso) {
-  if (!iso) return "";
-  return new Date(iso).toLocaleString(undefined, {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+// ---------------------------------------------------------------- instants
+//
+// EVERY clock time this app shows goes through the functions below, and nothing
+// else in web/ formats one (tests/test_web_assets.py holds that). Stored times
+// are UTC; they are shown in Africa/Tunis -- CLAUDE.md: converted at the moment
+// of display and nowhere earlier -- on a 24-hour clock, whatever the phone's own
+// locale prefers. Before 2026-10-16 each screen asked the browser, and a phone
+// set to US English showed "02:02 PM" under a header that said "15:29".
+//
+// `hourCycle: "h23"`, not `hour12: false`: the latter is allowed to print
+// midnight as "24:05".
+
+export const ZONE = "Africa/Tunis";
+
+const CLOCK = new Intl.DateTimeFormat("en-GB", {
+  timeZone: ZONE, hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
+const DAY_NAME = new Intl.DateTimeFormat("en-GB", {
+  timeZone: ZONE, weekday: "short", day: "numeric", month: "short",
+});
+const DAY_KEY = new Intl.DateTimeFormat("en-CA", {
+  timeZone: ZONE, year: "numeric", month: "2-digit", day: "2-digit",
+});
+
+/** "14:02" -- an instant's time of day. */
+export function clock(at) {
+  if (!at) return "";
+  return CLOCK.format(new Date(at));
+}
+
+/** "Fri 16 Oct, 14:02" -- an instant, whole. */
+export function localTime(at) {
+  if (!at) return "";
+  const when = new Date(at);
+  return `${DAY_NAME.format(when)}, ${CLOCK.format(when)}`;
+}
+
+/** "14:02", "yesterday 14:02", or "Fri 16 Oct, 14:02" -- an instant near now. */
+export function recently(at) {
+  if (!at) return "";
+  const when = new Date(at);
+  const key = DAY_KEY.format(when);
+  const now = Date.now();
+  if (key === DAY_KEY.format(new Date(now))) return CLOCK.format(when);
+  if (key === DAY_KEY.format(new Date(now - DAY))) return `yesterday ${CLOCK.format(when)}`;
+  return localTime(when);
 }
 
 /** Whether a deadline has already gone. The only thing in this app that is red. */

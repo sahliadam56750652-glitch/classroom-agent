@@ -324,10 +324,7 @@ function DueSoon() {
 
 /** "Sun 4 Oct, 22:59" -- the instant, in the display face. Never a countdown. */
 function dueAt(stamp) {
-  const at = new Date(stamp);
-  const day = at.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-  const clock = at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
-  return `${day}, ${clock}`;
+  return localTime(stamp);
 }
 
 /** The kind of session in words: "lecture", "lab". */

@@ -342,7 +342,8 @@ draws the same shapes in the theme's own colours.
 
 ### Themes
 
-System, Light, Dark and Bright, chosen in More and remembered per device
+System, Light, Dark and Bright, chosen in More -- or, at 1024px and above where
+there is no More tab, in the sidebar above Sign out -- and remembered per device
 (`localStorage`, never synced -- it is a fact about a screen, not about me).
 System is the default and follows the OS, which means Light or Dark: the phone's
 setting never picks Bright. Each theme is designed, not derived: every colour

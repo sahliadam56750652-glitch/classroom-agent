@@ -134,7 +134,13 @@ export function syncNow() {
 /** Start keeping the snapshot current. Called once, when the shell appears. */
 export function startSyncing() {
   if (timer) return;
-  loadSnapshot().then(() => refreshDocumentCounts());
+  // Asked on EVERY launch until Android says yes. It used to be asked only when
+  // documents were downloading -- which happened in a Chrome tab, before the
+  // app was installed, where Chrome refuses. The installed app then found every
+  // document already held and never asked again (found on the S25, 2026-10-16).
+  // Chrome grants persistence to an installed app, so the installed app must be
+  // the one asking. Nothing is asked once it is granted.
+  loadSnapshot().then(() => refreshDocumentCounts()).then(() => askToPersist("launch"));
   syncNow();
   addEventListener("online", () => syncNow());
   document.addEventListener("visibilitychange", () => {
@@ -258,6 +264,11 @@ const documents = {
   waitingForWifi: false,
   error: "",
   persisted: null,
+  // The last time this launch asked Android to keep the storage, and what it
+  // said: { how: "launch" | "tap" | "download", at, granted }. Shown on Status,
+  // so a refusal is something I can see rather than infer.
+  asked: null,
+  supported: null,
   usage: null,
   quota: null,
 };
@@ -308,10 +319,20 @@ export function wantedDocuments(from = snapshot) {
  * synced library under storage pressure -- silently, which is the worst failure
  * here. Asked once documents start arriving; the answer is shown on Status.
  */
-export async function askToPersist() {
+export async function askToPersist(how = "download") {
   try {
-    if (!navigator.storage) return null;
-    documents.persisted = (await navigator.storage.persisted()) || (await navigator.storage.persist());
+    if (!navigator.storage || !navigator.storage.persist) {
+      documents.supported = false;
+      emit();
+      return null;
+    }
+    documents.supported = true;
+    let kept = await navigator.storage.persisted();
+    if (!kept) {
+      kept = await navigator.storage.persist();
+      documents.asked = { how, at: new Date().toISOString(), granted: kept };
+    }
+    documents.persisted = kept;
     const estimate = await navigator.storage.estimate();
     documents.usage = estimate.usage ?? null;
     documents.quota = estimate.quota ?? null;

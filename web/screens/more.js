@@ -10,7 +10,7 @@ import { html } from "/html.js";
 import { Icon } from "/icons.js";
 import { linkProps } from "/router.js";
 import { ScreenHeader } from "/ui.js";
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { CHOICES, setTheme, storedTheme } from "/theme.js";
 import { setDocumentsOnMobileData, useDocuments } from "/sync.js";
 
@@ -21,21 +21,44 @@ export const SECONDARY = [
 
 const THEME_WORDS = { system: "System", light: "Light", dark: "Dark", bright: "Bright" };
 
-/** Light, dark, bright or the system's choice, for this device only. */
-function ThemeChoice() {
+/**
+ * Light, dark, bright or the system's choice, for this device only.
+ *
+ * Here on More, and in the desktop sidebar (`compact`), because at 1024px and
+ * above there is no More tab and the sidebar is the only way to reach it.
+ */
+export function ThemeChoice({ compact = false }) {
   const [chosen, setChosen] = useState(storedTheme());
-  return html`<section class="section" aria-labelledby="theme-title">
-    <h2 class="section-title" id="theme-title">Appearance</h2>
-    <div class="choice" role="group" aria-labelledby="theme-title">
+  useEffect(() => {
+    const follow = (event) => setChosen(event.detail);
+    addEventListener("lectern:theme", follow);
+    return () => removeEventListener("lectern:theme", follow);
+  }, []);
+  const id = compact ? "side-theme-title" : "theme-title";
+  if (compact) {
+    return html`<div class="side-theme">
+      <p class="side-theme-title" id=${id}>Appearance</p>
+      <div class="choice choice-grid" role="group" aria-labelledby=${id}>
+        ${CHOICES.map(
+          (choice) => html`<button
+            key=${choice}
+            type="button"
+            aria-pressed=${chosen === choice ? "true" : "false"}
+            onClick=${() => setTheme(choice)}
+          >${THEME_WORDS[choice]}</button>`
+        )}
+      </div>
+    </div>`;
+  }
+  return html`<section class="section" aria-labelledby=${id}>
+    <h2 class="section-title" id=${id}>Appearance</h2>
+    <div class="choice" role="group" aria-labelledby=${id}>
       ${CHOICES.map(
         (choice) => html`<button
           key=${choice}
           type="button"
           aria-pressed=${chosen === choice ? "true" : "false"}
-          onClick=${() => {
-            setTheme(choice);
-            setChosen(choice);
-          }}
+          onClick=${() => setTheme(choice)}
         >${THEME_WORDS[choice]}</button>`
       )}
     </div>

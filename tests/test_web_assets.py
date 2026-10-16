@@ -759,3 +759,34 @@ def test_nothing_in_the_client_uploads():
         code = re.sub(r"//[^\n]*|/\*.*?\*/", "", module.read_text(encoding="utf-8"), flags=re.S)
         for gone in ("/api/uploads", "/api/sessions", "/api/subjects/manual", "postForm(", 'type="file"'):
             assert gone not in code, f"{module.name} still has {gone}"
+
+
+def test_every_clock_time_goes_through_one_formatter():
+    """24-hour, Africa/Tunis, from format.js and nowhere else.
+
+    Before 2026-10-16 each screen asked the browser, and a phone set to US
+    English showed "02:02 PM" on Status under a header that said "15:29".
+    """
+    offenders = []
+    for module in WEB.rglob("*.js"):
+        if "vendor" in module.parts or module.name in ("format.js", "contract.js"):
+            continue
+        body = re.sub(r"//[^\n]*|/\*.*?\*/", "", module.read_text(encoding="utf-8"), flags=re.S)
+        for pattern in ("toLocaleTimeString", "toLocaleString(", "hour:", "hour12", "hourCycle"):
+            if pattern in body:
+                offenders.append(f"{module.name}: {pattern}")
+    assert offenders == [], offenders
+    formatter = (WEB / "format.js").read_text(encoding="utf-8")
+    assert 'ZONE = "Africa/Tunis"' in formatter
+    assert 'hourCycle: "h23"' in formatter
+
+
+def test_storage_persistence_is_asked_on_every_launch():
+    """Not only while documents download: that happened in a browser tab before
+    the app was installed, and the installed app then never asked (S25)."""
+    sync = (WEB / "sync.js").read_text(encoding="utf-8")
+    start = sync.split("export function startSyncing")[1].split("\n}")[0]
+    assert 'askToPersist("launch")' in start
+    status = (WEB / "screens" / "status.js").read_text(encoding="utf-8")
+    assert "Keep this storage" in status and 'askToPersist("tap")' in status
+    assert "navigator.storage.persisted()" in status

@@ -55,4 +55,7 @@ export function setTheme(choice) {
     // Not remembered, but still applied for this visit.
   }
   applyTheme(choice);
+  // Two controls can be on screen at once -- More's and the sidebar's -- and
+  // each should show the theme the other just chose.
+  dispatchEvent(new CustomEvent("lectern:theme", { detail: choice }));
 }

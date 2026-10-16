@@ -25,7 +25,7 @@ import { Library } from "/screens/library.js";
 import { Timetable } from "/screens/timetable.js";
 import { ProjectPage, Work } from "/screens/work.js";
 import { Add } from "/screens/add.js";
-import { More, SECONDARY } from "/screens/more.js";
+import { More, SECONDARY, ThemeChoice } from "/screens/more.js";
 import { PastAttempt, Quiz, Quizzes } from "/screens/quiz.js";
 import { Icon } from "/icons.js";
 import { Brand } from "/ui.js";
@@ -348,7 +348,7 @@ function TabBar({ here }) {
   `;
 }
 
-/** The sidebar, at 1024px and above: every destination, and Sign out. */
+/** The sidebar, at 1024px and above: every destination, the theme, and Sign out. */
 function Sidebar({ here, onSignOut }) {
   const exact = partOf(here);
   const link = ([to, label, icon], sub = false) => html`<a
@@ -370,6 +370,7 @@ function Sidebar({ here, onSignOut }) {
       </div>
       <div class="sidebar-group">${SECONDARY.map((entry) => link(entry))}</div>
       <div class="sidebar-foot">
+        <${ThemeChoice} compact=${true} />
         <button class="side-link" type="button" onClick=${onSignOut}>
           <${Icon} name="signout" />
           <span>Sign out</span>

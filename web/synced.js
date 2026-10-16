@@ -6,18 +6,11 @@
 // answering. It is a fact, in the same neutral ink as everything else: being
 // offline is not an alarm.
 
+import { recently } from "/format.js";
+
 /** "07:31", "yesterday 19:30", or "Sat 3 Oct, 19:30". */
 export function whenSynced(iso) {
-  const at = new Date(iso);
-  const now = new Date();
-  const clock = at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
-  const sameDay = (a, b) =>
-    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-  if (sameDay(at, now)) return clock;
-  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-  if (sameDay(at, yesterday)) return `yesterday ${clock}`;
-  const day = at.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-  return `${day}, ${clock}`;
+  return recently(iso);
 }
 
 /**

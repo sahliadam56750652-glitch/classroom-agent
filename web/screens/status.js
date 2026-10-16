@@ -12,8 +12,9 @@
 // a judgement about the numbers, and the point is to show the numbers.
 
 import { html } from "/html.js";
-import { useDocuments, useLocal } from "/sync.js";
-import { localTime } from "/format.js";
+import { askToPersist, useDocuments, useLocal } from "/sync.js";
+import { recently } from "/format.js";
+import { useState } from "preact/hooks";
 import { NotSent, NotSynced, ScreenHeader, Skeleton } from "/ui.js";
 import { useOutbox } from "/outbox.js";
 
@@ -83,6 +84,50 @@ function size(bytes) {
  * because a library the browser may clear is the one silent loss this app can
  * suffer -- so whether it is protected is said, never assumed.
  */
+/** Whether this is the installed app or a browser tab: Chrome decides by it. */
+function installed() {
+  try {
+    return matchMedia("(display-mode: standalone)").matches;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * What Android said about keeping the storage, in its own words, and a way to
+ * ask again from a tap. The app asks by itself on every launch until it is
+ * granted (sync.js); a tap is the strongest asking there is, so if that is
+ * refused from the installed app, the refusal is real.
+ */
+function KeepStorage({ docs }) {
+  const [busy, setBusy] = useState(false);
+  if (docs.supported === false) {
+    return html`<p class="t-meta">This browser cannot be asked to keep storage.</p>`;
+  }
+  const asked = docs.asked;
+  const where = installed() ? "the installed app" : "a browser tab, not the installed app";
+  return html`<div class="status-keep">
+    <p class="t-meta">
+      <code>navigator.storage.persisted()</code>${" returns "}<strong>${docs.persisted === null ? "nothing yet" : String(docs.persisted)}</strong>${`, asked from ${where}.`}
+      ${asked
+        ? ` Last asked ${recently(asked.at)}${asked.how === "tap" ? " from a tap" : asked.how === "launch" ? " at launch" : " while downloading"}: ${asked.granted ? "granted" : "refused"}.`
+        : ""}
+    </p>
+    ${docs.persisted === true
+      ? null
+      : html`<button
+          class="button secondary-button"
+          type="button"
+          disabled=${busy}
+          onClick=${async () => {
+            setBusy(true);
+            await askToPersist("tap");
+            setBusy(false);
+          }}
+        >Keep this storage</button>`}
+  </div>`;
+}
+
 function ThisPhone() {
   const docs = useDocuments();
   const waiting = useOutbox().filter((e) => e.status === "waiting").length;
@@ -90,7 +135,9 @@ function ThisPhone() {
     docs.persisted === true
       ? "Kept: Android will not clear this storage."
       : docs.persisted === false
-      ? "May be cleared by Android when the phone runs low on space. Installing the app usually lets it be kept."
+      ? installed()
+        ? "May be cleared by Android when the phone runs low on space."
+        : "May be cleared by Android when the phone runs low on space. Installing the app usually lets it be kept."
       : "Whether Android will keep it is not known on this browser.";
   return html`<section class="card status-card status-phone">
     <div class="card-body">
@@ -103,6 +150,7 @@ function ThisPhone() {
           : null}
       </ul>
       <p class="t-state">${kept}</p>
+      <${KeepStorage} docs=${docs} />
       <p class="t-meta status-origin">
         This copy belongs to <span class="status-address">${location.origin}</span>. Opened from
         any other address, the app starts empty, so that address never changes.
@@ -129,14 +177,19 @@ export function Status() {
   }
   const status = found.data;
 
+  // Two different syncs, and this card is the OTHER one. The line at the top of
+  // every screen ("Synced 15:29") is when this phone last copied from the PC;
+  // this is when the PC last checked Google Classroom (`agent run`, sync_runs).
+  // Before 2026-10-16 both said "synced", and they disagreed by an hour and a
+  // half on the same screen.
   const sync = status.last_sync;
   const synced = sync
     ? sync.status === "error"
-      ? `The last sync, ${localTime(sync.started_at)}, failed: ${sync.error || "no reason recorded"}.`
+      ? `The PC's last check of Classroom, ${recently(sync.started_at)}, failed: ${sync.error || "no reason recorded"}.`
       : sync.status === "running"
-      ? `A sync started ${localTime(sync.started_at)} and has not finished.`
-      : `Last synced ${localTime(sync.finished_at || sync.started_at)}.`
-    : "Not synced yet.";
+      ? `The PC started checking Classroom ${recently(sync.started_at)} and has not finished.`
+      : `The PC last checked Classroom ${recently(sync.finished_at || sync.started_at)}.`
+    : "The PC has not checked Classroom yet.";
 
   return html`<div class="screen status">
     <${ScreenHeader} title="Status">

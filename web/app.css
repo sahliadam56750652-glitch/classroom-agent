@@ -594,6 +594,37 @@ textarea {
 
 .sidebar-foot {
   margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+/* The theme, in the sidebar: there is no More tab at this width. Two by two,
+   because four in a row do not fit 248px. */
+.side-theme {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: 0 var(--s3);
+}
+
+.side-theme-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+
+.choice.choice-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-auto-flow: row;
+}
+
+.choice.choice-grid button {
+  min-width: 0;
+  padding: 0 var(--s2);
 }
 
 .side-link {

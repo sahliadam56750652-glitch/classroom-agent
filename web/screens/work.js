@@ -20,7 +20,7 @@ import { html } from "/html.js";
 import { Offline, api, describe } from "/api.js";
 import { syncNow, useLocal } from "/sync.js";
 import { send, useOutbox, waitingFor } from "/outbox.js";
-import { hasPassed, plural } from "/format.js";
+import { hasPassed, localTime, plural } from "/format.js";
 import { Icon } from "/icons.js";
 import { linkProps } from "/router.js";
 import { Card, Chip, Empty, NotSent, NotSynced, Problem, ScreenHeader, Skeleton, WaitingToSend, useSubjectNames } from "/ui.js";
@@ -38,10 +38,7 @@ const DAY = 86400000;
 
 /** "Tue 6 Oct, 22:59" -- the instant, in the display face. */
 export function dueAt(stamp) {
-  const at = new Date(stamp);
-  const day = at.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-  const clock = at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
-  return `${day}, ${clock}`;
+  return localTime(stamp);
 }
 
 // What a Classroom submission state says, in words a person uses.
