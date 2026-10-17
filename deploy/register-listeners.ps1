@@ -7,7 +7,7 @@
 # Why these settings (2026-10-17):
 #   * At logon, as this user, only while logged on (Interactive): no admin
 #     rights needed. pythonw.exe has no console, so nothing flashes on screen.
-#   * Then EVERY MINUTE, forever, with "do not start a new instance" (IgnoreNew).
+#   * And EVERY MINUTE, forever, with "do not start a new instance" (IgnoreNew).
 #     This is the restart. Task Scheduler's own "restart on failure" does NOT
 #     fire when a program starts and later exits non-zero -- measured: a pythonw
 #     script exiting 3, with restart set to every minute, was never restarted in
@@ -29,9 +29,15 @@ $user = "$env:USERDOMAIN\$env:USERNAME"
 foreach ($name in @("bot", "serve")) {
     $task = "classroom-agent-$name"
     $action = New-ScheduledTaskAction -Execute $pythonw -Argument "-m agent.cli $name" -WorkingDirectory $live
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
-    $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
-        -RepetitionInterval (New-TimeSpan -Minutes 1)).Repetition
+    # Two triggers. At logon, to start at once. And a clock trigger repeating
+    # every minute with no end -- the restart. A repetition on the LOGON trigger
+    # alone is not enough: it starts only when that trigger fires, so a task
+    # registered mid-session never repeated until the next logon (measured
+    # 2026-10-17: NextRunTime empty, a killed server never came back).
+    $atLogon = New-ScheduledTaskTrigger -AtLogOn -User $user
+    $everyMinute = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+        -RepetitionInterval (New-TimeSpan -Minutes 1)
+    $trigger = @($atLogon, $everyMinute)
     $settings = New-ScheduledTaskSettingsSet `
         -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
         -ExecutionTimeLimit ([TimeSpan]::Zero) `
