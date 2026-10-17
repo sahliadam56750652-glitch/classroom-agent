@@ -22,6 +22,7 @@ been skipped must say so rather than skipping it again.
 from __future__ import annotations
 
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -641,8 +642,20 @@ def poll(
     resend: Callable[[sqlite3.Row], None] | None = None,
     provider: llm.LLMProvider | None = None,
     between: Callable[[], None] | None = None,
+    on_problem: Callable[[str], None] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> list[Handled]:
     """Long-poll and route, until stopped.
+
+    **Nothing that can happen to a network ends this loop** (2026-10-17). It
+    used to make one getUpdates request per pass and let any failure out: a
+    laptop waking from sleep, Wi-Fi not up yet at logon, a Telegram hiccup -- and
+    the bot exited, under pythonw, with its traceback going nowhere. Buttons then
+    answered nothing for days. Now a failed poll waits (2, 4, 8 ... 60 s) and
+    tries again, saying so through `on_problem`; a handler that raises on one
+    update is retried three times and then skipped, loudly; and work between
+    polls never stops the listener. The heartbeat is written every pass, so a
+    bot that is alive but cut off still shows as alive.
 
     The offset is advanced and committed per update, not per batch. An update
     handled and then lost to a crash before its offset was stored would be
@@ -653,34 +666,71 @@ def poll(
     handled: list[Handled] = []
     stored = store.get_bot_state(conn, OFFSET_KEY)
     offset = int(stored) + 1 if stored else 0
+    failures = 0
+    attempts: dict[int, int] = {}
+
+    def problem(text: str) -> None:
+        if on_problem is not None:
+            on_problem(text)
 
     while True:
-        if resend is not None:
-            resend_due(conn, telegram, resend)
-        if between is not None:
-            # Work the bot does while nothing is being tapped: since 5d, writing
-            # the quiz a browser asked for. Never allowed to stop the listener.
-            between()
+        try:
+            if resend is not None:
+                resend_due(conn, telegram, resend)
+            if between is not None:
+                # Work the bot does while nothing is being tapped: the heartbeat,
+                # and since 5d the quiz a browser asked for.
+                between()
+        except Exception as err:  # never allowed to stop the listener
+            conn.rollback()
+            problem(f"between polls: {type(err).__name__}: {err}")
 
-        updates = telegram.get_updates(offset, timeout=timeout)
+        try:
+            updates = telegram.get_updates(offset, timeout=timeout)
+        except TelegramError as err:
+            if once:
+                raise
+            failures += 1
+            wait = min(60, 2 ** min(failures, 6))
+            problem(f"could not poll Telegram ({err}); trying again in {wait} s")
+            sleep(wait)
+            continue
+        if failures:
+            problem(f"polling again after {failures} failed attempt(s)")
+        failures = 0
+
         for update in updates:
-            offset = int(update["update_id"]) + 1
+            update_id = int(update["update_id"])
             query = update.get("callback_query")
-            if query is not None:
-                # The Bot API nests the payload under "data"; handle_callback
-                # accepts either spelling so a test can build the obvious shape.
-                result = handle_callback(
-                    conn, config, telegram, query, tz=tz, provider=provider
-                )
-            else:
-                # Anything else -- a plain message, an edit -- is not part of
-                # the gate. Acknowledged by advancing the offset and ignored,
-                # rather than left to be re-offered forever.
-                result = Handled("ignored", str(update.get("update_id")))
+            try:
+                if query is not None:
+                    # The Bot API nests the payload under "data"; handle_callback
+                    # accepts either spelling so a test can build the obvious shape.
+                    result = handle_callback(
+                        conn, config, telegram, query, tz=tz, provider=provider
+                    )
+                else:
+                    # Anything else -- a plain message, an edit -- is not part of
+                    # the gate. Acknowledged by advancing the offset and ignored,
+                    # rather than left to be re-offered forever.
+                    result = Handled("ignored", str(update.get("update_id")))
+            except Exception as err:
+                conn.rollback()
+                attempts[update_id] = attempts.get(update_id, 0) + 1
+                if attempts[update_id] < 3:
+                    # Not acknowledged: Telegram offers it again on the next
+                    # poll. A locked database or a dropped reply is transient.
+                    problem(f"update {update_id} failed ({type(err).__name__}: {err}); will retry")
+                    sleep(5)
+                    break
+                problem(f"update {update_id} failed three times and is skipped: {type(err).__name__}: {err}")
+                result = Handled("failed", str(update_id))
+            offset = update_id + 1
+            attempts.pop(update_id, None)
             handled.append(result)
             if on_event is not None:
                 on_event(result)
-            store.set_bot_state(conn, OFFSET_KEY, str(update["update_id"]))
+            store.set_bot_state(conn, OFFSET_KEY, str(update_id))
             conn.commit()
 
         if once:

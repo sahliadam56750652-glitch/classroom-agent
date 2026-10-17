@@ -173,11 +173,15 @@ def _subject_line(subject: Subject) -> str:
     return "\n".join(lines)
 
 
-def compose(plan: GatePlan) -> str:
+def compose(plan: GatePlan, notes: list[str] | None = None) -> str:
     """The whole evening prompt as one message.
 
     One message, not one per session. My week is ~20 sessions across ~11
     subjects; three prompts a day is how a gate gets muted.
+
+    `notes` are plain sentences about the system itself -- the bot or the server
+    down, material not synced tonight (2026-10-17). Placed right after the
+    header, because `_fit` trims from the end and these must never be trimmed.
     """
     stamp = plan.for_date.strftime("%a %d %b")
     header = [f"🎓 <b>Tomorrow — {escape(stamp)}</b>"]
@@ -193,7 +197,8 @@ def compose(plan: GatePlan) -> str:
     waiting = plan.total_items
     footer = [f"<b>{waiting} item(s) waiting.</b>"] if waiting else []
 
-    blocks = ["\n".join(header), "\n".join(schedule), "\n\n".join(standing), *footer]
+    said = "\n".join(f"<i>{escape(line)}</i>" for line in (notes or []))
+    blocks = ["\n".join(header), said, "\n".join(schedule), "\n\n".join(standing), *footer]
     return _fit([block for block in blocks if block])
 
 

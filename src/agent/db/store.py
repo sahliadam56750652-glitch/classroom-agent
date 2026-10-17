@@ -1868,6 +1868,51 @@ def count_api_sessions(conn: sqlite3.Connection) -> int:
     return int(conn.execute("SELECT count(*) AS n FROM api_sessions").fetchone()["n"])
 
 
+# --------------------------------------------------------------------------
+# pipeline runs: has tonight's material been brought in? (2026-10-17)
+# --------------------------------------------------------------------------
+
+
+def start_pipeline_run(conn: sqlite3.Connection, kind: str, *, now: str | None = None) -> int:
+    cursor = conn.execute(
+        "INSERT INTO pipeline_runs (kind, started_at) VALUES (?, ?)", (kind, now or _utc_now_iso())
+    )
+    return int(cursor.lastrowid)
+
+
+def mark_material_done(
+    conn: sqlite3.Connection, run_id: int, *, classroom_ok: bool, now: str | None = None
+) -> None:
+    conn.execute(
+        "UPDATE pipeline_runs SET material_done_at = ?, classroom_ok = ? WHERE id = ?",
+        (now or _utc_now_iso(), 1 if classroom_ok else 0, run_id),
+    )
+
+
+def finish_pipeline_run(conn: sqlite3.Connection, run_id: int, *, now: str | None = None) -> None:
+    conn.execute(
+        "UPDATE pipeline_runs SET finished_at = ? WHERE id = ?", (now or _utc_now_iso(), run_id)
+    )
+
+
+def material_done_since(conn: sqlite3.Connection, since: str) -> sqlite3.Row | None:
+    """The latest run started at or after `since` whose material stages finished."""
+    return conn.execute(
+        "SELECT * FROM pipeline_runs WHERE started_at >= ? AND material_done_at IS NOT NULL "
+        "ORDER BY material_done_at DESC LIMIT 1",
+        (since,),
+    ).fetchone()
+
+
+def last_good_sync(conn: sqlite3.Connection) -> str | None:
+    """When a sync last finished and reached Classroom."""
+    row = conn.execute(
+        "SELECT COALESCE(finished_at, started_at) AS at FROM sync_runs "
+        "WHERE status = 'ok' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return str(row["at"]) if row and row["at"] else None
+
+
 # The bot_state key `agent bot` stamps on every pass of its loop. Here rather
 # than in gate/bot.py so that the API can read it without importing the bot --
 # which would load the Telegram client into a process that must never send.

@@ -169,6 +169,17 @@ function ThisPhone() {
   </section>`;
 }
 
+/**
+ * The Telegram bot, measured from its heartbeat at the moment this phone last
+ * synced (health.py, 2026-10-17): running, or when it was last seen and what
+ * that costs. It answers the gate's buttons; down, they answer nothing.
+ */
+function botLine(status) {
+  if (status.bot_running) return "The Telegram bot is running; the gate's buttons answer.";
+  if (!status.bot_seen_at) return "The Telegram bot has never been seen running, so the gate's buttons will not answer.";
+  return `The Telegram bot is not running (last seen ${recently(status.bot_seen_at)}), so the gate's buttons will not answer until it is back.`;
+}
+
 export function Status() {
   const found = useLocal("/api/status");
   if (found.status === "loading") return html`<div class="screen"><${Skeleton} rows=${4} /></div>`;
@@ -205,6 +216,7 @@ export function Status() {
         ${sync && sync.events_emitted
           ? html`<p class="t-meta">${`${sync.events_emitted} change${sync.events_emitted === 1 ? "" : "s"} found in that run.`}</p>`
           : null}
+        <p class="t-meta status-bot">${botLine(status)}</p>
       </div>
     </section>
 

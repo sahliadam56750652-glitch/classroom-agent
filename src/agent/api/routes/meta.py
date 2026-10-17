@@ -14,6 +14,7 @@ import sqlite3
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
+from ... import health as health_mod
 from ...db import store
 from .. import auth as api_auth
 from ..deps import Conf, Db, Session
@@ -57,6 +58,11 @@ class StatusOut(BaseModel):
     sessions_live: int
     last_sync: dict[str, object] | None
     ocr_errors: list[dict[str, object]]
+    # When each long-running process last beat (health.py), and whether that
+    # is recent enough to call it running. Measured, never assumed.
+    bot_seen_at: str | None = None
+    bot_running: bool = False
+    serve_seen_at: str | None = None
 
 
 @router.post("/session", response_model=SignInOut)
@@ -138,6 +144,9 @@ def status_report(conn: Db, config: Conf, session: Session) -> StatusOut:
             {"error": name, "pages": count}
             for name, count in store.ocr_error_counts(conn)
         ],
+        bot_seen_at=store.get_bot_state(conn, health_mod.BOT_KEY),
+        bot_running=health_mod.beat(conn, health_mod.BOT_KEY).alive,
+        serve_seen_at=store.get_bot_state(conn, health_mod.SERVE_KEY),
     )
 
 

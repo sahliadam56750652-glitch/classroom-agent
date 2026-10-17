@@ -1057,3 +1057,21 @@ CREATE TABLE IF NOT EXISTS project_attachments (
 
 CREATE INDEX IF NOT EXISTS ix_project_attachments_project
     ON project_attachments (project_id);
+
+
+-- ------------------------------------------------------------ pipeline_runs
+
+-- Each `agent run`, and each time `agent gate` brought material up to date
+-- itself, with the moment its material stages (sync through study items)
+-- finished and whether it reached Classroom (2026-10-17). The gate reads this
+-- to know whether tonight's material is in -- by fact, not by the clock: last
+-- night the gate and the catch-up run fired together and the gate built its
+-- prompt two seconds before the sync began. A new table, no schema bump.
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+    id               INTEGER PRIMARY KEY,
+    kind             TEXT NOT NULL CHECK (kind IN ('run', 'gate')),
+    started_at       TEXT NOT NULL,
+    material_done_at TEXT,
+    classroom_ok     INTEGER,
+    finished_at      TEXT
+);

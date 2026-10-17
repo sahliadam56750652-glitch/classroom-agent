@@ -7,11 +7,12 @@ import json
 import os
 import sys
 import time
+from html import escape as html_escape
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from . import auth
-from . import backup
+from . import backup, health, locks
 from .classroom.client import ClassroomClient
 from .classroom.models import ISO_FORMAT, parse_course
 from . import config as config_mod
@@ -2671,6 +2672,7 @@ def _send_gate(
     telegram,
     *,
     force: bool = False,
+    notes: list[str] | None = None,
 ) -> tuple[int | None, str]:
     """Record the run, send the prompt, then stamp it. (run id, what happened).
 
@@ -2700,7 +2702,7 @@ def _send_gate(
         )
     conn.commit()
 
-    text = gate_messages.compose(plan)
+    text = gate_messages.compose(plan, notes)
     keyboard = gate_messages.keyboard(plan, run_id)
     response = telegram.send_with_keyboard(text, keyboard)
 
@@ -2749,6 +2751,134 @@ def _print_plan(plan: gate_scheduler.GatePlan) -> None:
         print("  nothing to send -- every subject tomorrow is up to date.")
 
 
+# ---------------------------------------------------------------------------
+# the gate waits for tonight's material (2026-10-17)
+# ---------------------------------------------------------------------------
+
+# The evening run that feeds the gate. The gate wants material from a run that
+# started at or after the most recent one of these.
+EVENING_RUN = (19, 30)
+GATE_WAIT_SECONDS = 30 * 60
+GATE_POLL_SECONDS = 5
+
+
+def _evening_since(config: Config, now: datetime) -> str:
+    """The most recent 19:30 Tunis at or before `now`, as a stored UTC string."""
+    zone = composer.display_zone(config.timezone)
+    local = now.astimezone(zone)
+    start = local.replace(hour=EVENING_RUN[0], minute=EVENING_RUN[1], second=0, microsecond=0)
+    if local < start:
+        start -= timedelta(days=1)
+    return start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _material_note(config: Config, conn, why: str) -> str:
+    """One plain line: when material was last synced, and why not tonight."""
+    last = store.last_good_sync(conn)
+    when = "never"
+    if last:
+        moment = datetime.fromisoformat(last.replace("Z", "+00:00"))
+        when = moment.astimezone(composer.display_zone(config.timezone)).strftime("%a %d %b, %H:%M")
+    return f"Material was last synced {when}; tonight {why}, so anything posted since is not in this prompt."
+
+
+def _gate_material_pass(config: Config, conn) -> bool:
+    """Sync through study items, for the gate, under run.lock. True if Classroom answered.
+
+    The same stages as `agent run`, in the same order, each best-effort -- but
+    without OCR, which spends the day's model quota (`agent run` does it), and
+    without notify, which stays in `agent run` so every event goes out exactly
+    once.
+    """
+    print("== material, for the gate ==")
+    try:
+        result = _do_sync(config, conn, dry_run=False)
+    except Exception as err:
+        print(f"  sync failed: {err}", file=sys.stderr)
+        classroom_ok = False
+    else:
+        classroom_ok = True
+        if result is not None:
+            _print_sync(result)
+    _stage("fetch", lambda: _do_fetch(config, conn, dry_run=False), report=_print_fetch)
+    _stage("extract", lambda: _do_extract(config, conn, dry_run=False), report=_print_extract)
+    _stage("render", lambda: _do_render(config, conn, dry_run=False), report=_print_rendered)
+    _stage(
+        "studyitems",
+        lambda: _do_studyitems(
+            config, conn, dry_run=False,
+            course_ids=sorted(scope_mod.in_scope(_timetable_or_none(config))),
+        ),
+        report=lambda result: _print_studyitems_stage(result, dry_run=False),
+    )
+    return classroom_ok
+
+
+def _material_for_gate(
+    config: Config,
+    *,
+    now: datetime | None = None,
+    wait_seconds: float = GATE_WAIT_SECONDS,
+    sleep=time.sleep,
+    clock=time.monotonic,
+) -> str | None:
+    """Make sure tonight's material is in before the prompt is built.
+
+    By fact, not by timing: a run that started at or after the most recent
+    19:30 and has FINISHED its material stages (pipeline_runs). If none has:
+    while `agent run` holds run.lock, wait for it; if nothing holds it, take it
+    and bring the material in here, without notifying. At most `wait_seconds`.
+
+    Returns None when material is in and Classroom answered, or one plain line
+    for the prompt when it is not -- the prompt always goes out either way.
+    """
+    since = _evening_since(config, now or datetime.now(timezone.utc))
+    lock = locks.run_lock(config.data_dir)
+    deadline = clock() + wait_seconds
+    waited = False
+
+    def verdict(conn, row) -> str | None:
+        if row["classroom_ok"]:
+            return None
+        return _material_note(config, conn, "the sync could not reach Classroom")
+
+    while True:
+        conn = store.open_db(config)
+        try:
+            row = store.material_done_since(conn, since)
+            if row is not None:
+                return verdict(conn, row)
+            if lock.try_acquire():
+                try:
+                    # Checked again under the lock: a run may have finished
+                    # between the first look and taking it.
+                    row = store.material_done_since(conn, since)
+                    if row is not None:
+                        return verdict(conn, row)
+                    print(f"{_stamp()} no run has brought tonight's material in; doing it now")
+                    run_id = store.start_pipeline_run(conn, "gate")
+                    conn.commit()
+                    ok = _gate_material_pass(config, conn)
+                    store.mark_material_done(conn, run_id, classroom_ok=ok)
+                    store.finish_pipeline_run(conn, run_id)
+                    conn.commit()
+                    return None if ok else _material_note(conn=conn, config=config,
+                                                          why="the sync could not reach Classroom")
+                finally:
+                    lock.release()
+            if clock() >= deadline:
+                return _material_note(
+                    config, conn,
+                    f"the sync did not finish within {int(wait_seconds // 60)} minutes",
+                )
+        finally:
+            conn.close()
+        if not waited:
+            print(f"{_stamp()} waiting for the run in progress to bring tonight's material in")
+            waited = True
+        sleep(GATE_POLL_SECONDS)
+
+
 def cmd_gate(config: Config, args: argparse.Namespace) -> int:
     try:
         table = timetable_mod.load(config.timetable_path)
@@ -2765,8 +2895,17 @@ def cmd_gate(config: Config, args: argparse.Namespace) -> int:
     else:
         for_date = _tomorrow(config)
 
+    # Tonight's material first, so the prompt is built on it. A dry run, or a
+    # prompt asked for a named date, does not wait or sync.
+    notes: list[str] = []
+    if not args.dry_run and not args.on:
+        material = _material_for_gate(config)
+        if material:
+            notes.append(material)
+
     conn = store.open_db(config)
     try:
+        notes = health.down_lines(conn, composer.display_zone(config.timezone)) + notes
         plan = gate_scheduler.plan_for(
             conn, scope_mod.local(config, table), table, for_date
         )
@@ -2781,7 +2920,7 @@ def cmd_gate(config: Config, args: argparse.Namespace) -> int:
         print()
         if args.dry_run:
             print("  --- the message as it would arrive ---")
-            print(gate_messages.compose(plan))
+            print(gate_messages.compose(plan, notes))
             print()
             for row in gate_messages.keyboard(plan, 0)["inline_keyboard"]:
                 print("  " + "  ".join(f"[{b['text']}]" for b in row))
@@ -2790,7 +2929,7 @@ def cmd_gate(config: Config, args: argparse.Namespace) -> int:
             return 0
 
         telegram = telegram_api.from_config(config)
-        run_id, what = _send_gate(conn, plan, telegram, force=args.force)
+        run_id, what = _send_gate(conn, plan, telegram, force=args.force, notes=notes)
         print(f"  {what} (gate run {run_id}, {plan.total_items} item(s))")
         return 0
     except (ConfigError, telegram_api.TelegramError) as err:
@@ -3019,7 +3158,24 @@ def cmd_flagged(config: Config, args: argparse.Namespace) -> int:
 
 
 def cmd_bot(config: Config, args: argparse.Namespace) -> int:
-    """Listen for button presses. This is the long-running half of the gate."""
+    """Listen for button presses. This is the long-running half of the gate.
+
+    Holds DATA_DIR/bot.lock while it listens: two bots polling Telegram fight
+    over every update, and the logon task starts one every minute that the last
+    one is not running (docs/phone.md). A second start finds the lock held and
+    leaves quietly.
+    """
+    instance = locks.bot_lock(config.data_dir)
+    if not args.once and not instance.try_acquire():
+        print(f"{_stamp()} another agent bot is already listening; leaving it to it")
+        return 0
+    try:
+        return _listen(config, args)
+    finally:
+        instance.release()
+
+
+def _listen(config: Config, args: argparse.Namespace) -> int:
     zone = composer.display_zone(config.timezone)
     conn = store.open_db(config)
     try:
@@ -3045,7 +3201,7 @@ def cmd_bot(config: Config, args: argparse.Namespace) -> int:
         _send_gate(conn, plan, telegram, force=True)
 
     def report(event: gate_bot.Handled) -> None:
-        print(f"  {event.kind}: {event.detail}")
+        print(f"  {_stamp()} {event.kind}: {event.detail}")
 
     # A quiz the web app asked for, written between long polls. One request per
     # pass at most, and after a failure that would repeat -- quota, a bad key --
@@ -3070,8 +3226,11 @@ def cmd_bot(config: Config, args: argparse.Namespace) -> int:
             print(f"  quiz requests paused: {done.stopped}")
             quiet_until[0] = time.monotonic() + 1800
 
+    def problem(text: str) -> None:
+        print(f"  {_stamp()} {text}", file=sys.stderr)
+
     if not args.once:
-        print(f"listening as {config.account} -- ctrl-c to stop")
+        print(f"{_stamp()} listening as {config.account} -- ctrl-c to stop")
     try:
         handled = gate_bot.poll(
             conn,
@@ -3083,6 +3242,7 @@ def cmd_bot(config: Config, args: argparse.Namespace) -> int:
             on_event=report,
             resend=resend,
             between=between,
+            on_problem=problem,
         )
     except KeyboardInterrupt:
         print()
@@ -3093,6 +3253,32 @@ def cmd_bot(config: Config, args: argparse.Namespace) -> int:
 
     print(f"handled {len(handled)} update(s)")
     return 0
+
+
+def _start_serve_heartbeat(config: Config) -> None:
+    """Stamp `serve_heartbeat_at` every minute from a daemon thread (health.py).
+
+    Its own connection, opened in the thread that uses it. A beat that fails --
+    the database locked for longer than busy_timeout -- is skipped, not fatal:
+    the next one comes a minute later, and five missed in a row is what makes
+    the briefing say the server is down.
+    """
+    import threading
+
+    def beat() -> None:
+        while True:
+            try:
+                conn = store.connect(config.db_path, initialise=False)
+                try:
+                    health.stamp(conn, health.SERVE_KEY)
+                    conn.commit()
+                finally:
+                    conn.close()
+            except Exception as err:
+                print(f"  {_stamp()} serve heartbeat skipped: {err}", file=sys.stderr)
+            time.sleep(health.SERVE_EVERY_SECONDS)
+
+    threading.Thread(target=beat, name="serve-heartbeat", daemon=True).start()
 
 
 def cmd_serve(config: Config, args: argparse.Namespace) -> int:
@@ -3152,28 +3338,14 @@ def cmd_serve(config: Config, args: argparse.Namespace) -> int:
     # banner and the cookie warning would simply never appear, which for a warning
     # about a silent failure would be its own joke.
     #
-    # And under pythonw.exe -- how the Startup .vbs runs this at logon -- there is
-    # no stdout at all: sys.stdout is None, and calling .flush() on it killed the
-    # server before it bound the port (found 2026-10-17; it had never started
-    # that way). Uvicorn's own logging needs a stream too, so with none it logs
-    # to DATA_DIR/logs/serve.log instead.
+    # Under pythonw.exe there is no console; main() has already pointed stdout
+    # and stderr at DATA_DIR/logs/serve.log, so this and uvicorn's own logging
+    # land there. (The unconditional flush on a None stdout is what killed the
+    # server before it bound the port, found 2026-10-17.)
     if sys.stdout is not None:
         sys.stdout.flush()
-    log_config = None
-    if sys.stdout is None or sys.stderr is None:
-        log_path = config.data_dir / "logs" / "serve.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_config = {
-            "version": 1,
-            "disable_existing_loggers": False,
-            "formatters": {"plain": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"}},
-            "handlers": {"file": {"class": "logging.FileHandler", "filename": str(log_path),
-                                  "formatter": "plain", "encoding": "utf-8"}},
-            "loggers": {name: {"handlers": ["file"], "level": "INFO", "propagate": False}
-                        for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "agent")},
-        }
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info",
-                **({"log_config": log_config} if log_config else {}))
+    _start_serve_heartbeat(config)
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     return 0
 
 
@@ -3424,6 +3596,15 @@ def _do_notify(config: Config, conn, *, dry_run: bool = False) -> int:
         print("nothing pending -- no briefing sent")
         return 0
 
+    # A process that is down rides on a briefing that is going out anyway, as
+    # its first lines (health.py). A block with no events stamps nothing.
+    down = health.down_lines(conn, composer.display_zone(config.timezone))
+    if down:
+        blocks = [
+            composer.Block(course_name="", html="\n".join(f"<i>{html_escape(line)}</i>" for line in down)),
+            *blocks,
+        ]
+
     pending = sum(len(block.event_ids) for block in blocks)
 
     if dry_run:
@@ -3609,122 +3790,160 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
 
     Only sync failing ends the run, and only because the stages after it would
     have nothing to work on. Everything else is best-effort -- see _stage.
+
+    Holds DATA_DIR/run.lock for its whole length, and records in pipeline_runs
+    when its material stages (sync through study items) are done and whether
+    it reached Classroom -- which is what `agent gate` waits on (2026-10-17).
     """
+    lock = locks.run_lock(config.data_dir)
+    if not args.dry_run:
+        if not lock.try_acquire():
+            print(f"{_stamp()} waiting for run.lock -- `agent gate` is bringing material in")
+            if not lock.acquire(RUN_LOCK_WAIT_SECONDS):
+                print(f"  run.lock still held after {RUN_LOCK_WAIT_SECONDS // 60} minutes; "
+                      f"continuing without it", file=sys.stderr)
     conn = store.open_db(config)
+    run_id = None
+    if not args.dry_run:
+        run_id = store.start_pipeline_run(conn, "run")
+        conn.commit()
     try:
-        print("== sync ==")
-        try:
-            sync_result = _do_sync(config, conn, dry_run=args.dry_run)
-        except Exception as err:
-            # Even here the briefing still goes out: a sync that failed leaves
-            # yesterday's unnotified events pending, and a deadline that is
-            # still approaching is still worth sending.
-            print(f"  sync failed: {err}", file=sys.stderr)
-            print("  continuing to deadlines and notify on stored state.")
-            sync_result = None
-        else:
-            if sync_result is None:
-                # Nothing tracked is no longer nothing to do. Since Phase 6 a
-                # subject can have a library, a backlog and a deadline without
-                # Classroom knowing it exists -- and at the start of a term,
-                # before any course is joined, that is the NORMAL state rather
-                # than an edge case. Returning here would mean an uploaded
-                # board is never extracted, never gated, and no briefing is
-                # sent about an exercise sheet due tomorrow.
-                _no_tracked_courses()
-                print("  Continuing: manual material and deadlines do not need one.")
-            else:
-                _print_sync(sync_result)
-
-        _stage(
-            "fetch",
-            lambda: _do_fetch(config, conn, dry_run=args.dry_run),
-            report=_print_fetch,
-        )
-        _stage(
-            "extract",
-            lambda: _do_extract(config, conn, dry_run=args.dry_run),
-            report=_print_extract,
-        )
-        # PowerPoint and Word to PDF, for the reader. Fails loudly, naming
-        # LibreOffice, when soffice is missing -- and only this stage fails.
-        _stage(
-            "render",
-            lambda: _do_render(config, conn, dry_run=args.dry_run),
-            report=_print_rendered,
-        )
-
-        # Bounded by default: the free tier allows roughly 20 pages a day and
-        # the scheduler fires twice, so an unbounded run would spend the whole
-        # allowance in one go and leave nothing for a manual catch-up.
-        if config.ocr_run_limit:
-            _stage(
-                "ocr",
-                lambda: _do_ocr(
-                    config, conn, dry_run=args.dry_run, limit=config.ocr_run_limit
-                ),
-                report=lambda result: _print_ocr(
-                    result,
-                    store.count_ocr_pages_by_status(conn),
-                    len(store.dead_references(conn)),
-                    store.ocr_error_counts(conn),
-                ),
-            )
-        else:
-            print()
-            print("== ocr ==")
-            print("  skipped: ocr.run_limit is 0 in config.yaml")
-
-        # Strictly in scope, and narrower than the command on purpose: see
-        # _do_studyitems. An archived or ignored course has material in the
-        # library from earlier phases, and this stage must never turn it into a
-        # backlog the gate then claims I am behind on.
-        _stage(
-            "studyitems",
-            lambda: _do_studyitems(
-                config, conn, dry_run=args.dry_run,
-                course_ids=sorted(scope_mod.in_scope(_timetable_or_none(config))),
-            ),
-            report=lambda result: _print_studyitems_stage(result, dry_run=args.dry_run),
-        )
-        # After OCR and study items, because a set can only be written over text
-        # that is fully transcribed, and only for items that exist. Bounded by
-        # quiz.prepare_limit for the same reason OCR is bounded: see
-        # config.example.yaml for the day's arithmetic.
-        if config.quiz_prepare_limit:
-            _stage(
-                "quizzes",
-                lambda: _do_prepare_quizzes(config, conn, dry_run=args.dry_run),
-                report=_print_prepared,
-            )
-        else:
-            print()
-            print("== quizzes ==")
-            print("  skipped: quiz.prepare_limit is 0 in config.yaml")
-        _stage(
-            "packs",
-            lambda: _do_packs(config, conn, dry_run=args.dry_run),
-            report=lambda result: _print_packs(result, config),
-        )
-        _stage(
-            "deadlines",
-            lambda: _do_deadlines(config, conn, dry_run=args.dry_run),
-            report=lambda result: _print_deadlines(result, dry_run=args.dry_run),
-        )
-        # What cannot be rebuilt from any API, once a day, the newest 14 kept.
-        # Last before notify so it holds what this run just recorded, and a
-        # stage like the rest: a full disk must not cost the briefing.
-        _stage(
-            "backup",
-            lambda: backup.daily(config, conn, dry_run=args.dry_run),
-            report=_print_daily_backup,
-        )
-
-        print()
-        print("== notify ==")
-        return _do_notify(config, conn, dry_run=args.dry_run)
+        return _run_stages(config, conn, args, run_id)
     finally:
+        if run_id is not None:
+            try:
+                store.finish_pipeline_run(conn, run_id)
+                conn.commit()
+            except Exception as err:
+                print(f"  could not record the run's end: {err}", file=sys.stderr)
         conn.close()
+        lock.release()
+
+
+# How long `agent run` waits for the gate's own material pass. Generous: that
+# pass is sync through study items without OCR, minutes at most.
+RUN_LOCK_WAIT_SECONDS = 45 * 60
+
+
+def _run_stages(config: Config, conn, args: argparse.Namespace, run_id: int | None) -> int:
+    """The stages of `agent run`, in order. See cmd_run."""
+    print("== sync ==")
+    try:
+        sync_result = _do_sync(config, conn, dry_run=args.dry_run)
+    except Exception as err:
+        # Even here the briefing still goes out: a sync that failed leaves
+        # yesterday's unnotified events pending, and a deadline that is
+        # still approaching is still worth sending.
+        print(f"  sync failed: {err}", file=sys.stderr)
+        print("  continuing to deadlines and notify on stored state.")
+        sync_result = None
+        classroom_ok = False
+    else:
+        classroom_ok = True
+        if sync_result is None:
+            # Nothing tracked is no longer nothing to do. Since Phase 6 a
+            # subject can have a library, a backlog and a deadline without
+            # Classroom knowing it exists -- and at the start of a term,
+            # before any course is joined, that is the NORMAL state rather
+            # than an edge case. Returning here would mean an uploaded
+            # board is never extracted, never gated, and no briefing is
+            # sent about an exercise sheet due tomorrow.
+            _no_tracked_courses()
+            print("  Continuing: manual material and deadlines do not need one.")
+        else:
+            _print_sync(sync_result)
+
+    _stage(
+        "fetch",
+        lambda: _do_fetch(config, conn, dry_run=args.dry_run),
+        report=_print_fetch,
+    )
+    _stage(
+        "extract",
+        lambda: _do_extract(config, conn, dry_run=args.dry_run),
+        report=_print_extract,
+    )
+    # PowerPoint and Word to PDF, for the reader. Fails loudly, naming
+    # LibreOffice, when soffice is missing -- and only this stage fails.
+    _stage(
+        "render",
+        lambda: _do_render(config, conn, dry_run=args.dry_run),
+        report=_print_rendered,
+    )
+
+    # Bounded by default: the free tier allows roughly 20 pages a day and
+    # the scheduler fires twice, so an unbounded run would spend the whole
+    # allowance in one go and leave nothing for a manual catch-up.
+    if config.ocr_run_limit:
+        _stage(
+            "ocr",
+            lambda: _do_ocr(
+                config, conn, dry_run=args.dry_run, limit=config.ocr_run_limit
+            ),
+            report=lambda result: _print_ocr(
+                result,
+                store.count_ocr_pages_by_status(conn),
+                len(store.dead_references(conn)),
+                store.ocr_error_counts(conn),
+            ),
+        )
+    else:
+        print()
+        print("== ocr ==")
+        print("  skipped: ocr.run_limit is 0 in config.yaml")
+
+    # Strictly in scope, and narrower than the command on purpose: see
+    # _do_studyitems. An archived or ignored course has material in the
+    # library from earlier phases, and this stage must never turn it into a
+    # backlog the gate then claims I am behind on.
+    _stage(
+        "studyitems",
+        lambda: _do_studyitems(
+            config, conn, dry_run=args.dry_run,
+            course_ids=sorted(scope_mod.in_scope(_timetable_or_none(config))),
+        ),
+        report=lambda result: _print_studyitems_stage(result, dry_run=args.dry_run),
+    )
+    # The material is in: what `agent gate` waits for (pipeline_runs).
+    if run_id is not None:
+        store.mark_material_done(conn, run_id, classroom_ok=classroom_ok)
+        conn.commit()
+    # After OCR and study items, because a set can only be written over text
+    # that is fully transcribed, and only for items that exist. Bounded by
+    # quiz.prepare_limit for the same reason OCR is bounded: see
+    # config.example.yaml for the day's arithmetic.
+    if config.quiz_prepare_limit:
+        _stage(
+            "quizzes",
+            lambda: _do_prepare_quizzes(config, conn, dry_run=args.dry_run),
+            report=_print_prepared,
+        )
+    else:
+        print()
+        print("== quizzes ==")
+        print("  skipped: quiz.prepare_limit is 0 in config.yaml")
+    _stage(
+        "packs",
+        lambda: _do_packs(config, conn, dry_run=args.dry_run),
+        report=lambda result: _print_packs(result, config),
+    )
+    _stage(
+        "deadlines",
+        lambda: _do_deadlines(config, conn, dry_run=args.dry_run),
+        report=lambda result: _print_deadlines(result, dry_run=args.dry_run),
+    )
+    # What cannot be rebuilt from any API, once a day, the newest 14 kept.
+    # Last before notify so it holds what this run just recorded, and a
+    # stage like the rest: a full disk must not cost the briefing.
+    _stage(
+        "backup",
+        lambda: backup.daily(config, conn, dry_run=args.dry_run),
+        report=_print_daily_backup,
+    )
+
+    print()
+    print("== notify ==")
+    return _do_notify(config, conn, dry_run=args.dry_run)
 
 
 COMMANDS = {
@@ -3778,11 +3997,36 @@ def _use_utf8_output() -> None:
             pass
 
 
+def _stamp() -> str:
+    """The local wall-clock time, for a line in a long-running command's log."""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _streams_to_log(config: Config, command: str) -> None:
+    """Under pythonw.exe there is no stdout or stderr: write them to a log instead.
+
+    How the bot and the server run at logon (2026-10-17). Before, every print and
+    -- worse -- every crash's traceback went to None, and a bot that had died left
+    nothing to say why or when. Now DATA_DIR/logs/<command>.log has it, line by
+    line. A console run is unchanged.
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    folder = config.data_dir / "logs"
+    folder.mkdir(parents=True, exist_ok=True)
+    stream = open(folder / f"{command}.log", "a", encoding="utf-8", buffering=1)
+    if sys.stdout is None:
+        sys.stdout = stream
+    if sys.stderr is None:
+        sys.stderr = stream
+
+
 def main(argv: list[str] | None = None) -> int:
     _use_utf8_output()
     args = _build_parser().parse_args(argv)
     try:
         config = load_config(args.config)
+        _streams_to_log(config, args.command)
         return COMMANDS[args.command](config, args)
     except (
         ConfigError,

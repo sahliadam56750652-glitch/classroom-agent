@@ -61,6 +61,7 @@ bug even if the tests pass.
 ```
 src/agent/
   config.py  auth.py  cli.py  scope.py  manual.py  entries.py  backup.py
+  health.py  locks.py
   api/         app.py  deps.py  auth.py  files.py  schemas.py  idempotency.py  routes/
   classroom/   client.py  models.py
   db/          schema.sql  store.py
@@ -72,12 +73,13 @@ src/agent/
   gate/        timetable.py  scheduler.py  messages.py  bot.py  quiz.py
                quizgen.py  actions.py  sections.py  adjustments.py
 tests/
-deploy/        fingerprint.py
+deploy/        fingerprint.py  register-listeners.ps1
 data/          academic.db  token.json  library/  logs/
 config.yaml    timetable.yaml          (both hand-edited, both gitignored)
 ```
 
-`deploy/fingerprint.py` prints a comparable summary of a `DATA_DIR` -- row
+`deploy/register-listeners.ps1` makes the Task Scheduler tasks for `agent bot`
+and `agent serve` (see Scheduling). `deploy/fingerprint.py` prints a comparable summary of a `DATA_DIR` -- row
 counts, the figures that cannot be rebuilt from the API, and one hash over the
 whole library -- so that "the data arrived whole" after a copy to a new machine
 is a `diff` rather than a belief. It imports nothing from `agent` on purpose: a
@@ -263,15 +265,30 @@ them must not inherit another's.
 |---|---|---|---|
 | 07:30, 19:30 | Task Scheduler | `agent run` | sync → fetch → extract → render → ocr → studyitems → quizzes → packs → deadlines → backup → notify |
 | 20:00 | Task Scheduler | `agent gate` | tomorrow's revision prompt, after the 19:30 sync has pulled the day's material |
-| at logon | Startup `.vbs` → `pythonw.exe` | `agent bot` | the long-poll listener; restart-safe, so killing it is harmless |
-| at logon | Startup `.vbs` → `pythonw.exe` | `agent serve` | the HTTP API behind the web client; holds no state a restart could lose |
+| at logon, then every minute | Task Scheduler → `pythonw.exe` | `agent bot` | the long-poll listener; restart-safe, so killing it is harmless |
+| at logon, then every minute | Task Scheduler → `pythonw.exe` | `agent serve` | the HTTP API behind the web client; holds no state a restart could lose |
 
-The two listeners are the odd ones out, and deliberately. A Task Scheduler entry
-that runs without a visible console window needs the S4U logon type, which
-requires administrator rights this account does not have -- so each starts from a
-`.vbs` in the Startup folder calling `pythonw.exe`, which is windowless and runs
-as the ordinary user. It is a crude mechanism and it costs nothing, because
-neither `agent bot` nor `agent serve` holds state a restart could lose.
+The two listeners are tasks too since 2026-10-17 (`deploy/register-listeners.ps1`
+makes them). As this user, only while logged on, no time limit, battery
+allowed, and repeating every minute with "do not start a new instance": the
+repetition IS the restart, because Task Scheduler's "restart on failure" was
+measured not to fire for a pythonw process that exits non-zero. pythonw has no
+console, so no window shows and no admin rights are needed. `agent bot` holds
+`DATA_DIR/bot.lock`, so a second bot leaves at once; `agent serve` cannot bind
+a second time. Both write `DATA_DIR/logs/<command>.log` when started without a
+console, and both beat into `bot_state` -- `health.py` reads the beats, and the
+gate prompt and the briefing say in one line when either is down.
+
+**The gate waits for the evening's material.** `agent run` holds
+`DATA_DIR/run.lock` for its whole length and records in `pipeline_runs` when
+its material stages (sync through study items) are done. `agent gate` builds
+its prompt only once a run started at or after the most recent 19:30 has done
+them: it waits while a run holds the lock, or, if none does, brings the material
+in itself under the lock -- without OCR, which spends the day's quota, and
+without notify, which stays in `agent run` so events go out exactly once. It
+waits at most 30 minutes; if it gives up, or the run could not reach Classroom,
+the prompt still goes out, with one line saying when material was last synced.
+The lock is an OS file lock, so a process that dies releases it.
 
 **That table is the whole of the deployment.** There is no server (Phase 5a was
 cancelled on 2026-10-13), so everything above runs only while this PC is on.
@@ -328,3 +345,16 @@ second one, which is a fix that hides the mistake rather than preventing it.
   (captured by the Phase 0 probe against real course data) rather than
   guessing at field shapes.
 - Write the test alongside the code, not after the phase.
+- **Never edit the live checkout.** `C:\dev\classroom-agent` is what the
+  scheduled tasks, `agent serve` and `agent bot` import, and it stays where it
+  is with `.env`, `config.yaml`, `timetable.yaml` and `data/`. On 2026-10-16
+  the evening run and gate caught up at logon and imported half-finished edits.
+  Development happens in the git worktree `C:\dev\classroom-agent-dev`, on
+  branch `dev`, with its own `.venv`; it has no `data/`, `config.yaml` or
+  `.env`, so tests cannot touch the live data (`agent webcontract` there takes
+  `--config config.example.yaml` and a placeholder `WEB_API_TOKEN`). When a
+  change passes the full suite in the worktree: in the live checkout,
+  `git merge --ff-only dev`, push, and restart `agent serve` and/or
+  `agent bot` if their code changed (end the process; its task brings it back
+  within a minute). Nothing else edits tracked files in the live checkout. Dry
+  runs against real data run from the live checkout, after the merge.

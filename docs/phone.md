@@ -68,17 +68,19 @@ shows the address the app is running from. The two should always match.
      origin: https://lectern.tailXXXX.ts.net
    ```
 
-6. Start `agent serve` at logon, like the bot. In the Startup folder
-   (`Win+R`, `shell:startup`), next to `classroom-agent-bot.vbs`, create
-   `classroom-agent-serve.vbs`:
+6. Start `agent serve` and `agent bot` at logon, and bring them back if they
+   stop. One script makes both Task Scheduler tasks and removes the old
+   Startup `.vbs` launchers, so nothing starts twice:
 
-   ```vbs
-   Set s = CreateObject("WScript.Shell")
-   s.CurrentDirectory = "C:\dev\classroom-agent"
-   s.Run """C:\dev\classroom-agent\.venv\Scripts\pythonw.exe"" -m agent.cli serve", 0, False
+   ```
+   powershell -ExecutionPolicy Bypass -File deploy\register-listeners.ps1
+   schtasks /run /tn classroom-agent-serve
+   schtasks /run /tn classroom-agent-bot
    ```
 
-   Double-click it once to start it now.
+   Each task starts at logon and then every minute that its process is not
+   running, so a crash or a killed process is back within a minute. Their logs
+   are `data\logs\serve.log` and `data\logs\bot.log`.
 7. On the PC, open `https://lectern.tailXXXX.ts.net`, sign in with
    `WEB_API_TOKEN` from `.env`, and check that Today appears. If sign-in loops
    back to the sign-in screen, `api.origin` does not match the address in the
