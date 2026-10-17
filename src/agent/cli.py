@@ -3151,8 +3151,29 @@ def cmd_serve(config: Config, args: argparse.Namespace) -> int:
     # buffer that is discarded when the process is eventually killed. The startup
     # banner and the cookie warning would simply never appear, which for a warning
     # about a silent failure would be its own joke.
-    sys.stdout.flush()
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    #
+    # And under pythonw.exe -- how the Startup .vbs runs this at logon -- there is
+    # no stdout at all: sys.stdout is None, and calling .flush() on it killed the
+    # server before it bound the port (found 2026-10-17; it had never started
+    # that way). Uvicorn's own logging needs a stream too, so with none it logs
+    # to DATA_DIR/logs/serve.log instead.
+    if sys.stdout is not None:
+        sys.stdout.flush()
+    log_config = None
+    if sys.stdout is None or sys.stderr is None:
+        log_path = config.data_dir / "logs" / "serve.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_config = {
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {"plain": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"}},
+            "handlers": {"file": {"class": "logging.FileHandler", "filename": str(log_path),
+                                  "formatter": "plain", "encoding": "utf-8"}},
+            "loggers": {name: {"handlers": ["file"], "level": "INFO", "propagate": False}
+                        for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "agent")},
+        }
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info",
+                **({"log_config": log_config} if log_config else {}))
     return 0
 
 
