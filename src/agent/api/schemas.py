@@ -510,6 +510,30 @@ class QuizzesOut(BaseModel):
     attempts: list[PastAttemptOut] = Field(default_factory=list)
 
 
+class AttachmentOut(BaseModel):
+    """One thing a teacher attached to a piece of homework, and what I can do with it.
+
+    `state` is the field the client branches on, and each value reads differently
+    on purpose -- a file not fetched YET and one that COULD NOT be downloaded are
+    different facts, and showing them alike would hide the second:
+
+      open          held and readable in the app's viewer (`document.pdf_url`)
+      download      held, but the viewer cannot show it (a Packet Tracer .pkt):
+                    `download_url` serves the original
+      not_fetched   a Drive file this PC has not downloaded yet
+      failed        a Drive file that could not be downloaded; `why` says why
+      external      a link, a YouTube video or a Form: opens outside the app
+    """
+
+    kind: str
+    title: str
+    state: str
+    url: str | None = None
+    why: str | None = None
+    download_url: str | None = None
+    document: DocumentOut | None = None
+
+
 class HomeworkOut(BaseModel):
     """One thing to do. `due_at` is an instant and nothing else about time.
 
@@ -533,9 +557,13 @@ class HomeworkOut(BaseModel):
     task_kind: str | None = None
     done_at: str | None = None
     notes: str | None = None
+    # Classroom only: what the teacher attached, in Classroom's order.
+    attachments: list[AttachmentOut] = Field(default_factory=list)
 
 
 # NextOut and StudyItemOut both reference DocumentOut before it is defined.
+AttachmentOut.model_rebuild()
+HomeworkOut.model_rebuild()
 NextOut.model_rebuild()
 StudyItemOut.model_rebuild()
 LibraryPostOut.model_rebuild()

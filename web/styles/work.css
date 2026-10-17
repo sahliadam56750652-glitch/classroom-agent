@@ -40,6 +40,61 @@
   min-height: 44px;
 }
 
+/* What the teacher attached. Each row a 44px target with its own words for what
+   a tap does; one that is not here is plain text in quieter ink, never red --
+   a file the PC has not fetched yet is not an alarm. */
+.attachments {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin: var(--s2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attachment {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: var(--s2);
+  align-items: center;
+  min-height: 44px;
+  padding: var(--s1) var(--s2);
+  border-radius: var(--r-control);
+  background: color-mix(in oklab, var(--raised) 70%, transparent);
+  border: 1px solid color-mix(in oklab, var(--subject) 18%, var(--line));
+  color: var(--ink);
+  text-decoration: none;
+}
+
+a.attachment:hover {
+  border-color: color-mix(in oklab, var(--subject) 45%, var(--edge));
+}
+
+.attachment svg {
+  width: 18px;
+  height: 18px;
+  color: var(--ink-2);
+}
+
+.attachment-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.attachment-how,
+.attachment-drive {
+  grid-column: 2;
+}
+
+.attachment.unavailable {
+  background: transparent;
+  color: var(--ink-2);
+}
+
+.attachment-drive {
+  color: var(--accent);
+}
+
 /* A deadline already gone: the one red in the app. */
 .passed,
 .passed .time {

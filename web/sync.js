@@ -226,13 +226,29 @@ export function useTimetable(from, to) {
 /** One document's details from the synced library, or null. */
 export async function documentFromSnapshot(driveId) {
   await loadSnapshot();
-  const posts = (snapshot && snapshot.entries && snapshot.entries["/api/library"]) || [];
-  for (const post of posts) {
-    for (const doc of post.documents || []) {
-      if (doc.drive_id === driveId) return doc;
-    }
+  for (const doc of snapshotDocuments(snapshot)) {
+    if (doc.drive_id === driveId) return doc;
   }
   return null;
+}
+
+/**
+ * Every document the snapshot names, with its course: the library's posts and,
+ * since 2026-10-16, the files attached to homework -- a lab sheet must open
+ * offline from its Work card as it does from the library.
+ */
+function snapshotDocuments(from) {
+  if (!from || !from.entries) return [];
+  const found = [];
+  for (const post of from.entries["/api/library"] || []) {
+    for (const doc of post.documents || []) found.push({ ...doc, course_id: post.course_id });
+  }
+  for (const row of from.entries["/api/homework"] || []) {
+    for (const attached of row.attachments || []) {
+      if (attached.document) found.push({ ...attached.document, course_id: row.course_id });
+    }
+  }
+  return found;
 }
 
 // ================================================================ documents
@@ -303,13 +319,10 @@ function onMobileData() {
 export function wantedDocuments(from = snapshot) {
   if (!from || !from.entries) return [];
   const courses = new Set(from.offline_courses || []);
-  const posts = from.entries["/api/library"] || [];
   const found = new Map();
-  for (const post of posts) {
-    if (!courses.has(post.course_id)) continue;
-    for (const doc of post.documents || []) {
-      if (doc.readable && doc.pdf_url && doc.pdf_key) found.set(doc.drive_id, doc);
-    }
+  for (const doc of snapshotDocuments(from)) {
+    if (!courses.has(doc.course_id)) continue;
+    if (doc.readable && doc.pdf_url && doc.pdf_key) found.set(doc.drive_id, doc);
   }
   return [...found.values()];
 }

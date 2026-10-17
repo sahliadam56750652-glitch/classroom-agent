@@ -1285,6 +1285,30 @@ def study_item_files(
     ).fetchall()
 
 
+def post_attachments(
+    conn: sqlite3.Connection, parent_type: str, parent_id: str
+) -> list[sqlite3.Row]:
+    """Every attachment on one post, of every kind, in the order Classroom gave.
+
+    `study_item_files` is Drive files only, because it serves revision; a card
+    on Work has to name the Form and the YouTube video too, so this includes
+    every kind, with whatever is known about a Drive file's bytes and its PDF.
+    """
+    return conn.execute(
+        "SELECT m.id, m.kind, m.ref, m.drive_id, m.title, m.url, "
+        "       e.status, e.error, e.local_path, e.mime_type, e.size_bytes, e.pages, "
+        "       e.md5_checksum, e.extracted_at, "
+        "       r.pdf_path, r.sha256 AS pdf_sha256, r.bytes AS pdf_bytes, "
+        "       r.error AS render_error "
+        "  FROM materials m "
+        "  LEFT JOIN extractions e ON e.drive_id = m.drive_id "
+        "  LEFT JOIN renderings r ON r.drive_id = m.drive_id "
+        " WHERE m.parent_type = ? AND m.parent_id = ? AND m.deleted_at IS NULL "
+        " ORDER BY m.rowid",
+        (parent_type, parent_id),
+    ).fetchall()
+
+
 # --------------------------------------------------------------------------
 # the gate's own rows
 # --------------------------------------------------------------------------

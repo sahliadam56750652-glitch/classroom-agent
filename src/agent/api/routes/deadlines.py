@@ -77,7 +77,17 @@ def homework(
     found = entries_mod.homework(
         conn, sorted(scope_mod.local(config, table)), include_done=include_done
     )
-    return [schemas.HomeworkOut(**value.__dict__) for value in found]
+    return [
+        schemas.HomeworkOut(
+            **value.__dict__,
+            attachments=(
+                [convert.attachment(row) for row in store.post_attachments(conn, "coursework", value.id)]
+                if value.kind == "classroom"
+                else []
+            ),
+        )
+        for value in found
+    ]
 
 
 @router.get("/events", response_model=list[schemas.EventOut])

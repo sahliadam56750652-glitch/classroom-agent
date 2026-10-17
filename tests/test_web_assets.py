@@ -790,3 +790,13 @@ def test_storage_persistence_is_asked_on_every_launch():
     status = (WEB / "screens" / "status.js").read_text(encoding="utf-8")
     assert "Keep this storage" in status and 'askToPersist("tap")' in status
     assert "navigator.storage.persisted()" in status
+
+
+def test_homework_attachments_are_in_the_phones_offline_set():
+    """A lab sheet opens offline from its Work card as from the library: the
+    offline set and the reader's offline lookup both read /api/homework."""
+    sync = (WEB / "sync.js").read_text(encoding="utf-8")
+    documents = sync.split("function snapshotDocuments")[1].split("\n}")[0]
+    assert '"/api/library"' in documents and '"/api/homework"' in documents
+    assert "snapshotDocuments(from)" in sync.split("export function wantedDocuments")[1].split("\n}")[0]
+    assert "snapshotDocuments(snapshot)" in sync.split("export async function documentFromSnapshot")[1].split("\n}")[0]

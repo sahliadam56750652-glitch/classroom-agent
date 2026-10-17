@@ -122,3 +122,85 @@ def test_the_command_prints_it(config, conn, capsys, monkeypatch):
     assert "Lab 2" in out and "not handed in" in out
     assert "taken back, not handed in" in out
     assert "no date" in out
+
+
+# ---------------------------------------------------------------------------
+# what the teacher attached (2026-10-16)
+# ---------------------------------------------------------------------------
+
+
+def attach(conn, cw_id, n, kind, *, drive_id=None, title=None, url=None):
+    conn.execute(
+        "INSERT INTO materials (id, parent_type, parent_id, course_id, kind, ref, drive_id, "
+        "title, url, content_hash, first_seen_at) "
+        "VALUES (?, 'coursework', ?, ?, ?, ?, ?, ?, ?, 'h', 'now')",
+        (f"coursework:{cw_id}:{n}", cw_id, COURSE, kind, drive_id or url, drive_id, title, url),
+    )
+
+
+def held(config, conn, drive_id, mime, suffix, *, status="ok", error=None, on_disk=True):
+    local = f"files/{drive_id}{suffix}" if on_disk else None
+    if on_disk:
+        (config.library_dir / "files").mkdir(parents=True, exist_ok=True)
+        (config.library_dir / local).write_bytes(b"%PDF-1.4 x" if suffix == ".pdf" else b"bytes")
+    store.upsert_extraction(conn, drive_id, status=status, local_path=local, mime_type=mime,
+                            size_bytes=10, pages=1, chars=0, scan_pages=0, ocr_pages=0,
+                            error=error, extracted_at="2026-10-02T00:00:00Z")
+
+
+@pytest.fixture
+def lab(config, conn):
+    """One lab carrying every kind of attachment Classroom gives."""
+    attach(conn, "cw1", 0, "driveFile", drive_id="sheet", title="Lab sheet.pdf",
+           url="https://drive/sheet")
+    held(config, conn, "sheet", "application/pdf", ".pdf")
+    attach(conn, "cw1", 1, "driveFile", drive_id="pkt", title="topology.pkt", url="https://drive/pkt")
+    held(config, conn, "pkt", "application/octet-stream", ".pkt", status="unsupported")
+    attach(conn, "cw1", 2, "driveFile", drive_id="later", title="Answers.docx", url="https://drive/later")
+    attach(conn, "cw1", 3, "driveFile", drive_id="gone", title="Old.pdf", url="https://drive/gone")
+    held(config, conn, "gone", "application/pdf", ".pdf", status="missing",
+         error="file not found (404)", on_disk=False)
+    attach(conn, "cw1", 4, "youTube", title="Walkthrough", url="https://youtube.com/watch?v=x")
+    attach(conn, "cw1", 5, "form", title=None, url="https://docs.google.com/forms/d/x/viewform")
+    conn.commit()
+
+
+def lab_attachments(config, monkeypatch):
+    body = client(config, monkeypatch).get("/api/homework").json()
+    return {a["title"]: a for a in next(r for r in body if r["title"] == "Lab 2")["attachments"]}
+
+
+def test_each_attachment_says_what_a_tap_does(config, monkeypatch, conn, lab):
+    found = lab_attachments(config, monkeypatch)
+    assert found["Lab sheet.pdf"]["state"] == "open"
+    assert found["Lab sheet.pdf"]["document"]["pdf_url"] == "/api/documents/sheet/file"
+    assert found["topology.pkt"]["state"] == "download"
+    assert found["topology.pkt"]["download_url"] == "/api/documents/pkt/file?download=1"
+    assert found["Walkthrough"]["state"] == "external"
+    assert found["Walkthrough"]["url"] == "https://youtube.com/watch?v=x"
+    assert found["Google Form"]["state"] == "external" and found["Google Form"]["kind"] == "form"
+
+
+def test_not_fetched_yet_and_could_not_be_downloaded_read_differently(config, monkeypatch, conn, lab):
+    found = lab_attachments(config, monkeypatch)
+    later, gone = found["Answers.docx"], found["Old.pdf"]
+    assert (later["state"], gone["state"]) == ("not_fetched", "failed")
+    assert "Not fetched yet" in later["why"]
+    assert "Couldn't be downloaded" in gone["why"] and "404" in gone["why"]
+    assert later["why"] != gone["why"]
+    # Both still point at Drive, so the file can be reached another way.
+    assert later["url"] == "https://drive/later" and gone["url"] == "https://drive/gone"
+
+
+def test_a_file_the_viewer_cannot_show_downloads_as_the_original(config, monkeypatch, conn, lab):
+    response = client(config, monkeypatch).get("/api/documents/pkt/file?download=1")
+    assert response.status_code == 200
+    assert response.content == b"bytes"
+    assert response.headers["content-disposition"].startswith("attachment;")
+    inline = client(config, monkeypatch).get("/api/documents/sheet/file")
+    assert inline.headers["content-disposition"].startswith("inline;")
+
+
+def test_a_task_carries_no_attachments(config, monkeypatch, conn, lab):
+    body = client(config, monkeypatch).get("/api/homework").json()
+    assert all(row["attachments"] == [] for row in body if row["kind"] == "task")

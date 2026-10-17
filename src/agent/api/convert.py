@@ -211,6 +211,45 @@ def document(row: sqlite3.Row) -> schemas.DocumentOut:
     )
 
 
+# What a link-shaped attachment is called on its card, by Classroom's kind.
+_EXTERNAL_TITLES = {"link": "Link", "youTube": "YouTube video", "form": "Google Form"}
+
+
+def attachment(row) -> schemas.AttachmentOut:
+    """One attachment as `store.post_attachments` returns it. See AttachmentOut."""
+    kind = str(row["kind"])
+    if kind != "driveFile" or not row["drive_id"]:
+        return schemas.AttachmentOut(
+            kind=kind,
+            title=str(row["title"] or _EXTERNAL_TITLES.get(kind, "Link")),
+            state="external",
+            url=_get(row, "url") or str(row["ref"]),
+        )
+
+    drive_id = str(row["drive_id"])
+    title = str(row["title"] or drive_id)
+    drive_url = _get(row, "url")
+    state = _get(row, "status")
+    if state is None:
+        return schemas.AttachmentOut(
+            kind=kind, title=title, state="not_fetched", url=drive_url,
+            why="Not fetched yet. The PC downloads it at its next sync.",
+        )
+    if not _get(row, "local_path") or state in ("missing", "trashed"):
+        reason = _get(row, "error") or state
+        return schemas.AttachmentOut(
+            kind=kind, title=title, state="failed", url=drive_url,
+            why=f"Couldn't be downloaded: {reason}.",
+        )
+    found = document(row)
+    if found.readable:
+        return schemas.AttachmentOut(kind=kind, title=title, state="open", url=drive_url, document=found)
+    return schemas.AttachmentOut(
+        kind=kind, title=title, state="download", url=drive_url, document=found,
+        download_url=f"/api/documents/{drive_id}/file?download=1",
+    )
+
+
 def deadline(value: deadlines.Candidate) -> schemas.DeadlineOut:
     return schemas.DeadlineOut(
         entity_type=value.entity_type,

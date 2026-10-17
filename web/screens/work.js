@@ -76,6 +76,57 @@ function groups(rows) {
   return out.filter(([, found]) => found.length);
 }
 
+// Where a link-shaped attachment goes, said on its row.
+const OUTSIDE = { link: "Link", youTube: "YouTube", form: "Google Form" };
+
+/**
+ * What the teacher attached, each row saying what a tap does (2026-10-16).
+ *
+ * A file this PC holds opens in the viewer -- offline too, because these join
+ * the phone's copy (sync.js) -- and an Office file opens as its converted PDF,
+ * as in the library. One the viewer cannot show is a download of the original.
+ * A link, a video or a Form opens outside the app and says so. A Drive file
+ * that is not here says why in words, and "not fetched yet" never reads like
+ * "couldn't be downloaded": the first fixes itself, the second does not.
+ */
+function Attachments({ items }) {
+  if (!items || !items.length) return null;
+  return html`<ul class="attachments" aria-label="Attached by the teacher">
+    ${items.map((item, n) => html`<li key=${n}>${attachmentRow(item)}</li>`)}
+  </ul>`;
+}
+
+function attachmentRow(item) {
+  if (item.state === "open" && item.document) {
+    return html`<a class="attachment" ...${linkProps(`/read/${encodeURIComponent(item.document.drive_id)}`)}>
+      <${Icon} name="document" />
+      <span class="attachment-title">${item.title}</span>
+    </a>`;
+  }
+  if (item.state === "download") {
+    return html`<a class="attachment" href=${item.download_url} download>
+      <${Icon} name="document" />
+      <span class="attachment-title">${item.title}</span>
+      <span class="t-meta attachment-how">Download</span>
+    </a>`;
+  }
+  if (item.state === "external") {
+    return html`<a class="attachment" href=${item.url} target="_blank" rel="noopener noreferrer">
+      <${Icon} name="external" />
+      <span class="attachment-title">${item.title}</span>
+      <span class="t-meta attachment-how">${OUTSIDE[item.kind] || "Link"}, opens outside the app</span>
+    </a>`;
+  }
+  return html`<div class=${`attachment unavailable ${item.state}`}>
+    <${Icon} name="document" />
+    <span class="attachment-title">${item.title}</span>
+    <span class="t-meta attachment-how">${item.why}</span>
+    ${item.url
+      ? html`<a class="t-meta attachment-drive" href=${item.url} target="_blank" rel="noopener noreferrer">Open it in Drive</a>`
+      : null}
+  </div>`;
+}
+
 function Homework({ row, subject, onDone }) {
   const [busy, setBusy] = useState(false);
   const waiting = row.kind === "task" ? waitingFor(`task:${row.id}`) : null;
@@ -98,6 +149,7 @@ function Homework({ row, subject, onDone }) {
               ${passed ? "Was due " : "Due "}<span class="time">${dueAt(row.due_at)}</span>
             </span>`
           : html`<span class="t-meta">No date given</span>`}
+        <${Attachments} items=${row.attachments} />
         <div class="homework-doors">
           ${row.kind === "classroom" && row.link
             ? html`<a class="button quiet-button" href=${row.link} target="_blank" rel="noopener">

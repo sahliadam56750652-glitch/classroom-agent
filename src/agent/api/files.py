@@ -159,6 +159,7 @@ def document_response(
     title: str,
     mime_type: str | None,
     row: sqlite3.Row | None = None,
+    download: bool = False,
 ) -> Response:
     """One document, with ranges, a real filename, and a conditional GET.
 
@@ -181,12 +182,12 @@ def document_response(
         headers={
             "ETag": etag,
             "Cache-Control": "private, max-age=0, must-revalidate",
-            "Content-Disposition": _disposition(name),
+            "Content-Disposition": _disposition(name, download=download),
         },
     )
 
 
-def _disposition(name: str) -> str:
+def _disposition(name: str, *, download: bool = False) -> str:
     """`inline` with both a plain filename and an RFC 5987 one.
 
     Two spellings because the plain parameter cannot carry a non-ASCII character
@@ -197,7 +198,8 @@ def _disposition(name: str) -> str:
     ascii_only = safe.encode("ascii", "replace").decode("ascii").replace("?", "_")
     quoted = ascii_only.replace('"', "")
     encoded = _percent_encode(safe)
-    return f'inline; filename="{quoted}"; filename*=UTF-8\'\'{encoded}'
+    kind = "attachment" if download else "inline"
+    return f'{kind}; filename="{quoted}"; filename*=UTF-8\'\'{encoded}'
 
 
 def _percent_encode(value: str) -> str:

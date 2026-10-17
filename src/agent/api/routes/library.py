@@ -283,12 +283,15 @@ def document_pdf(
 
 @router.get("/documents/{drive_id}/file")
 def document_file(
-    drive_id: str, request: Request, conn: Db, config: Conf, session: Session
+    drive_id: str, request: Request, conn: Db, config: Conf, session: Session,
+    download: bool = Query(False),
 ) -> Response:
     """The bytes, with ranges and a conditional GET.
 
     A 92-page deck must not arrive whole because the reader asked for page 34, and
     it must not arrive twice because I closed the tab. See `api/files.py`.
+    `?download=1` asks for the original as a download -- a file the viewer
+    cannot show, like a Packet Tracer .pkt on a homework card.
     """
     path, row = files.held_file(conn, config, drive_id)
     material = conn.execute(
@@ -296,7 +299,8 @@ def document_file(
     ).fetchone()
     title = str((material["title"] if material else None) or drive_id)
     return files.document_response(
-        request, path, title=title, mime_type=row["mime_type"], row=row
+        request, path, title=title, mime_type=row["mime_type"], row=row,
+        download=download,
     )
 
 
