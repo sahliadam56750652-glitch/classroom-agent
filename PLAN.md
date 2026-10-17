@@ -552,6 +552,14 @@ gate asks that evening with `timetable.yaml` untouched.
 - **5c — the PWA and the APK.** The client DESIGN.md is the brief for.
 - **5d — the gate's actions in the client.** Deliver, mark-read, skip and
   snooze, reached from the web client rather than only from Telegram.
+- **PDF zoom (2026-10-17).** The reader zooms like Chrome's viewer (DESIGN.md
+  section 6). `web/reader/zoom.js` holds the geometry as pure functions --
+  layout, locate, anchorScroll, pinch -- tested in the browser; pages are laid
+  out at their exact sizes, rendered at devicePixelRatio for the visible pages
+  +/-1 under a 16 MP / 8192 px canvas cap (lower resolution, never blank).
+  Positions gained `read_positions.page_fraction` (schema 4, one hand-written
+  ADD COLUMN step with a backup first); rows from before restore to the top of
+  their page. No text or link layer exists, so none had to scale.
 - **Theme, homework attachments, project links & files (2026-10-16/17).**
   *Theme:* on the S25, Light in Android's dark mode was darkened by Chrome's
   dark theme for sites -- the page declared plain "light" (and a leftover meta

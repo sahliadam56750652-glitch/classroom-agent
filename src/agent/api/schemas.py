@@ -375,6 +375,8 @@ class PositionOut(BaseModel):
 
     drive_id: str
     page: int | None = None
+    # How far down `page`, 0 to 1; null means its top (rows from before 2026-10-17).
+    fraction: float | None = None
     page_hash: str | None = None
     updated_at: str | None = None
     changed: bool = False

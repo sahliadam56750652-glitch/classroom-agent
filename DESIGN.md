@@ -225,6 +225,15 @@ product; everything else is navigation.
   the sharpest, for daylight -- near-black ink on white sheets over a cool
   ground. Maximum contrast haloes text at 23:00 and makes a 40-page sitting
   physically tiring, which is why Bright is a choice and never the system's.
+- **Zoom is the PDF's, never the app's.** *(Added 2026-10-17.)* Auto, Fit
+  width, Fit page and 25%-400%, as in Chrome's own viewer: from the header, Ctrl
+  +/-/0 and Ctrl+wheel at the cursor on a desktop, a pinch between the fingers
+  and a double tap on the phone. Auto fits the width on a phone and stops a
+  portrait page at 125% on a wide monitor, so a page is never a billboard. The
+  header never scales. Zoom is remembered per document per device; where I
+  stopped is a page and a fraction down it, so it survives a zoom and the move
+  between phone and monitor. A zoom percentage is the size of a page on screen,
+  not progress -- the one percentage this app shows.
 - **The page is never inverted.** In any theme the chrome around it follows
   the theme and the PDF renders exactly as
   the professor made it. Inverting a slide deck destroys diagrams, code

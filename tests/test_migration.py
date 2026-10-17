@@ -116,7 +116,8 @@ def rows(conn):
 def test_every_study_item_survives_the_rebuild(v2):
     conn = store.connect(v2)
     try:
-        assert store.schema_version(conn) == 3
+        # 2 -> 3, then 3 -> 4 (page_fraction): a version-2 file is carried all the way.
+        assert store.schema_version(conn) == store.SCHEMA_VERSION == 4
         assert len(rows(conn)) == 4
     finally:
         conn.close()
@@ -261,17 +262,19 @@ def test_running_it_twice_is_a_no_op(v2):
     store.connect(v2).close()
     conn = store.connect(v2)
     try:
-        assert store.schema_version(conn) == 3
+        # 2 -> 3, then 3 -> 4 (page_fraction): a version-2 file is carried all the way.
+        assert store.schema_version(conn) == store.SCHEMA_VERSION == 4
         assert len(rows(conn)) == 4
         assert rows(conn)[1]["skip_source"] == "seed"
     finally:
         conn.close()
 
 
-def test_a_fresh_database_is_created_at_version_3(tmp_path):
+def test_a_fresh_database_is_created_at_version_4(tmp_path):
     conn = store.connect(tmp_path / "new.db")
     try:
-        assert store.schema_version(conn) == 3
+        # 2 -> 3, then 3 -> 4 (page_fraction): a version-2 file is carried all the way.
+        assert store.schema_version(conn) == store.SCHEMA_VERSION == 4
     finally:
         conn.close()
 
@@ -386,3 +389,51 @@ def test_a_newer_version_is_refused(tmp_path):
 
     with pytest.raises(store.StoreError, match="newer"):
         store.connect(path)
+
+
+# --------------------------------------------------------------- 3 -> 4
+
+def _v3(tmp_path):
+    """A version-3 file: today's schema, minus page_fraction, stamped 3."""
+    path = tmp_path / "academic.db"
+    conn = store.connect(path)
+    conn.execute("DROP TABLE read_positions")
+    conn.execute(
+        "CREATE TABLE read_positions (drive_id TEXT PRIMARY KEY, page_hash TEXT, "
+        "page_index INTEGER NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    conn.execute("INSERT INTO read_positions VALUES ('d1', 'h7', 6, '2026-10-10T20:00:00Z')")
+    conn.execute("UPDATE schema_version SET version = 3 WHERE id = 1")
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_three_to_four_adds_the_fraction_and_keeps_every_position(tmp_path):
+    path = _v3(tmp_path)
+    conn = store.connect(path)
+    try:
+        assert store.schema_version(conn) == 4
+        row = store.get_read_position(conn, "d1")
+        assert (row["page_index"], row["page_hash"], row["page_fraction"]) == (6, "h7", None)
+    finally:
+        conn.close()
+    backup = path.with_name(path.name + ".bak-v3")
+    assert backup.exists()
+    old = sqlite3.connect(backup)
+    try:
+        assert old.execute("SELECT version FROM schema_version").fetchone()[0] == 3
+    finally:
+        old.close()
+
+
+def test_three_to_four_refuses_without_a_backup(tmp_path, monkeypatch):
+    path = _v3(tmp_path)
+    monkeypatch.setattr(shutil, "copy2", lambda *a, **k: (_ for _ in ()).throw(OSError("read-only")))
+    with pytest.raises(store.StoreError, match="backup"):
+        store.connect(path)
+    conn = sqlite3.connect(path)
+    try:
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 3
+    finally:
+        conn.close()

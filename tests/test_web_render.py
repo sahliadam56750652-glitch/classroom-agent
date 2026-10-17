@@ -866,6 +866,10 @@ def test_no_percentage_control_anywhere_in_the_client():
     """
     import re as _re
 
+    # The reader's zoom (2026-10-17) is the one exception, and only those two
+    # modules: "125%" there is the size of a page on screen, as in Chrome's own
+    # PDF viewer -- a view setting, not a measure of how far along anything is.
+    zoom_modules = {("reader", "reader.js"), ("reader", "zoom.js")}
     for path in sorted((REPO_ROOT / "web").rglob("*.js")):
         if "vendor" in path.parts:
             continue
@@ -873,6 +877,8 @@ def test_no_percentage_control_anywhere_in_the_client():
         body = _re.sub(r"/\*.*?\*/", "", body, flags=_re.S)
         body = _re.sub(r"^\s*//.*$", "", body, flags=_re.M)
         assert 'type="range"' not in body, path.name
+        if (path.parent.name, path.name) in zoom_modules:
+            continue
         assert "percent" not in body.lower(), path.name
 
 

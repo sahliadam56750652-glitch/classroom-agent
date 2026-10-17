@@ -27,7 +27,7 @@ from ..classroom.models import (
 from ..config import Config
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # How long a writer waits for another writer before giving up. WAL lets readers
 # and one writer coexist, but two writers still serialise, and on the server
@@ -132,6 +132,8 @@ def connect(
         # how a file stops failing it.
         if schema_version(conn) == 2:
             _migrate_2_to_3(conn, db_path)
+        if schema_version(conn) == 3:
+            _migrate_3_to_4(conn, db_path)
 
     try:
         found = schema_version(conn)
@@ -198,6 +200,43 @@ _STUDY_ITEMS_V3 = """
         UNIQUE (entity_type, entity_id)
     )
 """
+
+
+def _migrate_3_to_4(conn: sqlite3.Connection, db_path: Path) -> None:
+    """Add read_positions.page_fraction. Version 3 -> 4 (2026-10-17).
+
+    Where I stopped is now a page AND how far down it -- a fraction, never
+    pixels -- so a position survives a change of zoom and the move between the
+    phone and a monitor. Old rows keep a null fraction, which reads as the top
+    of their page: exactly where they restored to before.
+
+    ADD COLUMN is not destructive, but read_positions is one of the four things
+    nothing can rebuild, so the same rule as 2 -> 3 holds: a backup first, or
+    no migration.
+    """
+    backup = db_path.with_name(db_path.name + ".bak-v3")
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        shutil.copy2(db_path, backup)
+    except (OSError, sqlite3.Error) as err:
+        conn.close()
+        raise StoreError(
+            f"{db_path} is at schema version 3 and needs read_positions.page_fraction.\n"
+            f"Refusing to start it, because the backup could not be written to "
+            f"{backup}: {err}"
+        ) from err
+    try:
+        with conn:
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(read_positions)")}
+            if "page_fraction" not in columns:
+                conn.execute("ALTER TABLE read_positions ADD COLUMN page_fraction REAL")
+            conn.execute(
+                "UPDATE schema_version SET version = 4, applied_at = ? WHERE id = 1",
+                (_utc_now_iso(),),
+            )
+    except sqlite3.Error as err:
+        conn.close()
+        raise StoreError(f"the schema 3 -> 4 migration of {db_path} failed: {err}") from err
 
 
 def _migrate_2_to_3(conn: sqlite3.Connection, db_path: Path) -> None:
@@ -1777,6 +1816,7 @@ def set_read_position(
     *,
     page_index: int,
     page_hash: str | None,
+    page_fraction: float | None = None,
     now: str | None = None,
 ) -> None:
     """Remember where I stopped in one document.
@@ -1787,13 +1827,14 @@ def set_read_position(
     one that matters.
     """
     conn.execute(
-        "INSERT INTO read_positions (drive_id, page_hash, page_index, updated_at) "
-        "VALUES (?, ?, ?, ?) "
+        "INSERT INTO read_positions (drive_id, page_hash, page_index, page_fraction, updated_at) "
+        "VALUES (?, ?, ?, ?, ?) "
         "ON CONFLICT(drive_id) DO UPDATE SET "
         "  page_hash = excluded.page_hash, "
         "  page_index = excluded.page_index, "
+        "  page_fraction = excluded.page_fraction, "
         "  updated_at = excluded.updated_at",
-        (drive_id, page_hash, page_index, now or _utc_now_iso()),
+        (drive_id, page_hash, page_index, page_fraction, now or _utc_now_iso()),
     )
 
 

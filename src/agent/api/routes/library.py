@@ -45,6 +45,9 @@ class PositionIn(BaseModel):
 
     page_index: int = Field(ge=0)
     page_hash: str | None = None
+    # How far down the page, 0 to 1: never pixels, so it survives zoom and a
+    # different screen (2026-10-17). Absent means the top of the page.
+    fraction: float | None = Field(default=None, ge=0, le=1)
 
 
 @router.get("/library", response_model=list[schemas.LibraryPostOut])
@@ -373,6 +376,7 @@ def read_position(
     saved_hash = stored["page_hash"]
     index = int(stored["page_index"])
     updated = str(stored["updated_at"])
+    fraction = stored["page_fraction"] if "page_fraction" in stored.keys() else None
 
     if not saved_hash:
         # Nothing to check it against: the page was too thin to hash. Honoured as
@@ -380,6 +384,7 @@ def read_position(
         return schemas.PositionOut(
             drive_id=drive_id,
             page=index + 1,
+            fraction=fraction,
             updated_at=updated,
             note=(
                 "that page carried too little text to identify by content, so this "
@@ -405,6 +410,8 @@ def read_position(
     return schemas.PositionOut(
         drive_id=drive_id,
         page=found + 1,
+        # The fraction belongs to the page, so it travels with it when the page moved.
+        fraction=fraction,
         page_hash=saved_hash,
         updated_at=updated,
         # Worth saying when the page MOVED: the position is right and the number
@@ -445,13 +452,15 @@ def set_read_position(
         page_hash = _anchor_at(conn, config, drive_id, body.page_index)
 
     store.set_read_position(
-        conn, drive_id, page_index=body.page_index, page_hash=page_hash
+        conn, drive_id, page_index=body.page_index, page_hash=page_hash,
+        page_fraction=body.fraction,
     )
     stored = store.get_read_position(conn, drive_id)
     assert stored is not None  # just written
     return schemas.PositionOut(
         drive_id=drive_id,
         page=body.page_index + 1,
+        fraction=body.fraction,
         page_hash=page_hash,
         updated_at=str(stored["updated_at"]),
         # Said at the moment it is stored, not discovered later on a GET: a page

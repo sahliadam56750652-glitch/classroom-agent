@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 
 INSERT OR IGNORE INTO schema_version (id, version, applied_at)
-VALUES (1, 3, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+VALUES (1, 4, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- Phase 2 added the `extractions` table and did NOT bump this number, which is
 -- deliberate. The version guard exists for one failure it cannot otherwise
@@ -976,7 +976,11 @@ CREATE TABLE IF NOT EXISTS read_positions (
     drive_id   TEXT PRIMARY KEY,
     page_hash  TEXT,               -- the anchor; null when the page is too thin to hash
     page_index INTEGER NOT NULL,   -- 0-based, matching ocr_pages.page_index
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    -- How far down that page, 0 to 1 (schema 4, 2026-10-17): a fraction, never
+    -- pixels, so zoom and screen size cannot move it. Null on rows written
+    -- before it existed, which reads as the top of the page.
+    page_fraction REAL
 );
 
 

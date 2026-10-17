@@ -528,10 +528,10 @@ def test_open_db_uses_the_configured_path(tmp_path):
     connection.close()
 
 
-# Version 2 is deliberately absent: it is the one version a step exists for,
-# and _migrate_2_to_3 carries it forward instead of refusing it. That path is
+# Versions 2 and 3 are deliberately absent: a step exists for each, and they
+# are carried forward instead of refused. That path is
 # covered end to end in test_migration.py.
-@pytest.mark.parametrize("version,expected", [(4, "newer"), (1, "older")])
+@pytest.mark.parametrize("version,expected", [(5, "newer"), (1, "older")])
 def test_a_mismatched_schema_version_is_refused(tmp_path, version, expected):
     """CREATE TABLE IF NOT EXISTS cannot add a column to an existing table.
 

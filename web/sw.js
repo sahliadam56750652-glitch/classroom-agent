@@ -19,7 +19,7 @@
 // edited by hand: the shell is served cache-first, so a changed file reaches an
 // installed app ONLY when this changes, and a forgotten bump looks exactly like
 // a fix that did not work. A test fails when it is stale.
-const VERSION = "379d2f37416a";
+const VERSION = "d0e78ac31697";
 const SHELL = `shell-${VERSION}`;
 
 // The documents' cache. Its name carries NO version, on purpose: every cache
@@ -80,6 +80,7 @@ const SHELL_FILES = [
   "/screens/quiz.js",
   "/outbox.js",
   "/reader/reader.js",
+  "/reader/zoom.js",
   "/icon.svg",
   "/icon-192.png",
   "/icon-512.png",

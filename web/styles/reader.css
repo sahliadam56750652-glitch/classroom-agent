@@ -76,41 +76,87 @@
 
 .pages {
   flex: 1;
-  overflow-y: auto;
-  overflow-x: auto;
+  position: relative;
+  overflow: auto;
   -webkit-overflow-scrolling: touch;
-  /* NOT `touch-action: none`. Pinch-zoom is never disabled -- a 92-page deck
-     has diagrams that only work zoomed, and disabling it is the single most
-     common way a reader becomes unusable on a phone. */
-  padding: calc(56px + var(--s3) + env(safe-area-inset-top)) var(--s2) var(--s8);
+  overscroll-behavior: contain;
+  /* The pages pan both ways, and a pinch on them zooms the PDF -- the reader's
+     own pinch (reader.js), not the browser's, so the header and the app never
+     scale. NOT `touch-action: none`: that would stop scrolling too, and a
+     tests/test_web_assets.py guard refuses it. */
+  touch-action: pan-x pan-y;
+}
+
+/* Exactly the size of the laid-out pages (zoom.js): wider than the window when
+   zoomed past the width, so it pans sideways; narrower, and every page sits
+   centred on the theme's ground. */
+.pages-content {
+  position: relative;
+  will-change: transform;
 }
 
 .page {
-  margin: 0 auto var(--s3);
-  display: flex;
-  justify-content: center;
-  /* A page that has not rendered yet still occupies its slot, so the scrollbar
-     does not jump as canvases mount and unmount. */
-  min-height: 40vh;
-}
-
-.page canvas {
-  display: block;
+  position: absolute;
+  background: #fff;
   /* The only treatment applied to the page: a hairline so a white slide has an
      edge against either ground. Nothing that alters what is inside it. */
   box-shadow: 0 0 0 1px var(--line);
   border-radius: 2px;
-  background: #fff;
+  overflow: hidden;
 }
 
-.page canvas.blank {
-  min-height: 40vh;
+.page canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
+/* Off screen: the page's own size, no canvas. */
 .page.spacer {
   background: var(--card);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.page-loading {
+  height: 60vh;
+}
+
+.image-page {
+  padding: calc(56px + var(--s3) + env(safe-area-inset-top)) var(--s2) var(--s8);
+  display: flex;
+  justify-content: center;
+}
+
+/* Zoom: − , the menu, + -- quiet, in the header's own controls. */
+.zoom-bar {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.zoom-step {
+  min-width: 40px;
+  padding: 0 var(--s2);
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.zoom-menu {
+  min-height: 40px;
+  max-width: 9.5rem;
+  padding: 0 var(--s2);
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: var(--r-control);
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Where I am. The one element that persists when the chrome goes. */

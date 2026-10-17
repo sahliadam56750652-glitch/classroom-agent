@@ -609,3 +609,49 @@ def test_an_unbuilt_pack_says_which_command_builds_it(config, monkeypatch):
 
     assert response.status_code == 404
     assert "agent packs" in response.text
+
+
+# ---------------------------------------------------------------------------
+# how far down the page (schema 4, 2026-10-17)
+# ---------------------------------------------------------------------------
+
+
+def test_a_position_keeps_how_far_down_the_page(config, monkeypatch):
+    """A fraction, never pixels: what lets zoom and a different screen land on
+    the same spot."""
+    add_document(config)
+    session = client(config, monkeypatch)
+    written = session.put("/api/documents/d1/position", json={"page_index": 1, "fraction": 0.42}).json()
+    assert written["fraction"] == 0.42
+    body = session.get("/api/documents/d1/position").json()
+    assert (body["page"], body["fraction"]) == (2, 0.42)
+
+
+def test_the_fraction_travels_with_a_page_that_moved(config, monkeypatch):
+    add_document(config)
+    session = client(config, monkeypatch)
+    session.put("/api/documents/d1/position", json={"page_index": 1, "fraction": 0.7})
+    add_document(config, pages=("A new opening slide with plenty of words on it.",
+                                PAGE_ONE, PAGE_TWO, PAGE_THREE))
+    body = session.get("/api/documents/d1/position").json()
+    assert (body["page"], body["fraction"]) == (3, 0.7)
+
+
+def test_a_position_from_before_fractions_restores_to_the_top_of_its_page(config, monkeypatch):
+    """Rows written before schema 4 have no fraction: they come back as before."""
+    add_document(config)
+    conn = store.connect(config.db_path)
+    store.set_read_position(conn, "d1", page_index=1, page_hash=sections.anchor(PAGE_TWO))
+    conn.commit()
+    conn.close()
+    body = client(config, monkeypatch).get("/api/documents/d1/position").json()
+    assert body["page"] == 2 and body["fraction"] is None
+
+
+@pytest.mark.parametrize("fraction", [-0.1, 1.5])
+def test_a_fraction_outside_the_page_is_refused(config, monkeypatch, fraction):
+    add_document(config)
+    response = client(config, monkeypatch).put(
+        "/api/documents/d1/position", json={"page_index": 1, "fraction": fraction}
+    )
+    assert response.status_code == 422
