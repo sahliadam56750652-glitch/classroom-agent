@@ -1023,3 +1023,37 @@ CREATE TABLE IF NOT EXISTS client_ops (
     body       TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+
+-- ---------------------------------------------------------- project_attachments
+
+-- Links and files on a project (2026-10-16). A new table, so no schema_version
+-- bump. Three kinds:
+--   link      title (optional; the host stands in) and an http(s) url. The url
+--             is never fetched.
+--   file      uploaded from the phone or the PC, stored under
+--             DATA_DIR/projects/<project_id>/<stored_name>. stored_name is
+--             generated; title is the original filename, display data only and
+--             never part of a path. The ONLY copy anywhere -- agent backup
+--             carries the bytes.
+--   document  a library document pinned to the project (a brief posted on
+--             Classroom), by drive_id.
+-- Removing one stamps removed_at and keeps the row and the bytes: an upload
+-- removed by a mistaken tap is still in the backup and still on disk.
+CREATE TABLE IF NOT EXISTS project_attachments (
+    id          INTEGER PRIMARY KEY,
+    project_id  INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL CHECK (kind IN ('link', 'file', 'document')),
+    title       TEXT,
+    url         TEXT,
+    stored_name TEXT,
+    mime_type   TEXT,
+    size_bytes  INTEGER,
+    sha256      TEXT,
+    drive_id    TEXT,
+    created_at  TEXT NOT NULL,
+    removed_at  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS ix_project_attachments_project
+    ON project_attachments (project_id);

@@ -248,6 +248,14 @@ function snapshotDocuments(from) {
       if (attached.document) found.push({ ...attached.document, course_id: row.course_id });
     }
   }
+  // A project's uploaded PDFs and images, and the library documents pinned to
+  // it (2026-10-16): the only copy of an upload, so the phone keeps one too.
+  for (const [path, project] of Object.entries(from.entries)) {
+    if (!/^\/api\/projects\/\d+$/.test(path) || !project) continue;
+    for (const attached of project.attachments || []) {
+      if (attached.document) found.push({ ...attached.document, course_id: project.course_id });
+    }
+  }
   return found;
 }
 

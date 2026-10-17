@@ -373,6 +373,11 @@ QUEUED = {
     ("POST", "/api/milestones/{milestone_id}/complete"),
     ("POST", "/api/adjustments"),
     ("PUT", "/api/documents/{drive_id}/position"),
+    # A project's links & files (2026-10-16): adding a link, pinning a library
+    # document, removing either. The upload is NOT here -- it carries bytes.
+    ("POST", "/api/projects/{project_id}/links"),
+    ("POST", "/api/projects/{project_id}/documents"),
+    ("DELETE", "/api/projects/{project_id}/attachments/{attachment_id}"),
 }
 
 
@@ -753,12 +758,21 @@ def test_screens_read_the_snapshot_before_the_network():
     assert found, "the scan found nothing to check"
 
 
-def test_nothing_in_the_client_uploads():
-    """Manual logging -- uploads and session logs -- was cancelled on 2026-10-13."""
+def test_nothing_in_the_client_uploads_but_a_project_file():
+    """Manual logging -- uploads and session logs -- was cancelled on 2026-10-13.
+
+    The one upload since is a file on a project (2026-10-16), and it is the only
+    one: a file picker and a form post, in work.js, to the project route.
+    """
     for module in list(WEB.glob("*.js")) + list(WEB.glob("screens/*.js")):
         code = re.sub(r"//[^\n]*|/\*.*?\*/", "", module.read_text(encoding="utf-8"), flags=re.S)
-        for gone in ("/api/uploads", "/api/sessions", "/api/subjects/manual", "postForm(", 'type="file"'):
+        for gone in ("/api/uploads", "/api/sessions", "/api/subjects/manual"):
             assert gone not in code, f"{module.name} still has {gone}"
+        if module.name not in ("work.js", "api.js"):
+            assert "postForm(" not in code and 'type="file"' not in code, module.name
+    work = (WEB / "screens" / "work.js").read_text(encoding="utf-8")
+    posts = re.findall(r"postForm\(`([^`]+)`", work)
+    assert posts == ["/api/projects/${project.id}/files"], posts
 
 
 def test_every_clock_time_goes_through_one_formatter():

@@ -1514,3 +1514,46 @@ def test_the_theme_can_be_changed_from_the_desktop_sidebar(served, tmp_path_fact
     assert found["visible"], found
     assert found["words"] == ["System", "Light", "Dark", "Bright"], found
     assert found["theme"] == "bright" and found["stored"] == "bright", found
+
+
+@chrome_only
+def test_a_projects_links_and_files_sit_above_its_milestones(served, tmp_path_factory):
+    """Links & files above Milestones; the card says "1 link" and no "0 of 0";
+    and with the PC unreachable the upload says so before anything is picked."""
+    base, _ = served
+    steps = _REPORT + _OUTBOX + """
+      const w = f.contentWindow;
+      await sleep(1000);
+      const post = (path, body) => fetch(path, { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
+      const made = await post('/api/projects', { subject: 'Database', title: 'Render project', milestones: [] });
+      await post(`/api/projects/${made.id}/links`, { url: 'https://www.canva.com/design/x' });
+      w.dispatchEvent(new Event('online'));
+      await sleep(2500);
+      await go(w, `/projects/${made.id}`);
+      const page = d().body.innerText;
+      await go(w, '/work');
+      const work = d().body.innerText;
+      w.fetch = () => Promise.reject(new TypeError('the PC is off'));
+      w.dispatchEvent(new Event('online'));
+      await sleep(1500);
+      await go(w, `/projects/${made.id}`);
+      const input = d().querySelector('.add-file input[type=file]');
+      report({ id: made.id,
+               order: page.indexOf('Links & files') >= 0 && page.indexOf('Links & files') < page.indexOf('Milestones'),
+               link: page.includes('canva.com'),
+               count: work.includes('1 link'), zero: /0\s+of\s+0\s+milestones/.test(work),
+               disabled: Boolean(input && input.disabled),
+               said: d().body.innerText.includes("Uploading needs the PC") });
+    """
+    found = _probed(render(base, tmp_path_factory.mktemp("proj"), path="/work", steps=steps, real_clock=True))
+    try:
+        assert found["order"] and found["link"], found
+        assert found["count"] and not found["zero"], found
+        assert found["disabled"] and found["said"], found
+    finally:
+        conn = _db()
+        conn.execute("DELETE FROM projects WHERE title = 'Render project'")
+        conn.execute("DELETE FROM client_ops")
+        conn.commit()
+        conn.close()

@@ -301,6 +301,27 @@ class MilestoneOut(BaseModel):
     done_at: str | None = None
 
 
+class ProjectAttachmentOut(BaseModel):
+    """A link, an uploaded file, or a pinned library document on a project.
+
+    `document` is what the viewer and the phone's offline copy read, in the same
+    shape as any library document: for a pinned one its own DocumentOut; for an
+    uploaded PDF or image one with drive_id "project-file-<id>" and `pdf_url`
+    pointing at the file. Null for a link, and for a file the viewer cannot show.
+    """
+
+    id: int
+    kind: str
+    title: str
+    url: str | None = None
+    host: str | None = None
+    mime_type: str | None = None
+    size_bytes: int | None = None
+    file_url: str | None = None
+    created_at: str
+    document: DocumentOut | None = None
+
+
 class ProjectOut(BaseModel):
     """Progress is two integers. There is no percentage, and that is deliberate.
 
@@ -324,6 +345,10 @@ class ProjectOut(BaseModel):
     milestones_done: int = 0
     milestones_total: int = 0
     milestones: list[MilestoneOut] = Field(default_factory=list)
+    # Links & files (2026-10-16). `files` counts uploads and pinned documents.
+    links: int = 0
+    files: int = 0
+    attachments: list[ProjectAttachmentOut] = Field(default_factory=list)
 
 
 class TaskOut(BaseModel):
@@ -563,6 +588,8 @@ class HomeworkOut(BaseModel):
 
 # NextOut and StudyItemOut both reference DocumentOut before it is defined.
 AttachmentOut.model_rebuild()
+ProjectAttachmentOut.model_rebuild()
+ProjectOut.model_rebuild()
 HomeworkOut.model_rebuild()
 NextOut.model_rebuild()
 StudyItemOut.model_rebuild()

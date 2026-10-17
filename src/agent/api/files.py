@@ -124,6 +124,8 @@ def etag_for(path: Path, row: sqlite3.Row | None = None) -> str:
     known = None
     if row is not None and "md5_checksum" in row.keys():
         known = row["md5_checksum"]
+    elif row is not None and "sha256" in row.keys():
+        known = row["sha256"]
     if known:
         return f'"{known}"'
     stat = path.stat()
@@ -183,6 +185,9 @@ def document_response(
             "ETag": etag,
             "Cache-Control": "private, max-age=0, must-revalidate",
             "Content-Disposition": _disposition(name, download=download),
+            # The type is ours to say. A browser guessing from the bytes is how
+            # an uploaded "notes.pdf" that is really HTML would run as a page.
+            "X-Content-Type-Options": "nosniff",
         },
     )
 

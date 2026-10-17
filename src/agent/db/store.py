@@ -2395,6 +2395,74 @@ def get_project(conn: sqlite3.Connection, project_id: int) -> sqlite3.Row | None
     ).fetchone()
 
 
+def add_project_attachment(
+    conn: sqlite3.Connection,
+    project_id: int,
+    kind: str,
+    *,
+    title: str | None = None,
+    url: str | None = None,
+    stored_name: str | None = None,
+    mime_type: str | None = None,
+    size_bytes: int | None = None,
+    sha256: str | None = None,
+    drive_id: str | None = None,
+    now: str | None = None,
+) -> int:
+    cursor = conn.execute(
+        "INSERT INTO project_attachments (project_id, kind, title, url, stored_name, "
+        "mime_type, size_bytes, sha256, drive_id, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (project_id, kind, title, url, stored_name, mime_type, size_bytes, sha256,
+         drive_id, now or _utc_now_iso()),
+    )
+    return int(cursor.lastrowid)
+
+
+def project_attachments(conn: sqlite3.Connection, project_id: int) -> list[sqlite3.Row]:
+    """A project's live links and files, oldest first."""
+    return conn.execute(
+        "SELECT * FROM project_attachments WHERE project_id = ? AND removed_at IS NULL "
+        "ORDER BY id",
+        (project_id,),
+    ).fetchall()
+
+
+def get_project_attachment(conn: sqlite3.Connection, attachment_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM project_attachments WHERE id = ?", (attachment_id,)
+    ).fetchone()
+
+
+def remove_project_attachment(
+    conn: sqlite3.Connection, attachment_id: int, *, now: str | None = None
+) -> None:
+    conn.execute(
+        "UPDATE project_attachments SET removed_at = ? WHERE id = ? AND removed_at IS NULL",
+        (now or _utc_now_iso(), attachment_id),
+    )
+
+
+def held_document(conn: sqlite3.Connection, drive_id: str) -> sqlite3.Row | None:
+    """One Drive file as `study_item_files` shapes it, with the courses it is in."""
+    return conn.execute(
+        "SELECT e.drive_id, "
+        "       (SELECT m.title FROM materials m WHERE m.drive_id = e.drive_id "
+        "          AND m.title IS NOT NULL LIMIT 1) AS title, "
+        "       (SELECT m.url FROM materials m WHERE m.drive_id = e.drive_id LIMIT 1) AS url, "
+        "       (SELECT group_concat(DISTINCT m.course_id) FROM materials m "
+        "         WHERE m.drive_id = e.drive_id AND m.deleted_at IS NULL) AS course_ids, "
+        "       e.status, e.local_path, e.mime_type, e.size_bytes, e.pages, "
+        "       e.md5_checksum, e.extracted_at, "
+        "       r.pdf_path, r.sha256 AS pdf_sha256, r.bytes AS pdf_bytes, "
+        "       r.pages AS pdf_pages, r.error AS render_error "
+        "  FROM extractions e "
+        "  LEFT JOIN renderings r ON r.drive_id = e.drive_id "
+        " WHERE e.drive_id = ?",
+        (drive_id,),
+    ).fetchone()
+
+
 def project_milestones(conn: sqlite3.Connection, project_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM project_milestones WHERE project_id = ? ORDER BY position, id",

@@ -552,6 +552,18 @@ gate asks that evening with `timetable.yaml` untouched.
 - **5c — the PWA and the APK.** The client DESIGN.md is the brief for.
 - **5d — the gate's actions in the client.** Deliver, mark-read, skip and
   snooze, reached from the web client rather than only from Telegram.
+- **Theme, homework attachments, project links & files (2026-10-16/17).**
+  *Theme:* on the S25, Light in Android's dark mode was darkened by Chrome's
+  dark theme for sites -- the page declared plain "light" (and a leftover meta
+  said "dark"), so Light's light-dark() tokens resolved to our Dark ground and
+  Bright's pixels were recoloured. Each theme now declares exactly what it is
+  ("only light" / "only dark" / "light dark"), and one theme-color follows the
+  app; tests/test_web_theme.py reproduces it in Playwright. *Homework:* fetch
+  already downloaded coursework attachments; the card now shows them, each
+  saying what a tap does. *Projects:* links (never fetched), uploads (50 MB,
+  generated names, nosniff, inline only when the bytes say PDF or image) and
+  pinned library documents, in `project_attachments`; uploads are in the
+  backup, hard-linked across daily snapshots.
 - **timetable.yaml rebuilt (2026-10-16).** A 15:48 save replaced the whole
   file with one version block. `subjects:` and `exceptions:` were restored
   verbatim from VS Code's local history (the 14:02 save); the v2 sessions are

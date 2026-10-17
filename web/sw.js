@@ -19,7 +19,7 @@
 // edited by hand: the shell is served cache-first, so a changed file reaches an
 // installed app ONLY when this changes, and a forgotten bump looks exactly like
 // a fix that did not work. A test fails when it is stale.
-const VERSION = "845c7387676f";
+const VERSION = "e6ef3e64ff2e";
 const SHELL = `shell-${VERSION}`;
 
 // The documents' cache. Its name carries NO version, on purpose: every cache
@@ -147,9 +147,12 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== location.origin) return;
 
+  // A library document, or a file uploaded to a project (2026-10-16): both are
+  // kept whole in LIBRARY by the sync, and both are read from there.
   if (
-    url.pathname.startsWith("/api/documents/") &&
-    (url.pathname.endsWith("/file") || url.pathname.endsWith("/pdf"))
+    (url.pathname.startsWith("/api/documents/") &&
+      (url.pathname.endsWith("/file") || url.pathname.endsWith("/pdf"))) ||
+    /^\/api\/projects\/\d+\/files\/\d+$/.test(url.pathname)
   ) {
     event.respondWith(document_(request));
     return;

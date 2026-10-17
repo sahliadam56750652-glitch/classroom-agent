@@ -289,6 +289,9 @@ export function Reader({ driveId }) {
   // PDF.js produces materially different text for the same page.
   useEffect(() => {
     if (!pdf || !current) return;
+    // A file uploaded to a project is not a Drive document and has no place to
+    // keep: a position for it would only ever be refused.
+    if (driveId.startsWith("project-file-")) return;
     const timer = setTimeout(() => {
       if (lastWritten.current === current) return;
       lastWritten.current = current;

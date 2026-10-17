@@ -1993,6 +1993,9 @@ def cmd_backup(config: Config, args: argparse.Namespace) -> int:
           f"({snapshot.bytes_copied / 1024:.0f} KB)")
     print(f"  {'timetable.yaml':<24} "
           f"{'yes' if snapshot.timetable else f'NOT FOUND at {config.timetable_path}'}")
+    print(f"  {'project files':<24} {snapshot.project_files}"
+          + (f" ({snapshot.project_files_linked} unchanged, linked to the previous snapshot)"
+             if snapshot.project_files_linked else ""))
     print()
     if snapshot.dry_run:
         print(f"  dry run -- would write {snapshot.total_rows} row(s) to "
@@ -2032,6 +2035,8 @@ def _do_restore(config: Config, conn, snapshot_dir, *, dry_run: bool) -> int:
             print(f"  {table:<24} {added:>7} {skipped:>7}")
     print(f"  {'uploaded files':<24} {result.files_added:>7} "
           f"{result.files_present:>7}")
+    print(f"  {'project files':<24} {result.project_files_added:>7} "
+          f"{result.project_files_present:>7}")
     if result.timetable == "added":
         print(f"  timetable.yaml was missing and is put back: {config.timetable_path}")
     elif result.timetable == "same":

@@ -197,3 +197,70 @@ a.attachment:hover {
 .project-page .subject-band .chip {
   margin-top: var(--s1);
 }
+
+/* ------------------------------------------------------------ links & files
+   A project's own links and uploads, above its milestones (2026-10-16). */
+
+.project-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s6);
+  min-width: 0;
+}
+
+.project-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.project-attachment {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.project-attachment .waiting {
+  grid-column: 1 / -1;
+}
+
+.project-attachment.removing .attachment {
+  opacity: 0.6;
+}
+
+.add-link {
+  display: grid;
+  gap: var(--s3);
+  align-items: end;
+}
+
+@media (min-width: 720px) {
+  .add-link {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto;
+  }
+}
+
+.add-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+}
+
+.add-file p {
+  margin: 0;
+}
+
+.upload-button {
+  cursor: pointer;
+}
+
+.upload-button.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pin-document select {
+  max-width: 100%;
+}

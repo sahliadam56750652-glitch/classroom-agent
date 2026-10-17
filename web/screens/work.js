@@ -18,8 +18,8 @@
 import { useEffect, useState } from "preact/hooks";
 import { html } from "/html.js";
 import { Offline, api, describe } from "/api.js";
-import { syncNow, useLocal } from "/sync.js";
-import { send, useOutbox, waitingFor } from "/outbox.js";
+import { syncNow, useLocal, useSyncState } from "/sync.js";
+import { outboxEntries, send, useOutbox, waitingFor } from "/outbox.js";
 import { hasPassed, localTime, plural } from "/format.js";
 import { Icon } from "/icons.js";
 import { linkProps } from "/router.js";
@@ -179,16 +179,248 @@ function Homework({ row, subject, onDone }) {
 }
 
 /** One project as a card: its subject, its deadline, and two integers. */
+// -------------------------------------------------------------- links & files
+
+const UPLOAD_NEEDS_PC = "Uploading needs the PC, and it isn't reachable right now. Links can still be added; they go when it is.";
+
+function size(bytes) {
+  if (!bytes) return "";
+  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** One link, uploaded file or pinned document, saying what a tap does. */
+function ProjectAttachment({ project, item }) {
+  const removing = waitingFor(`attachment:${item.id}`, ["unattach"]);
+  let door;
+  if (item.kind === "link") {
+    door = html`<a class="attachment" href=${item.url} target="_blank" rel="noopener noreferrer">
+      <${Icon} name="external" />
+      <span class="attachment-title">${item.title}</span>
+      <span class="t-meta attachment-how">${item.host}, opens outside the app</span>
+    </a>`;
+  } else if (item.document && item.document.readable) {
+    door = html`<a class="attachment" ...${linkProps(`/read/${encodeURIComponent(item.document.drive_id)}`)}>
+      <${Icon} name="document" />
+      <span class="attachment-title">${item.title}</span>
+      ${item.kind === "document"
+        ? html`<span class="t-meta attachment-how">From the library</span>`
+        : item.size_bytes
+        ? html`<span class="t-meta attachment-how">${size(item.size_bytes)}</span>`
+        : null}
+    </a>`;
+  } else if (item.file_url) {
+    door = html`<a class="attachment" href=${item.file_url} download>
+      <${Icon} name="document" />
+      <span class="attachment-title">${item.title}</span>
+      <span class="t-meta attachment-how">Download${item.size_bytes ? `, ${size(item.size_bytes)}` : ""}</span>
+    </a>`;
+  } else {
+    door = html`<div class="attachment unavailable">
+      <${Icon} name="document" />
+      <span class="attachment-title">${item.title}</span>
+      <span class="t-meta attachment-how">${(item.document && item.document.unreadable_because) || "Not held on the PC."}</span>
+    </div>`;
+  }
+  return html`<li class=${`project-attachment ${removing ? "removing" : ""}`}>
+    ${door}
+    ${removing
+      ? html`<${WaitingToSend} entry=${removing} />`
+      : project.closed_at
+      ? null
+      : html`<button
+          class="button quiet-button attachment-remove"
+          type="button"
+          aria-label=${`Remove ${item.title}`}
+          onClick=${() =>
+            send({
+              kind: "unattach",
+              method: "DELETE",
+              path: `/api/projects/${project.id}/attachments/${item.id}`,
+              target: `attachment:${item.id}`,
+              label: item.title,
+            })
+              .then((outcome) => outcome.sent && syncNow())
+              .catch(() => {})}
+        >Remove</button>`}
+  </li>`;
+}
+
+/**
+ * Links & files, above the milestones (2026-10-16). Adding a link, pinning a
+ * library document and removing anything go through the outbox like every
+ * other write. Uploading does not: it carries bytes, so it needs the PC, and
+ * when the PC is not reachable the button says so BEFORE a file is picked.
+ */
+function ProjectFiles({ project }) {
+  const sync = useSyncState();
+  const library = useLocal("/api/library").data || [];
+  const [url, setUrl] = useState("");
+  const [title, setTitle] = useState("");
+  const [problem, setProblem] = useState("");
+  const [busy, setBusy] = useState(false);
+  const attached = project.attachments || [];
+  const target = `project:${project.id}`;
+  const pending = outboxEntries().filter(
+    (entry) => entry.status === "waiting" && entry.target === target && (entry.kind === "link" || entry.kind === "pin")
+  );
+  const pinned = new Set(attached.filter((item) => item.kind === "document").map((item) => item.document && item.document.drive_id));
+  const pinnable = [];
+  for (const post of library) {
+    if (post.course_id !== project.course_id) continue;
+    for (const doc of post.documents || []) {
+      if (doc.readable && !pinned.has(doc.drive_id) && !pinnable.some((d) => d.drive_id === doc.drive_id)) pinnable.push(doc);
+    }
+  }
+  const unreachable = sync.reachable === false;
+  const open = !project.closed_at;
+
+  async function queue(work) {
+    setProblem("");
+    try {
+      const outcome = await work();
+      if (outcome.sent) await syncNow();
+      return true;
+    } catch (err) {
+      setProblem(describe(err));
+      return false;
+    }
+  }
+
+  async function upload(event) {
+    const picked = event.target.files && event.target.files[0];
+    event.target.value = "";
+    if (!picked) return;
+    setBusy(true);
+    setProblem("");
+    try {
+      const form = new FormData();
+      form.append("file", picked, picked.name);
+      await api.postForm(`/api/projects/${project.id}/files`, form);
+      await syncNow();
+    } catch (err) {
+      setProblem(
+        err instanceof Offline
+          ? "The PC stopped answering, so nothing was uploaded. Try again when it is reachable."
+          : describe(err)
+      );
+    }
+    setBusy(false);
+  }
+
+  return html`<section class="section project-files" aria-labelledby="project-files">
+    <h2 class="section-title" id="project-files">Links & files</h2>
+    ${problem ? html`<${Problem}>${problem}</${Problem}>` : null}
+    <${NotSent} kinds=${["link", "pin", "unattach"]} />
+    ${attached.length || pending.length
+      ? html`<ul class="attachments">
+          ${attached.map((item) => html`<${ProjectAttachment} key=${item.id} project=${project} item=${item} />`)}
+          ${pending.map((entry) => html`<li key=${`w${entry.seq}`} class="project-attachment">
+            <div class="attachment unavailable">
+              <${Icon} name=${entry.kind === "link" ? "external" : "document"} />
+              <span class="attachment-title">${entry.label}</span>
+            </div>
+            <${WaitingToSend} entry=${entry} />
+          </li>`)}
+        </ul>`
+      : html`<p class="t-meta">No links or files yet. A brief, a Canva board, a shared folder: anything the project needs, one tap away.</p>`}
+    ${open
+      ? html`<form
+            class="add-link"
+            onSubmit=${async (event) => {
+              event.preventDefault();
+              const done = await queue(() =>
+                send({
+                  kind: "link",
+                  method: "POST",
+                  path: `/api/projects/${project.id}/links`,
+                  body: { url: url.trim(), title: title.trim() || null },
+                  target,
+                  label: title.trim() || url.trim(),
+                })
+              );
+              if (done) {
+                setUrl("");
+                setTitle("");
+              }
+            }}
+          >
+            <label class="field">
+              <span>Link</span>
+              <input type="url" required placeholder="https://" value=${url} onInput=${(e) => setUrl(e.target.value)} />
+            </label>
+            <label class="field">
+              <span>Title <span class="hint">Optional; the site's name stands in.</span></span>
+              <input type="text" maxlength="200" value=${title} onInput=${(e) => setTitle(e.target.value)} />
+            </label>
+            <button class="button secondary-button" type="submit" disabled=${!url.trim()}>
+              <${Icon} name="add" /> Add link
+            </button>
+          </form>
+          <div class="add-file">
+            <label class=${`button secondary-button upload-button ${unreachable || busy ? "disabled" : ""}`}>
+              <${Icon} name="add" /> ${busy ? "Uploading…" : "Upload a file"}
+              <input
+                class="visually-hidden"
+                type="file"
+                disabled=${unreachable || busy}
+                onChange=${upload}
+              />
+            </label>
+            <p class="t-meta">${unreachable ? UPLOAD_NEEDS_PC : "Up to 50 MB. PDFs and images open here; anything else downloads."}</p>
+          </div>
+          ${pinnable.length
+            ? html`<label class="field pin-document">
+                <span>Pin a document from the library</span>
+                <select
+                  value=""
+                  onChange=${(event) => {
+                    const driveId = event.target.value;
+                    event.target.value = "";
+                    if (!driveId) return;
+                    const doc = pinnable.find((d) => d.drive_id === driveId);
+                    queue(() =>
+                      send({
+                        kind: "pin",
+                        method: "POST",
+                        path: `/api/projects/${project.id}/documents`,
+                        body: { drive_id: driveId },
+                        target,
+                        label: doc ? doc.title : driveId,
+                      })
+                    );
+                  }}
+                >
+                  <option value="">Choose a document…</option>
+                  ${pinnable.map((doc) => html`<option key=${doc.drive_id} value=${doc.drive_id}>${doc.title}</option>`)}
+                </select>
+              </label>`
+            : null}`
+      : null}
+  </section>`;
+}
+
+/** "1 link · 2 files", or nothing when there are neither. */
+function attachedCount(project) {
+  const parts = [];
+  if (project.links) parts.push(plural(project.links, "link"));
+  if (project.files) parts.push(plural(project.files, "file"));
+  return parts.join(" · ");
+}
+
 export function ProjectCard({ project, subject }) {
   const passed = project.deadline_at && hasPassed(project.deadline_at) && !project.closed_at;
+  const attached = attachedCount(project);
   return html`<li>
     <${Card} to=${`/projects/${project.id}`} subject=${subject}>
       <${Chip} name=${subject} />
       <span class="t-lead">${project.title}</span>
-      <span class="t-state">
-        <span class="num">${project.milestones_done}</span> of
-        <span class="num"> ${project.milestones_total}</span> milestones
-      </span>
+      ${project.milestones_total
+        ? html`<span class="t-state">
+            <span class="num">${project.milestones_done}</span> of
+            <span class="num"> ${project.milestones_total}</span> milestones
+          </span>`
+        : null}
+      ${attached ? html`<span class="t-meta">${attached}</span>` : null}
       ${project.deadline_at
         ? html`<span class=${`t-meta ${passed ? "passed" : ""}`}>
             ${passed ? "Was due " : "Due "}<span class="time">${dueAt(project.deadline_at)}</span>
@@ -357,6 +589,8 @@ export function ProjectPage({ id }) {
     <${NotSent} kinds=${["milestone"]} />
 
     <div class="split">
+      <div class="project-main">
+      <${ProjectFiles} project=${project} />
       <section class="section" aria-labelledby="project-steps">
         <h2 class="section-title" id="project-steps">Milestones</h2>
         ${steps.length
@@ -411,6 +645,7 @@ export function ProjectPage({ id }) {
               </button>
             </form>`}
       </section>
+      </div>
 
       <aside class="section">
         ${project.deliverables && project.deliverables.length

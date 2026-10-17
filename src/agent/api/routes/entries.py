@@ -16,13 +16,13 @@ under the `manual-` ids the four no-Classroom subjects already have.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile, status
 from pydantic import BaseModel, Field
 
 from ... import entries as entries_mod
 from ...config import ConfigError
 from ...db import store
-from .. import convert, schemas
+from .. import convert, files, schemas
 from ..idempotency import idempotent
 from ..deps import Conf, Db, Session, Table
 
@@ -58,13 +58,41 @@ class MilestoneIn(BaseModel):
     title: str
 
 
+class LinkIn(BaseModel):
+    url: str
+    title: str | None = None
+
+
+class PinIn(BaseModel):
+    drive_id: str
+
+
+def _project_out(conn, row) -> schemas.ProjectOut:
+    """A project with its milestones and its links & files, as every route returns it."""
+    project_id = int(row["id"])
+    attached = []
+    for value in store.project_attachments(conn, project_id):
+        held = store.held_document(conn, str(value["drive_id"])) if value["kind"] == "document" else None
+        attached.append(convert.project_attachment(value, held))
+    return convert.project(row, store.project_milestones(conn, project_id), attached)
+
+
+def _project_or_404(conn, project_id: int):
+    row = store.get_project(conn, project_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"no project with id {project_id}."
+        )
+    return row
+
+
 @router.get("/projects", response_model=list[schemas.ProjectOut])
 def projects(
     conn: Db, session: Session, include_closed: bool = Query(False)
 ) -> list[schemas.ProjectOut]:
     rows = store.projects(conn, include_closed=include_closed)
     return [
-        convert.project(row, store.project_milestones(conn, int(row["id"])))
+        _project_out(conn, row)
         for row in rows
     ]
 
@@ -77,7 +105,7 @@ def project(project_id: int, conn: Db, session: Session) -> schemas.ProjectOut:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"no project with id {project_id}.",
         )
-    return convert.project(row, store.project_milestones(conn, project_id))
+    return _project_out(conn, row)
 
 
 @router.post("/projects", response_model=schemas.ProjectOut, status_code=201)
@@ -123,7 +151,7 @@ def create_project(
         )
     row = store.get_project(conn, project_id)
     assert row is not None  # just written
-    return convert.project(row, store.project_milestones(conn, project_id))
+    return _project_out(conn, row)
 
 
 @router.post(
@@ -164,7 +192,7 @@ def add_milestone(
 
     row = store.get_project(conn, project_id)
     assert row is not None
-    return convert.project(row, store.project_milestones(conn, project_id))
+    return _project_out(conn, row)
 
 
 @router.post("/milestones/{milestone_id}/complete", response_model=schemas.MilestoneOut)
@@ -189,6 +217,110 @@ def complete_milestone(
     )
 
 
+# ---------------------------------------------------------------------------
+# links & files (2026-10-16)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/projects/{project_id}/links", response_model=schemas.ProjectOut, status_code=201)
+@idempotent(status=201)
+def add_project_link(
+    project_id: int, body: LinkIn, request: Request, conn: Db, session: Session
+) -> schemas.ProjectOut:
+    """A link -- http or https only, never fetched. Queued by the phone's outbox."""
+    try:
+        added = entries_mod.add_project_link(conn, project_id, body.url, body.title)
+    except entries_mod.AttachmentError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
+    if added is None:
+        _project_or_404(conn, project_id)
+    return _project_out(conn, _project_or_404(conn, project_id))
+
+
+@router.post("/projects/{project_id}/documents", response_model=schemas.ProjectOut, status_code=201)
+@idempotent(status=201)
+def pin_project_document(
+    project_id: int, body: PinIn, request: Request, conn: Db, session: Session
+) -> schemas.ProjectOut:
+    """Pin one of the project's course's library documents -- a brief from Classroom."""
+    try:
+        added = entries_mod.pin_project_document(conn, project_id, body.drive_id)
+    except entries_mod.AttachmentError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
+    if added is None:
+        _project_or_404(conn, project_id)
+    return _project_out(conn, _project_or_404(conn, project_id))
+
+
+# An explicit operation_id names the form body "Body_upload_project_file";
+# FastAPI's default would put the path's double underscores into it.
+@router.post(
+    "/projects/{project_id}/files",
+    response_model=schemas.ProjectOut,
+    status_code=201,
+    operation_id="upload_project_file",
+)
+def upload_project_file(
+    project_id: int, conn: Db, config: Conf, session: Session, file: UploadFile = File(...)
+) -> schemas.ProjectOut:
+    """An upload, 50 MB at most. Never queued: it needs the PC, and the app says so."""
+    _project_or_404(conn, project_id)
+    try:
+        entries_mod.add_project_file(conn, config, project_id, file.filename or "", file.file)
+    except entries_mod.AttachmentError as err:
+        too_big = "limit" in str(err)
+        raise HTTPException(
+            status_code=(
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE if too_big else status.HTTP_400_BAD_REQUEST
+            ),
+            detail=str(err),
+        ) from err
+    return _project_out(conn, _project_or_404(conn, project_id))
+
+
+@router.delete("/projects/{project_id}/attachments/{attachment_id}", response_model=schemas.ProjectOut)
+@idempotent()
+def remove_project_attachment(
+    project_id: int, attachment_id: int, request: Request, conn: Db, session: Session
+) -> schemas.ProjectOut:
+    """Take a link or file off. The bytes stay on disk and in the backup."""
+    outcome = entries_mod.remove_project_attachment(conn, project_id, attachment_id)
+    if outcome.status == "missing":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"project {project_id} has no attachment {attachment_id}.",
+        )
+    return _project_out(conn, _project_or_404(conn, project_id))
+
+
+@router.get("/projects/{project_id}/files/{attachment_id}")
+def project_file(
+    project_id: int, attachment_id: int, request: Request, conn: Db, config: Conf, session: Session
+) -> Response:
+    """An uploaded file, with ranges and an ETag like a library document.
+
+    PDFs and images inline -- the viewer shows them -- and everything else as a
+    download; always with nosniff, so the type is the one sniffed at upload.
+    """
+    row = store.get_project_attachment(conn, attachment_id)
+    if row is None or int(row["project_id"]) != project_id or row["kind"] != "file":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"project {project_id} has no file {attachment_id}.",
+        )
+    path = entries_mod.project_file_path(config, row)
+    if not path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="that file is recorded but not on disk. agent backup --restore puts it back.",
+        )
+    mime = row["mime_type"] or "application/octet-stream"
+    return files.document_response(
+        request, path, title=str(row["title"]), mime_type=mime, row=row,
+        download=mime not in entries_mod.INLINE_MIMES,
+    )
+
+
 @router.post("/projects/{project_id}/close", response_model=schemas.ProjectOut)
 def close_project(project_id: int, conn: Db, session: Session) -> schemas.ProjectOut:
     outcome = entries_mod.close_project(conn, project_id)
@@ -199,7 +331,7 @@ def close_project(project_id: int, conn: Db, session: Session) -> schemas.Projec
         )
     row = store.get_project(conn, project_id)
     assert row is not None
-    return convert.project(row, store.project_milestones(conn, project_id))
+    return _project_out(conn, row)
 
 
 # ---------------------------------------------------------------------------

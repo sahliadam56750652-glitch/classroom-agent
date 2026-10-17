@@ -26,8 +26,13 @@ one working.
 
 from __future__ import annotations
 
+import hashlib
+import mimetypes
+import secrets
 import sqlite3
 from dataclasses import dataclass, field
+from pathlib import Path
+from urllib.parse import urlsplit
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -264,6 +269,160 @@ def close_project(conn: sqlite3.Connection, project_id: int) -> Outcome:
     if row["closed_at"]:
         return Outcome("already", row)
     store.close_project(conn, project_id)
+    return Outcome("done", row)
+
+
+# ----------------------------------------------------------------------------
+# a project's links and files (2026-10-16)
+# ----------------------------------------------------------------------------
+
+PROJECT_FILE_CAP = 50 * 1024 * 1024
+MAX_URL = 2000
+
+# Shown in the app's own viewer, so served inline -- but only when the BYTES
+# say so. A name ending .pdf is a claim; "%PDF-" at offset 0 is a fact. Anything
+# else is served as a download with nosniff, whatever its name says.
+INLINE_MIMES = frozenset({"application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp"})
+
+
+class AttachmentError(ValueError):
+    """A link or file that cannot be attached, said as a sentence."""
+
+
+def sniff(head: bytes) -> str | None:
+    """The type of an uploaded file, from its first bytes, or None."""
+    if head.startswith(b"%PDF-"):
+        return "application/pdf"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def link_host(url: str) -> str:
+    """"canva.com" for https://www.canva.com/design/x -- a link's title when it has none."""
+    host = (urlsplit(url).hostname or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def check_link(url: str) -> str:
+    """The URL, trimmed, if it is http or https with a host. Never fetched."""
+    url = (url or "").strip()
+    if not url:
+        raise AttachmentError("A link needs a URL.")
+    if len(url) > MAX_URL:
+        raise AttachmentError(f"That URL is longer than {MAX_URL} characters.")
+    parts = urlsplit(url)
+    if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
+        raise AttachmentError("Only http:// and https:// links can be attached.")
+    return url
+
+
+def add_project_link(conn: sqlite3.Connection, project_id: int, url: str, title: str | None) -> int | None:
+    """None when there is no such project."""
+    if store.get_project(conn, project_id) is None:
+        return None
+    url = check_link(url)
+    title = (title or "").strip()[:200] or None
+    return store.add_project_attachment(conn, project_id, "link", title=title, url=url)
+
+
+def pin_project_document(conn: sqlite3.Connection, project_id: int, drive_id: str) -> int | None:
+    """Pin a library document -- a brief posted on Classroom -- to a project.
+
+    Only a document of the project's own course: pinning another subject's file
+    would be a project pointing at the wrong course's material.
+    """
+    project = store.get_project(conn, project_id)
+    if project is None:
+        return None
+    found = store.held_document(conn, drive_id)
+    if found is None or str(found["status"] or "") != "ok":
+        raise AttachmentError("That document is not held on the PC, so it cannot be pinned.")
+    if str(project["course_id"]) not in str(found["course_ids"] or "").split(","):
+        raise AttachmentError("That document belongs to another subject's course.")
+    return store.add_project_attachment(
+        conn, project_id, "document", title=found["title"], drive_id=drive_id
+    )
+
+
+def project_files_dir(config: Config, project_id: int) -> Path:
+    return config.data_dir / "projects" / str(int(project_id))
+
+
+def project_file_path(config: Config, row: sqlite3.Row) -> Path:
+    return project_files_dir(config, int(row["project_id"])) / str(row["stored_name"])
+
+
+def add_project_file(
+    conn: sqlite3.Connection, config: Config, project_id: int, original_name: str, stream
+) -> int | None:
+    """Store an upload under a generated name and record it. None: no such project.
+
+    Read in chunks and counted, so a file over the cap is refused part-way and
+    nothing of it is kept. The original filename is kept as the TITLE only; the
+    path is DATA_DIR/projects/<id>/<32 random hex>, and nothing a browser sent
+    reaches it.
+    """
+    if store.get_project(conn, project_id) is None:
+        return None
+    folder = project_files_dir(config, project_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    stored_name = secrets.token_hex(16)
+    target = folder / stored_name
+    digest = hashlib.sha256()
+    size = 0
+    head = b""
+    try:
+        with target.open("xb") as out:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > PROJECT_FILE_CAP:
+                    raise AttachmentError(
+                        f"That file is over {PROJECT_FILE_CAP // (1024 * 1024)} MB, the limit for a project file."
+                    )
+                if len(head) < 16:
+                    head = (head + chunk)[:16]
+                digest.update(chunk)
+                out.write(chunk)
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    if size == 0:
+        target.unlink(missing_ok=True)
+        raise AttachmentError("That file is empty.")
+
+    title = Path(str(original_name or "").replace("\\", "/")).name.strip()[:200] or "file"
+    sniffed = sniff(head)
+    if sniffed:
+        mime = sniffed
+    else:
+        guessed = mimetypes.guess_type(title)[0] or "application/octet-stream"
+        # A name that claims a type the viewer would show inline, with bytes
+        # that do not bear it out, is served as what it is: unknown.
+        mime = "application/octet-stream" if guessed in INLINE_MIMES else guessed
+    return store.add_project_attachment(
+        conn, project_id, "file", title=title, stored_name=stored_name,
+        mime_type=mime, size_bytes=size, sha256=digest.hexdigest(),
+    )
+
+
+def remove_project_attachment(conn: sqlite3.Connection, project_id: int, attachment_id: int) -> Outcome:
+    """Take a link or file off a project. The row and the bytes stay; see schema.sql."""
+    row = store.get_project_attachment(conn, attachment_id)
+    if row is None or int(row["project_id"]) != int(project_id):
+        return Outcome("missing")
+    if row["removed_at"]:
+        return Outcome("already", row)
+    store.remove_project_attachment(conn, attachment_id)
     return Outcome("done", row)
 
 

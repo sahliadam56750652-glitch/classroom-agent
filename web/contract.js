@@ -9,10 +9,11 @@
 // `tests/test_web_assets.py` fails when this file is out of date, so a forgotten
 // regeneration is a red suite rather than a client that is quietly wrong.
 
-export const GENERATED_AT = "2026-10-17T08:50:20Z";
+export const GENERATED_AT = "2026-10-17T09:09:14Z";
 
 export const ROUTES = {
   "DELETE /api/adjustments/{adjustment_id}": "RecordedOut",
+  "DELETE /api/projects/{project_id}/attachments/{attachment_id}": "ProjectOut",
   "DELETE /api/session": "SignInOut",
   "DELETE /api/timetable/file": null,
   "GET /api/adjustments": "AdjustmentOut",
@@ -31,6 +32,7 @@ export const ROUTES = {
   "GET /api/packs/{course_id}": null,
   "GET /api/projects": "ProjectOut",
   "GET /api/projects/{project_id}": "ProjectOut",
+  "GET /api/projects/{project_id}/files/{attachment_id}": null,
   "GET /api/quiz-attempts/{attempt_id}": "QuizAttemptOut",
   "GET /api/quizzes": "QuizzesOut",
   "GET /api/status": "StatusOut",
@@ -48,6 +50,9 @@ export const ROUTES = {
   "POST /api/milestones/{milestone_id}/complete": "MilestoneOut",
   "POST /api/projects": "ProjectOut",
   "POST /api/projects/{project_id}/close": "ProjectOut",
+  "POST /api/projects/{project_id}/documents": "ProjectOut",
+  "POST /api/projects/{project_id}/files": "ProjectOut",
+  "POST /api/projects/{project_id}/links": "ProjectOut",
   "POST /api/projects/{project_id}/milestones": "ProjectOut",
   "POST /api/quiz-attempts/{attempt_id}/answers": "QuizAttemptOut",
   "POST /api/quiz-attempts/{attempt_id}/flags": "QuizAttemptOut",
@@ -110,6 +115,9 @@ export const MODELS = {
     "title",
     "url",
     "why"
+  ],
+  "Body_upload_project_file": [
+    "file"
   ],
   "DayOut": [
     "date",
@@ -228,6 +236,10 @@ export const MODELS = {
     "title",
     "unread"
   ],
+  "LinkIn": [
+    "title",
+    "url"
+  ],
   "MilestoneIn": [
     "title"
   ],
@@ -270,6 +282,9 @@ export const MODELS = {
     "label",
     "passed"
   ],
+  "PinIn": [
+    "drive_id"
+  ],
   "PositionIn": [
     "page_hash",
     "page_index"
@@ -282,6 +297,18 @@ export const MODELS = {
     "page_hash",
     "updated_at"
   ],
+  "ProjectAttachmentOut": [
+    "created_at",
+    "document",
+    "file_url",
+    "host",
+    "id",
+    "kind",
+    "mime_type",
+    "size_bytes",
+    "title",
+    "url"
+  ],
   "ProjectIn": [
     "brief",
     "coursework",
@@ -293,6 +320,7 @@ export const MODELS = {
     "title"
   ],
   "ProjectOut": [
+    "attachments",
     "brief_source",
     "closed_at",
     "course_id",
@@ -301,7 +329,9 @@ export const MODELS = {
     "created_at",
     "deadline_at",
     "deliverables",
+    "files",
     "id",
+    "links",
     "milestones",
     "milestones_done",
     "milestones_total",

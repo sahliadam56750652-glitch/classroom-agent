@@ -37,6 +37,9 @@ const WORDS = {
   milestone: "Milestone done",
   adjustment: "Timetable change",
   position: "Place in a document",
+  link: "Link added",
+  pin: "Document pinned",
+  unattach: "Removed",
 };
 
 let entries = [];
@@ -181,9 +184,11 @@ async function pass() {
   for (const entry of waiting) {
     let value;
     try {
-      value = await api[entry.method === "PUT" ? "put" : "post"](entry.path, entry.body, {
-        headers: { "Idempotency-Key": entry.op_id },
-      });
+      const headers = { headers: { "Idempotency-Key": entry.op_id } };
+      value =
+        entry.method === "DELETE"
+          ? await api.del(entry.path, headers)
+          : await api[entry.method === "PUT" ? "put" : "post"](entry.path, entry.body, headers);
     } catch (err) {
       if (err instanceof Offline || err instanceof NotSignedIn || !(err.status >= 400 && err.status < 500)) {
         // Not reachable, not signed in, or the PC failed: stop, keep it all,

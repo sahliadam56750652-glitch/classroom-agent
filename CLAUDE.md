@@ -116,7 +116,9 @@ decision in `PLAN.md`.
   `agent run`'s backup stage takes one snapshot per Tunis day and keeps the
   newest 14 (`backup.DAILY_KEEP`); it deletes only directories it would have
   named itself, `manual-<UTC>` with a MANIFEST, and never one written with
-  `--out`. `api_sessions` and `client_ops` are
+  `--out`. A project's uploaded files under `DATA_DIR/projects/` are the only
+  copy anywhere, so the snapshot carries them too, hard-linked to the previous
+  snapshot's copy when unchanged. `api_sessions` and `client_ops` are
   the two tables deliberately left OUT of the backup: live cookies, and the
   receipts of writes the phone already sent.
 - Every long-running command takes `--dry-run`.
@@ -220,12 +222,14 @@ decision in `PLAN.md`.
   `advance_study_item`, never imports `quizgen` or a provider, and never writes
   a `gate_runs` row: computing a plan and recording that a prompt was sent are
   different acts. All of it is pinned by tests, not by convention.
-- **The phone's writes go through one outbox, and only six of them.**
+- **The phone's writes go through one outbox, and only these nine.**
   `web/outbox.js` stores Read, Skip, a task or milestone done, a timetable
-  change and a reading position on the phone first and sends them second,
-  oldest first, before every sync, each with an `Idempotency-Key` that
-  `api/idempotency.py` answers once. Those six are writes about rows that
-  already exist; creating anything needs the PC and says so. A waiting write is
+  change, a reading position, and -- on a project -- adding a link, pinning a
+  library document and removing either, on the phone first and sends them
+  second, oldest first, before every sync, each with an `Idempotency-Key` that
+  `api/idempotency.py` answers once. Creating a task, project or milestone and
+  uploading a project file need the PC and say so -- the upload BEFORE a file
+  is picked. A waiting write is
   shown as waiting, never as done, and one the PC refuses stays under "Not sent"
   with its sentence until I retry or discard it. A test holds the client's
   queued routes and the server's idempotent routes to the same list.

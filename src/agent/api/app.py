@@ -68,6 +68,12 @@ WRITE_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/projects"),
         ("POST", "/api/projects/{project_id}/milestones"),
         ("POST", "/api/projects/{project_id}/close"),
+        # A project's links & files (2026-10-16). The upload is the one write
+        # that carries bytes; it is never queued by the phone.
+        ("POST", "/api/projects/{project_id}/links"),
+        ("POST", "/api/projects/{project_id}/documents"),
+        ("POST", "/api/projects/{project_id}/files"),
+        ("DELETE", "/api/projects/{project_id}/attachments/{attachment_id}"),
         ("POST", "/api/milestones/{milestone_id}/complete"),
         ("POST", "/api/tasks"),
         ("POST", "/api/tasks/{task_id}/complete"),

@@ -29,6 +29,16 @@ Classroom, and wholesale for the tables Phase 6 added. No Classroom CONTENT is
 ever in the file -- a backup that quietly carried a mirror would restore a
 stale one over a fresh one.
 
+**A project's uploaded files too** (2026-10-16). Uploaded from the phone or
+the PC, they are the only copy anywhere -- Google cannot give them back -- so
+every file under DATA_DIR/projects/ is carried and checksummed, and a restore
+puts back what is missing and never overwrites what is there. They would be
+copied fourteen times over by the daily stage, so a file unchanged since the
+previous snapshot is a HARD LINK to that snapshot's copy: one set of bytes on
+the disk, a whole snapshot in every directory, and deleting an old snapshot
+deletes only its name for them. Files are never edited in place (a new upload
+is a new generated name), which is what makes sharing them safe.
+
 **`timetable.yaml` too** (added 2026-10-16, after a save replaced its whole
 contents). It is hand-written, gitignored, and no API can rebuild it -- the
 same argument as every manual row -- so the snapshot carries a copy, checked by
@@ -52,6 +62,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -67,6 +78,7 @@ MANIFEST = "MANIFEST"
 ROWS_FILE = "manual.json"
 FILES_DIR = "files"
 TIMETABLE_FILE = "timetable.yaml"
+PROJECTS_DIR = "projects"
 
 # The daily stage of `agent run` (2026-10-16): at most one snapshot per local
 # day, and the newest DAILY_KEEP kept. Only directories this module named --
@@ -164,6 +176,9 @@ SPECS: tuple[Spec, ...] = (
     # a row restores whether or not the file it names is here yet -- which is
     # also what lets a restore happen before the library copy finishes.
     Spec("read_positions", "1", ("drive_id",)),
+    # 2026-10-16: a project's links, pinned documents and uploaded files. The
+    # bytes travel beside the rows; see PROJECTS_DIR.
+    Spec("project_attachments", "1", ("id",)),
     # api_sessions is deliberately ABSENT. It is the one table worth losing:
     # restoring live sessions onto a different box hands out cookies minted for
     # a machine that is no longer serving, and signing in again costs one paste.
@@ -179,6 +194,8 @@ class Snapshot:
     files: int = 0
     bytes_copied: int = 0
     timetable: bool = False  # whether timetable.yaml was there to copy
+    project_files: int = 0
+    project_files_linked: int = 0  # hard links to the previous snapshot's copy
     dry_run: bool = False
 
     @property
@@ -197,6 +214,8 @@ class Restored:
     # differs and was left alone; the backed-up copy is at `timetable_beside`.
     timetable: str | None = None
     timetable_beside: Path | None = None
+    project_files_added: int = 0
+    project_files_present: int = 0
     dry_run: bool = False
 
     @property
@@ -261,6 +280,40 @@ def collect(db: sqlite3.Connection) -> dict[str, list[dict]]:
     return found
 
 
+def _project_files(config: Config) -> list[Path]:
+    """Every uploaded project file, relative to DATA_DIR, in a stable order."""
+    root = config.data_dir / PROJECTS_DIR
+    if not root.is_dir():
+        return []
+    return sorted(path.relative_to(config.data_dir) for path in root.rglob("*") if path.is_file())
+
+
+def _previous_snapshot(config: Config, out_dir: Path) -> Path | None:
+    for _, path in reversed(snapshots(config)):
+        if path != out_dir:
+            return path
+    return None
+
+
+def _link_or_copy(source: Path, target: Path, previous: Path | None, relative: Path, digest: str) -> bool:
+    """Hard-link to the previous snapshot's copy when it is the same bytes; else copy.
+
+    True when linked. Falls back to a copy wherever a link cannot be made -- a
+    different volume, a filesystem without them -- so a snapshot is never short
+    of a file because the cheap way was unavailable.
+    """
+    if previous is not None:
+        earlier = previous / relative
+        if earlier.is_file() and sha256_file(earlier) == digest:
+            try:
+                os.link(earlier, target)
+                return True
+            except OSError:
+                pass
+    shutil.copy2(source, target)
+    return False
+
+
 def _library_files(config: Config, rows: dict[str, list[dict]]) -> list[Path]:
     """The uploaded bytes, named by the extraction rows that point at them."""
     wanted = []
@@ -298,6 +351,7 @@ def write(
         files=len(files),
         bytes_copied=sum(path.stat().st_size for path in files),
         timetable=timetable.is_file(),
+        project_files=len(_project_files(config)),
         dry_run=dry_run,
     )
     if dry_run:
@@ -324,6 +378,15 @@ def write(
         if snapshot.timetable:
             shutil.copy2(timetable, out_dir / TIMETABLE_FILE)
             entries.append(f"{sha256_file(out_dir / TIMETABLE_FILE)}  {TIMETABLE_FILE}")
+        previous = _previous_snapshot(config, out_dir)
+        for relative in _project_files(config):
+            source = config.data_dir / relative
+            target = out_dir / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            digest = sha256_file(source)
+            if _link_or_copy(source, target, previous, relative, digest):
+                snapshot.project_files_linked += 1
+            entries.append(f"{digest}  {relative.as_posix()}")
 
         entries.append("")
         entries.append("-- row counts")
@@ -483,6 +546,21 @@ def restore(
 
     _restore_timetable(config, snapshot_dir, result, dry_run=dry_run)
 
+    # Uploaded project files: put back what is missing, never overwrite.
+    saved_projects = snapshot_dir / PROJECTS_DIR
+    if saved_projects.is_dir():
+        for path in sorted(saved_projects.rglob("*")):
+            if not path.is_file():
+                continue
+            destination = config.data_dir / path.relative_to(snapshot_dir)
+            if destination.is_file():
+                result.project_files_present += 1
+                continue
+            result.project_files_added += 1
+            if not dry_run:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, destination)
+
     files_dir = snapshot_dir / FILES_DIR
     if files_dir.is_dir():
         for path in sorted(files_dir.iterdir()):
@@ -558,4 +636,5 @@ def describe(config: Config, db: sqlite3.Connection) -> list[str]:
     files = _library_files(config, rows)
     lines.append(f"{'uploaded files':<24} {len(files)}")
     lines.append(f"{TIMETABLE_FILE:<24} {'yes' if config.timetable_path.is_file() else 'not found'}")
+    lines.append(f"{'project files':<24} {len(_project_files(config))}")
     return lines

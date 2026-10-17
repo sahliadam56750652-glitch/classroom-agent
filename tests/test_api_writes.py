@@ -83,6 +83,18 @@ def test_no_write_route_reaches_verified_without_a_passed_quiz(config, monkeypat
         ("POST", "/api/projects/{project_id}/milestones"): lambda: session.post(
             "/api/projects/1/milestones", json={"title": "b"}
         ),
+        ("POST", "/api/projects/{project_id}/links"): lambda: session.post(
+            "/api/projects/1/links", json={"url": "https://canva.com/x"}
+        ),
+        ("POST", "/api/projects/{project_id}/documents"): lambda: session.post(
+            "/api/projects/1/documents", json={"drive_id": "nothing"}
+        ),
+        ("POST", "/api/projects/{project_id}/files"): lambda: session.post(
+            "/api/projects/1/files", files={"file": ("brief.pdf", b"%PDF-1.4 x", "application/pdf")}
+        ),
+        ("DELETE", "/api/projects/{project_id}/attachments/{attachment_id}"): lambda: session.delete(
+            "/api/projects/1/attachments/1"
+        ),
         ("POST", "/api/projects/{project_id}/close"): lambda: session.post(
             "/api/projects/1/close"
         ),

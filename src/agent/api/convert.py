@@ -16,6 +16,7 @@ import json
 import sqlite3
 from typing import Any
 
+from .. import entries as entries_mod
 from ..filenames import document_filename
 from ..gate import adjustments as adjust
 from ..gate import scheduler as gate_scheduler
@@ -318,10 +319,47 @@ def _split(value: Any) -> list[str]:
     return str(value).splitlines() if value else []
 
 
+def project_attachment(row: sqlite3.Row, held: sqlite3.Row | None = None) -> schemas.ProjectAttachmentOut:
+    """One project attachment. `held` is the library row behind a pinned document."""
+    kind = str(row["kind"])
+    attachment_id = int(row["id"])
+    base = {"id": attachment_id, "kind": kind, "created_at": str(row["created_at"])}
+    if kind == "link":
+        host = entries_mod.link_host(str(row["url"]))
+        return schemas.ProjectAttachmentOut(**base, title=str(row["title"] or host), url=row["url"], host=host)
+    if kind == "document":
+        found = document(held) if held is not None else None
+        title = str(row["title"] or (found.title if found else row["drive_id"]))
+        return schemas.ProjectAttachmentOut(**base, title=title, document=found)
+    file_url = f"/api/projects/{int(row['project_id'])}/files/{attachment_id}"
+    mime = row["mime_type"]
+    found = None
+    if mime in entries_mod.INLINE_MIMES:
+        found = schemas.DocumentOut(
+            drive_id=f"project-file-{attachment_id}",
+            title=str(row["title"]),
+            mime_type=mime,
+            size_bytes=row["size_bytes"],
+            filename=str(row["title"]),
+            readable=True,
+            view="pdf" if mime == PDF_MIME else "image",
+            pdf_url=file_url,
+            pdf_key=f"sha256:{row['sha256']}",
+            pdf_bytes=row["size_bytes"],
+        )
+    return schemas.ProjectAttachmentOut(
+        **base, title=str(row["title"]), mime_type=mime, size_bytes=row["size_bytes"],
+        file_url=file_url, document=found,
+    )
+
+
 def project(
-    row: sqlite3.Row, milestones: list[sqlite3.Row] | None = None
+    row: sqlite3.Row,
+    milestones: list[sqlite3.Row] | None = None,
+    attachments: list[schemas.ProjectAttachmentOut] | None = None,
 ) -> schemas.ProjectOut:
     steps = milestones or []
+    attached = attachments or []
     return schemas.ProjectOut(
         id=int(row["id"]),
         course_id=str(row["course_id"]),
@@ -336,6 +374,9 @@ def project(
         created_at=str(row["created_at"]),
         milestones_done=sum(1 for step in steps if step["done_at"]),
         milestones_total=len(steps),
+        links=sum(1 for value in attached if value.kind == "link"),
+        files=sum(1 for value in attached if value.kind != "link"),
+        attachments=attached,
         milestones=[
             schemas.MilestoneOut(
                 id=int(step["id"]),
